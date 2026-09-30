@@ -3,6 +3,7 @@
 package app
 
 import (
+	"context"
 	"log/slog"
 
 	"github.com/DomBlack/git-stack/pkg/ai"
@@ -28,6 +29,9 @@ type Deps struct {
 	Config   *config.Config
 	Log      *slog.Logger
 	Prompter Prompter
+	// Progress, when set, wraps slow operations (AI calls) so the CLI can
+	// show a spinner. It must run fn and return its error.
+	Progress func(ctx context.Context, message string, fn func(ctx context.Context) error) error
 }
 
 // Prompter asks the user a question. It is nil under --no-interactive and in

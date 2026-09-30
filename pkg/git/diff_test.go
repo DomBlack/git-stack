@@ -1,0 +1,65 @@
+package git_test
+
+import (
+	"context"
+	"slices"
+	"strings"
+	"testing"
+
+	"github.com/DomBlack/git-stack/pkg/git/gittest"
+)
+
+func TestDiffsLogsAndRebaseState(t *testing.T) {
+	gittest.Isolate(t)
+	dir := gittest.InitRepo(t)
+	c := newClient()
+	ctx := context.Background()
+	repo, _ := c.Discover(ctx, dir)
+
+	gittest.Run(t, dir, "switch", "-q", "-c", "feat")
+	gittest.Commit(t, dir, "f.txt", "one\n", "feat: one\n\nbody one")
+	gittest.Commit(t, dir, "f.txt", "two\n", "feat: two")
+
+	diff, err := c.DiffRange(ctx, repo, "main", "feat")
+	if err != nil || !strings.Contains(diff, "+two") {
+		t.Errorf("DiffRange = %q, %v", diff, err)
+	}
+	gittest.WriteFile(t, dir, "f.txt", "three\n")
+	gittest.Run(t, dir, "add", "f.txt")
+	staged, err := c.StagedDiff(ctx, repo)
+	if err != nil || !strings.Contains(staged, "+three") || strings.Contains(staged, "+two") {
+		t.Errorf("StagedDiff = %q, %v", staged, err)
+	}
+	gittest.Run(t, dir, "reset", "-q", "--hard")
+
+	subjects, err := c.Subjects(ctx, repo, "feat", 2)
+	if err != nil || !slices.Equal(subjects, []string{"feat: two", "feat: one"}) {
+		t.Errorf("Subjects = %v, %v", subjects, err)
+	}
+	msgs, err := c.Messages(ctx, repo, "main", "feat")
+	if err != nil || len(msgs) != 2 || msgs[0] != "feat: one\n\nbody one" || msgs[1] != "feat: two" {
+		t.Errorf("Messages = %q, %v", msgs, err)
+	}
+
+	if in, _ := c.RebaseInProgress(ctx, repo); in {
+		t.Error("no rebase should be in progress")
+	}
+	// Create a conflict: main changes f.txt differently, then rebase feat.
+	gittest.Run(t, dir, "switch", "-q", "main")
+	gittest.Commit(t, dir, "f.txt", "main\n", "main change")
+	gittest.Run(t, dir, "switch", "-q", "feat")
+	if _, err := c.Runner().Run(ctx, gitCmd(dir, "rebase", "main")); err == nil {
+		t.Fatal("expected rebase conflict")
+	}
+	if in, err := c.RebaseInProgress(ctx, repo); !in || err != nil {
+		t.Errorf("RebaseInProgress = %v, %v", in, err)
+	}
+	files, err := c.ConflictedFiles(ctx, repo)
+	if err != nil || !slices.Equal(files, []string{"f.txt"}) {
+		t.Errorf("ConflictedFiles = %v, %v", files, err)
+	}
+	gittest.Run(t, dir, "rebase", "--abort")
+	if in, _ := c.RebaseInProgress(ctx, repo); in {
+		t.Error("rebase should be aborted")
+	}
+}

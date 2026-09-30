@@ -82,7 +82,12 @@ func (a *App) Trunk(ctx context.Context, repo git.Repo) (string, error) {
 	}
 	switch len(graph.Trunks) {
 	case 0:
-		return "", stack.New(stack.KindNotInStack, "no stacks in this repository").
+		if name, ok, err := a.d.Git.DefaultBranch(ctx, repo); err != nil {
+			return "", err
+		} else if ok {
+			return name, nil
+		}
+		return "", stack.New(stack.KindNotInStack, "no stacks in this repository and no main/master branch").
 			WithSteps("run `git stack create` from your trunk branch to start one")
 	case 1:
 		return graph.Trunks[0], nil

@@ -292,3 +292,24 @@ func realPath(t *testing.T, p string) string {
 	}
 	return r
 }
+
+func TestDefaultBranch(t *testing.T) {
+	gittest.Isolate(t)
+	dir := gittest.InitRepo(t)
+	c := newClient()
+	ctx := context.Background()
+	repo, _ := c.Discover(ctx, dir)
+
+	if name, ok, err := c.DefaultBranch(ctx, repo); err != nil || !ok || name != "main" {
+		t.Errorf("local main: %q %v %v", name, ok, err)
+	}
+	gittest.Run(t, dir, "branch", "-m", "main", "trunk")
+	if _, ok, err := c.DefaultBranch(ctx, repo); err != nil || ok {
+		t.Errorf("no candidate: %v %v", ok, err)
+	}
+	gittest.Run(t, dir, "update-ref", "refs/remotes/origin/trunk", "HEAD")
+	gittest.Run(t, dir, "symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/trunk")
+	if name, ok, err := c.DefaultBranch(ctx, repo); err != nil || !ok || name != "trunk" {
+		t.Errorf("origin/HEAD: %q %v %v", name, ok, err)
+	}
+}

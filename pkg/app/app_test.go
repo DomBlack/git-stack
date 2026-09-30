@@ -180,8 +180,16 @@ func TestTrunk(t *testing.T) {
 		t.Errorf("single trunk from untracked: %q %v", tr, err)
 	}
 	empty := app.New(app.Deps{Git: git.New(exec.New()), Meta: memMeta{stack.NewGraph(nil)}})
+	if tr, err := empty.Trunk(ctx, repo); err != nil || tr != "main" {
+		t.Errorf("no stacks falls back to the default branch: %q %v", tr, err)
+	}
+	v, err := empty.View(ctx, repo, app.ViewOptions{})
+	if err != nil || len(v.Rows) != 1 || !v.Rows[0].IsTrunk || v.Rows[0].Name != "main" {
+		t.Errorf("empty repo view should show the default branch as trunk: %+v %v", v.Rows, err)
+	}
+	gittest.Run(t, dir, "branch", "-m", "main", "trunk")
 	if _, err := empty.Trunk(ctx, repo); !errors.Is(err, &stack.Error{Kind: stack.KindNotInStack}) {
-		t.Errorf("no stacks: %v", err)
+		t.Errorf("no stacks and no main: %v", err)
 	}
 	_ = os.Getenv
 }

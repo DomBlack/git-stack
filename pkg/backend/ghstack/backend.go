@@ -55,6 +55,9 @@ var ghEnv = []string{
 var ghUnset = []string{"GH_FORCE_TTY", "CLICOLOR_FORCE"}
 
 // gh runs `gh stack <args>` captured, mapping failures to *stack.Error.
+// The result carries gh-stack's output for commands that relay it (sync).
+//
+//nolint:unparam // the result is consumed by submit and sync
 func (b *Backend) gh(ctx context.Context, repo git.Repo, args ...string) (exec.Result, error) {
 	res, err := b.run.Run(ctx, exec.Cmd{
 		Name:  "gh",

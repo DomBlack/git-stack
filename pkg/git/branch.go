@@ -85,3 +85,31 @@ func (c *Client) CreateBranch(ctx context.Context, repo Repo, name, start string
 	}
 	return nil
 }
+
+// DefaultBranch guesses the repository's trunk the way gh-stack does: the
+// branch origin/HEAD points at, else a local main or master. The boolean is
+// false when nothing matches.
+func (c *Client) DefaultBranch(ctx context.Context, repo Repo) (string, bool, error) {
+	res, err := c.gitIn(ctx, repo, "symbolic-ref", "--short", "-q", "refs/remotes/origin/HEAD")
+	if err == nil {
+		if _, name, ok := strings.Cut(res.Out(), "/"); ok && name != "" {
+			if exists, err := c.BranchExists(ctx, repo, name); err != nil {
+				return "", false, err
+			} else if exists {
+				return name, true, nil
+			}
+		}
+	} else if ee, ok := errors.AsType[*exec.ExitError](err); !ok || ee.Result.ExitCode != 1 {
+		return "", false, err
+	}
+	for _, name := range []string{"main", "master"} {
+		exists, err := c.BranchExists(ctx, repo, name)
+		if err != nil {
+			return "", false, err
+		}
+		if exists {
+			return name, true, nil
+		}
+	}
+	return "", false, nil
+}

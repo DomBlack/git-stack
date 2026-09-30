@@ -92,6 +92,13 @@ func (a *App) View(ctx context.Context, repo git.Repo, o ViewOptions) (*View, er
 	v := &View{Repo: repo, Current: current, Graph: graph}
 	stacks := graph.Stacks
 	trunks := graph.Trunks
+	if len(trunks) == 0 {
+		// No stacks yet: still show the default branch as the trunk so the
+		// tree (and the picker) has a root.
+		if def, ok, err := a.d.Git.DefaultBranch(ctx, repo); err == nil && ok {
+			trunks = []string{def}
+		}
+	}
 	if o.CurrentStackOnly {
 		if s, _, ok := graph.StackOf(current); ok {
 			stacks = []stack.Stack{*s}

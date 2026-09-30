@@ -18,6 +18,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/DomBlack/git-stack/pkg/ai/claudecode"
 	"github.com/DomBlack/git-stack/pkg/app"
 	"github.com/DomBlack/git-stack/pkg/backend/ghstack"
 	"github.com/DomBlack/git-stack/pkg/cache"
@@ -26,6 +27,7 @@ import (
 	"github.com/DomBlack/git-stack/pkg/forge/github"
 	"github.com/DomBlack/git-stack/pkg/git"
 	"github.com/DomBlack/git-stack/pkg/stack"
+	"github.com/DomBlack/git-stack/pkg/ui"
 )
 
 // version is set by the linker (see .goreleaser.yaml).
@@ -100,8 +102,10 @@ func (rt *Runtime) Config(ctx context.Context) (*config.Config, error) {
 type cli struct {
 	streams Streams
 	globals Globals
-	rtOnce  sync.Once
-	rt      *Runtime
+	// newRunner builds the subprocess runner; tests inject fakes here.
+	newRunner func(opts ...exec.Option) exec.Runner
+	rtOnce    sync.Once
+	rt        *Runtime
 }
 
 // runtime builds the full Runtime (TTY-aware runner, prompts allowed when
@@ -123,7 +127,11 @@ func (c *cli) runtime() *Runtime {
 				Err: errFile(c.streams.Err),
 			}))
 		}
-		runner := exec.New(opts...)
+		newRunner := c.newRunner
+		if newRunner == nil {
+			newRunner = exec.New
+		}
+		runner := newRunner(opts...)
 		c.rt = &Runtime{
 			Globals:     c.globals,
 			Streams:     c.streams,
@@ -162,14 +170,26 @@ func (c *cli) app(ctx context.Context) (*app.App, git.Repo, error) {
 		return nil, git.Repo{}, err
 	}
 	backend := ghstack.New(rt.Runner, rt.Git)
-	return app.New(app.Deps{
-		Git:    rt.Git,
-		Meta:   backend,
-		Forge:  github.New(rt.Runner),
+	deps := app.Deps{
+		Git:     rt.Git,
+		Meta:    backend,
+		Tracker: backend,
+		Restack: backend,
+		Forge:   github.New(rt.Runner),
+		AI: claudecode.New(rt.Runner, claudecode.Config{
+			Command: cfg.AICommand, Model: cfg.AIModel, ExtraPrompt: cfg.AIExtraPrompt, Timeout: cfg.AITimeout,
+		}, rt.Log),
 		Cache:  cache.New(repo),
 		Config: cfg,
 		Log:    rt.Log,
-	}), repo, nil
+	}
+	if rt.Interactive {
+		deps.Prompter = ui.Prompter{In: rt.Streams.In, Out: rt.Streams.Err, Ctx: ctx}
+		deps.Progress = func(ctx context.Context, message string, fn func(ctx context.Context) error) error {
+			return ui.WithSpinner(ctx, rt.Streams.In, rt.Streams.Err, message, fn)
+		}
+	}
+	return app.New(deps), repo, nil
 }
 
 // completionApp wires a read-only App for shell completion: metadata comes
@@ -224,8 +244,11 @@ func errFile(w io.Writer) *os.File {
 
 // NewRootCmd builds the command tree bound to the given streams.
 func NewRootCmd(streams Streams) *cobra.Command {
-	c := &cli{streams: streams}
+	return newRootCmd(&cli{streams: streams})
+}
 
+func newRootCmd(c *cli) *cobra.Command {
+	streams := c.streams
 	root := &cobra.Command{
 		Use:     "git-stack",
 		Short:   "Graphite-style stacked branches on top of gh stack",
@@ -257,6 +280,9 @@ func NewRootCmd(streams Streams) *cobra.Command {
 	must(root.RegisterFlagCompletionFunc("cwd", completeDirs))
 
 	root.AddCommand(
+		newCreateCmd(c),
+		newModifyCmd(c),
+		newRestackCmd(c),
 		newUpCmd(c),
 		newDownCmd(c),
 		newTopCmd(c),
