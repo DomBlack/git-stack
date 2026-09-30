@@ -65,9 +65,14 @@ type SubmitOptions struct {
 	Interactive bool
 }
 
+// SubmitResult carries the backend's human-readable output for relaying.
+type SubmitResult struct {
+	Output string
+}
+
 // Submitter pushes the current stack and creates or updates its PRs.
 type Submitter interface {
-	Submit(ctx context.Context, repo git.Repo, o SubmitOptions) error
+	Submit(ctx context.Context, repo git.Repo, o SubmitOptions) (SubmitResult, error)
 }
 
 // SyncOptions controls Syncer.Sync.
@@ -76,7 +81,12 @@ type SyncOptions struct {
 	Prune bool
 }
 
+// SyncResult carries the backend's human-readable output for relaying.
+type SyncResult struct {
+	Output string
+}
+
 // Syncer fetches, updates trunk, restacks and prunes the current stack.
 type Syncer interface {
-	Sync(ctx context.Context, repo git.Repo, o SyncOptions) error
+	Sync(ctx context.Context, repo git.Repo, o SyncOptions) (SyncResult, error)
 }

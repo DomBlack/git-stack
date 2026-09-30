@@ -175,6 +175,8 @@ func (c *cli) app(ctx context.Context) (*app.App, git.Repo, error) {
 		Meta:    backend,
 		Tracker: backend,
 		Restack: backend,
+		Submit:  backend,
+		Sync:    backend,
 		Forge:   github.New(rt.Runner),
 		AI: claudecode.New(rt.Runner, claudecode.Config{
 			Command: cfg.AICommand, Model: cfg.AIModel, ExtraPrompt: cfg.AIExtraPrompt, Timeout: cfg.AITimeout,
@@ -283,6 +285,8 @@ func newRootCmd(c *cli) *cobra.Command {
 		newCreateCmd(c),
 		newModifyCmd(c),
 		newRestackCmd(c),
+		newSubmitCmd(c),
+		newSyncCmd(c),
 		newUpCmd(c),
 		newDownCmd(c),
 		newTopCmd(c),
