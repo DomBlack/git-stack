@@ -292,6 +292,7 @@ func newRootCmd(c *cli) *cobra.Command {
 		newTopCmd(c),
 		newBottomCmd(c),
 		newCheckoutCmd(c),
+		newMcpCmd(c),
 		newCompletionCmd(c),
 	)
 	return root
