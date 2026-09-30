@@ -183,9 +183,14 @@ func TestTrunk(t *testing.T) {
 	if tr, err := empty.Trunk(ctx, repo); err != nil || tr != "main" {
 		t.Errorf("no stacks falls back to the default branch: %q %v", tr, err)
 	}
-	v, err := empty.View(ctx, repo, app.ViewOptions{})
-	if err != nil || len(v.Rows) != 1 || !v.Rows[0].IsTrunk || v.Rows[0].Name != "main" {
-		t.Errorf("empty repo view should show the default branch as trunk: %+v %v", v.Rows, err)
+	v, err := empty.View(ctx, repo, app.ViewOptions{IncludeUntracked: true})
+	if err != nil || len(v.Rows) != 5 || !v.Rows[0].IsTrunk || v.Rows[0].Name != "main" {
+		t.Errorf("empty repo view should show the default branch as trunk once, then the other branches: %+v %v", v.Rows, err)
+	}
+	for _, r := range v.Rows[1:] {
+		if r.Name == "main" || r.Tracked {
+			t.Errorf("unexpected row %+v", r)
+		}
 	}
 	gittest.Run(t, dir, "branch", "-m", "main", "trunk")
 	if _, err := empty.Trunk(ctx, repo); !errors.Is(err, &stack.Error{Kind: stack.KindNotInStack}) {

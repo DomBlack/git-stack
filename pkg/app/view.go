@@ -147,7 +147,7 @@ func (a *App) View(ctx context.Context, repo git.Repo, o ViewOptions) (*View, er
 
 	if o.IncludeUntracked {
 		for _, b := range branches {
-			if !graph.Tracked(b.Name) {
+			if !graph.Tracked(b.Name) && !slices.Contains(trunks, b.Name) {
 				v.Rows = append(v.Rows, a.row(b.Name, 0, "", false, current, local, -1))
 			}
 		}
