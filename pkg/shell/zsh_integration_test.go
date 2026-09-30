@@ -30,7 +30,10 @@ print -r -- "$buf"
 zpty -d z
 `
 
-var reANSI = regexp.MustCompile(`\x1b\[[0-9;?]*[A-Za-z]`)
+var (
+	reANSI  = regexp.MustCompile(`\x1b\[[0-9;?]*[A-Za-z]`)
+	reSpace = regexp.MustCompile(`[ \t]+`)
+)
 
 // TestZshGitIntegration checks that zsh's bundled _git dispatches
 // `git stack …` and the aliases to the installed _git-stack, including the
@@ -50,7 +53,8 @@ func TestZshGitIntegration(t *testing.T) {
 			Env: []string{"ZFUNC=" + filepath.Dir(e.files["zsh"]), "TERM=xterm", "COLUMNS=160", "LINES=40"},
 		})
 		out := reANSI.ReplaceAllString(strings.ReplaceAll(res.Out(), "\r", ""), "")
-		return out
+		// zsh pads the listing into columns; compare on single spaces.
+		return reSpace.ReplaceAllString(out, " ")
 	}
 	cases := []struct {
 		line string
