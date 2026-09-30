@@ -18,6 +18,9 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/DomBlack/git-stack/pkg/app"
+	"github.com/DomBlack/git-stack/pkg/backend/ghstack"
+	"github.com/DomBlack/git-stack/pkg/cache"
 	"github.com/DomBlack/git-stack/pkg/config"
 	"github.com/DomBlack/git-stack/pkg/exec"
 	"github.com/DomBlack/git-stack/pkg/git"
@@ -145,6 +148,44 @@ func (c *cli) completionRuntime() *Runtime {
 	}
 }
 
+// app wires the use cases with the real adapters for a command run. This is
+// the only place (with cmd/mcp.go) that imports adapters.
+func (c *cli) app(ctx context.Context) (*app.App, git.Repo, error) {
+	rt := c.runtime()
+	repo, err := rt.Repo(ctx)
+	if err != nil {
+		return nil, git.Repo{}, err
+	}
+	cfg, err := rt.Config(ctx)
+	if err != nil {
+		return nil, git.Repo{}, err
+	}
+	backend := ghstack.New(rt.Runner, rt.Git)
+	return app.New(app.Deps{
+		Git:    rt.Git,
+		Meta:   backend,
+		Cache:  cache.New(repo),
+		Config: cfg,
+		Log:    rt.Log,
+	}), repo, nil
+}
+
+// completionApp wires a read-only App for shell completion: metadata comes
+// from the backend's local file and only git may run.
+func (c *cli) completionApp(ctx context.Context) (*app.App, git.Repo, error) {
+	rt := c.completionRuntime()
+	repo, err := rt.Repo(ctx)
+	if err != nil {
+		return nil, git.Repo{}, err
+	}
+	return app.New(app.Deps{
+		Git:   rt.Git,
+		Meta:  ghstack.New(rt.Runner, rt.Git),
+		Cache: cache.New(repo),
+		Log:   rt.Log,
+	}), repo, nil
+}
+
 // onlyGit refuses to run anything but git; used for completion.
 type onlyGit struct{ exec.Runner }
 
@@ -214,6 +255,11 @@ func NewRootCmd(streams Streams) *cobra.Command {
 	must(root.RegisterFlagCompletionFunc("cwd", completeDirs))
 
 	root.AddCommand(
+		newUpCmd(c),
+		newDownCmd(c),
+		newTopCmd(c),
+		newBottomCmd(c),
+		newCheckoutCmd(c),
 		newCompletionCmd(c),
 	)
 	return root

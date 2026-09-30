@@ -1,0 +1,22 @@
+{
+  "schemaVersion": 1,
+  "repository": "github.com:DomBlack/git-stack",
+  "stacks": [
+    {
+      "id": "S_1",
+      "number": 7,
+      "trunk": { "branch": "main", "head": "1111111111111111111111111111111111111111" },
+      "branches": [
+        { "branch": "feat/api", "head": "aaaa", "base": "1111111111111111111111111111111111111111",
+          "pullRequest": { "number": 12, "id": "PR_a", "url": "https://github.com/DomBlack/git-stack/pull/12", "merged": false } },
+        { "branch": "feat/ui", "head": "bbbb", "base": "aaaa" }
+      ]
+    },
+    {
+      "trunk": { "branch": "main" },
+      "branches": [
+        { "branch": "fix/typo", "pullRequest": { "number": 3, "merged": true } }
+      ]
+    }
+  ]
+}
