@@ -103,7 +103,7 @@ func TestCheckoutCommand(t *testing.T) {
 		t.Error("unknown branch should fail")
 	}
 	_, err = run(t, "--cwd", dir, "checkout")
-	if err == nil || !strings.Contains(err.Error(), "no branch given") {
+	if err == nil || !strings.Contains(err.Error(), "no branch given and no terminal for the picker") {
 		t.Errorf("no-arg non-interactive: %v", err)
 	}
 }

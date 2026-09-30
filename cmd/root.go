@@ -23,6 +23,7 @@ import (
 	"github.com/DomBlack/git-stack/pkg/cache"
 	"github.com/DomBlack/git-stack/pkg/config"
 	"github.com/DomBlack/git-stack/pkg/exec"
+	"github.com/DomBlack/git-stack/pkg/forge/github"
 	"github.com/DomBlack/git-stack/pkg/git"
 	"github.com/DomBlack/git-stack/pkg/stack"
 )
@@ -164,6 +165,7 @@ func (c *cli) app(ctx context.Context) (*app.App, git.Repo, error) {
 	return app.New(app.Deps{
 		Git:    rt.Git,
 		Meta:   backend,
+		Forge:  github.New(rt.Runner),
 		Cache:  cache.New(repo),
 		Config: cfg,
 		Log:    rt.Log,

@@ -20,6 +20,8 @@ type ViewOptions struct {
 	IncludeUntracked bool
 	// SkipRestackCheck avoids the per-branch ancestry check (completion).
 	SkipRestackCheck bool
+	// PRs selects how pull-request state is obtained (default: none).
+	PRs PRMode
 }
 
 // Row is one line of the stack tree, in display order.
@@ -142,6 +144,9 @@ func (a *App) View(ctx context.Context, repo git.Repo, o ViewOptions) (*View, er
 				v.Rows = append(v.Rows, a.row(b.Name, 0, "", false, current, local, -1))
 			}
 		}
+	}
+	if prs := a.loadPRs(ctx, repo, o.PRs); prs != nil {
+		v.ApplyPRs(prs)
 	}
 	return v, nil
 }

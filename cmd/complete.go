@@ -66,7 +66,7 @@ func (c *cli) completionView(cmd *cobra.Command) (*app.View, bool) {
 	if err != nil {
 		return nil, false
 	}
-	v, err := a.View(ctx, repo, app.ViewOptions{IncludeUntracked: true, SkipRestackCheck: true})
+	v, err := a.View(ctx, repo, app.ViewOptions{IncludeUntracked: true, SkipRestackCheck: true, PRs: app.PRsCached})
 	if err != nil {
 		return nil, false
 	}
