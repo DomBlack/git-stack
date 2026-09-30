@@ -1,0 +1,228 @@
+# Architecture
+
+This is the design doc for git-stack. It started life as the plan before any code was
+written and has since been accepted and trimmed down to the bits that still matter; i.e.
+how the thing is put together, what we learnt about `gh stack` by reading its source, and
+the decisions that fell out of that (with the reasoning, so nobody has to rediscover it).
+
+If you want to know *what* a command does, `git stack <cmd> --help` and the README are the
+source of truth. This doc is about *why* it does it that way.
+
+## The shape of it
+
+It's a ports and adapters app, wired by hand in `cmd/root.go`.
+
+```
+cmd/            cobra commands (one per file)   -+
+pkg/mcp/        MCP tools                        +-> pkg/app (use cases) -> ports
+                                                 |      pkg/stack  Metadata, Tracker, Restacker, Submitter, Syncer
+                                                 |      pkg/forge  Forge (pull requests)
+                                                 |      pkg/ai     Drafter (commit and PR text)
+adapters: pkg/backend/ghstack, pkg/forge/github, pkg/ai/claudecode
+infra:    pkg/exec (subprocesses), pkg/git (typed git), pkg/config, pkg/cache, pkg/ui
+```
+
+The important rule is that `cmd/` and `pkg/mcp` are both thin. They parse input, call
+`pkg/app`, render output. Everything the CLI can do the MCP server can do, because they
+call the same use cases; if you find yourself writing logic in `cmd/` it's in the wrong
+place.
+
+The ports:
+
+- `pkg/stack` is the domain; the `Graph`/`Stack`/`Branch` model, pure navigation, and the
+  five stack ports. The only adapter today is `pkg/backend/ghstack`, which implements all
+  five by reading gh stack's metadata file and shelling out to `gh stack` for anything that
+  mutates.
+- `pkg/forge` is pull request operations with nothing GitHub specific in the signatures.
+  Adapter: `pkg/forge/github` via the `gh` CLI.
+- `pkg/ai` is the `Drafter` for commit messages, branch names and PR text. The prompts and
+  JSON schemas live here (vendor neutral); `pkg/ai/claudecode` is the adapter that runs
+  `claude -p`.
+
+These layering rules are enforced by `cmd/imports_test.go` rather than by convention;
+nothing in `pkg/` imports `cmd/`, adapters never import each other, only `cmd/root.go` and
+`cmd/mcp.go` may import adapters, `pkg/mcp` must never (even transitively) pull in `pkg/ui`,
+and nothing outside `pkg/exec` touches `os/exec`.
+
+### Adding an adapter
+
+1. Implement the port in a new subpackage (say `pkg/forge/gitlab`). Don't import other
+   adapters.
+2. Map subprocess or API failures to `*stack.Error` with a `Kind` and `NextSteps`. The
+   next steps are what the CLI prints as bullets and what the MCP server returns as
+   `next_steps`, so write them as things a person (or agent) can actually run.
+3. Wire it in `cmd/root.go` (and `cmd/mcp.go` if the server needs it).
+4. Fakes and tests; nothing in the default test run may hit the network.
+
+### Subprocesses
+
+Everything goes through `pkg/exec.Runner`. Capture is the default. Passthrough (a real
+TTY handed to the child) is opt in, only exists on the CLI runner, and is only used for
+`git add -p`, editors, and `gh stack submit`'s interactive editor. The MCP runner is built
+without a TTY so it physically can't enter passthrough mode, which is how we guarantee an
+MCP tool never blocks waiting on a terminal.
+
+## What gh stack actually is
+
+All of this came from reading the gh-stack source (pinned at commit `2bd699a`, a copy of
+its `schema.json` sits in `pkg/backend/ghstack/testdata`). Several of these findings
+overturned assumptions in the original brief, so they're worth keeping.
+
+**Storage.** One JSON file at `<git-dir>/gh-stack` (`schemaVersion: 1`), plus
+`gh-stack.lock`, `gh-stack-rebase-state` and `gh-stack-modify-state` next to it. No refs,
+no git config keys. The shape is roughly;
+
+```json
+{ "schemaVersion": 1, "repository": "github.com:owner/name",
+  "stacks": [ { "id": "12345", "number": 7,
+                "trunk": { "branch": "main", "head": "<sha>" },
+                "branches": [ { "branch": "a", "head": "<sha>", "base": "<parent tip at last rebase>",
+                                "pullRequest": { "number": 1, "id": "PR_x", "url": "...", "merged": false } } ] } ] }
+```
+
+- The parent relationship is array order (bottom to top). There is no parent field, so
+  stacks are strictly linear.
+- Trunk is per stack and several stacks can share one. A branch is in at most one stack.
+- `<git-dir>` is per worktree, so a linked worktree doesn't see the main checkout's stacks.
+- `gh stack view --json` exists but only covers the current stack, calls the GitHub API,
+  and writes the stack file as a side effect. Useless for completion or for listing every
+  stack.
+
+**Exit codes** (from `cmd/utils.go` in gh-stack):
+
+| Code | Meaning |
+|---|---|
+| 1 | generic, or already printed (cobra flag errors too) |
+| 2 | not a repo / not in a stack |
+| 3 | rebase conflict |
+| 4 | GitHub API failure |
+| 5 | invalid arguments at runtime (e.g. `add` when not at the top) |
+| 6 | disambiguation needed (shared trunk, several stacks) |
+| 7 | rebase already in progress (only from `modify`; `rebase` exits 1 for the same thing) |
+| 8 | stack file locked or stale (5 second flock) |
+| 9 | stacked PRs unavailable (in non-interactive `submit` this fires on *any* list failure, auth included) |
+| 10 | `modify` recovery state present |
+
+**`add`** is append only and must be run from the top (otherwise exit 5). Two quirks we had
+to design around;
+
+1. Running `add` from trunk appends to the existing stack on that trunk instead of starting
+   a new one.
+2. With `-m`/`-A`/`-u`, if the current branch has no commits beyond its parent the commit
+   lands on the *current* branch and no new branch is created.
+
+**`rebase --upstack --no-trunk`** is exactly the "restack after amend" operation we need.
+With `--no-trunk` there's no fetch and no trunk update; it rebases the current branch onto
+its parent and carries on upward. The bottom branch is never rebased onto trunk in this
+mode. There is no `--only`.
+
+**`submit`** has `--auto`, `--open` and `--remote`, nothing else. It always submits the
+whole stack, new PRs are drafts unless `--open`, and there's no title/body/dry run. If
+stdout is a TTY and `--auto` isn't passed it opens a full screen editor.
+
+**`sync`** covers the current stack only; fetch, reconcile the remote stack, update trunk,
+cascade rebase if needed, push, sync PRs, prune with `--prune`. If the remote has diverged
+non-interactively it prints "Sync aborted" and exits 0 (yes, zero).
+
+**Interactivity** is `stdout is a TTY || GH_FORCE_TTY is set`. Stdin isn't consulted. So
+capturing stdout is a universal non-interactive switch, and we also strip `GH_FORCE_TTY`
+from the environment in capture mode.
+
+**It can't be a Go dependency.** The stack code is under `internal/`, and the one
+importable `cmd` package drags in bubbletea v1. Hence the schema mirror in
+`pkg/backend/ghstack/file.go`.
+
+## Decisions and why
+
+**Read the metadata file directly, never write it.** It's the only way to see every stack,
+it works offline, it's fast enough for completion, and gh-stack documents the file as a
+stable interface in its own AGENTS.md. Every mutation still goes through a `gh stack`
+command so there's exactly one writer.
+
+**Navigation is native.** `up`/`down`/`top`/`bottom` are a pure function over the graph
+followed by `git switch`, with Graphite's semantics rather than gh-stack's; `down` from the
+bottom branch lands on trunk, overshooting clamps silently, merged branches are skipped. We
+also check `worktreepath` before switching so you get told which worktree has the branch
+rather than a confusing git error.
+
+**`create` from trunk runs `gh stack init`, from the top runs `gh stack add`, and we
+always commit natively.** This sidesteps both `add` quirks above. From the middle of a
+stack you get a `not_at_top` error with next steps; from an untracked branch you get told
+the branch isn't in a stack (Graphite does the same). `--insert` is accepted and fails with
+an explanation, so the flag is there for a future backend that can do it.
+
+**`modify` amends natively, then `gh stack rebase --upstack --no-trunk`** if there's
+anything above. Conflicts come back as a `conflict` error listing the files and the
+`--continue`/`--abort` commands.
+
+**`restack` and the bottom branch.** Because of `--no-trunk`, a plain restack never moves
+the bottom branch onto a moved trunk. Rather than reimplement that step (which would need
+our own continue state), we detect that the bottom branch is behind trunk and print a notice
+pointing at `git stack sync`. Doing the bottom branch natively is the obvious follow up if
+the notice gets annoying.
+
+**`submit --ai` drafts first, then lets gh stack submit, then fixes the PRs up.** The
+alternative was to push and create PRs ourselves and only use gh stack to link them. We
+didn't, because gh stack owns the push (`--force-with-lease`), the base calculation, the
+remote stack object and the PR records in the local file, and its `link` command pushes
+without force and needs at least two PRs. The cost of our route is a few seconds where a new
+PR shows gh stack's auto generated title before we overwrite it; drafting *before* the
+submit keeps that window as small as possible. The MCP `stack_submit` tool goes down the
+same path with the agent's own titles and bodies instead of the Drafter.
+
+**New PRs: ask, and default to drafts.** On a terminal `submit` asks draft or publish
+unless `-d`/`-p` is passed; non-interactively it drafts. `stack.submit.default` skips the
+question.
+
+**What we deliberately don't mirror from `gt` (yet).** `create --insert`, `restack --only`,
+`submit --update-only`, `submit --edit-title/--edit-description`, `sync --all`,
+`sync --no-restack` and `modify --into` all need a backend that can do more than gh stack
+can. Each prints a single line saying why. `sync --all` *could* be done by checking out the
+bottom of each stack and syncing in turn, but that's slow and moves HEAD around, so no.
+
+**Claude Code is driven through `claude -p`**, not an SDK, so it uses whatever login you
+already have. The call is `--tools ""`, `--output-format json`, `--json-schema <schema>`,
+`--strict-mcp-config`, `--no-session-persistence`, `--permission-prompts none`, with the
+diff on stdin and the answer read from `structured_output`. Things learnt the hard way;
+`--strict-mcp-config` is mandatory (without it Claude loaded every connector on the machine
+and the request failed as too long at ~256k tokens), there is no `--max-turns` in current
+versions so we bound the call with a context timeout instead, and `--bare` is rejected
+because it disables keychain auth. Default model is `haiku`; a call is about 9 seconds and
+roughly $0.02.
+
+**PR state is cached** under `<git-common-dir>/git-stack` with a TTL (default 5m) and used
+stale while revalidate; the checkout picker renders from the cache straight away and
+refreshes in the background, completion only ever reads it, and the MCP `stack_view`
+refreshes when stale unless told not to.
+
+**Completion only runs `git`.** It reads the metadata file and the PR cache, never
+`gh` or `claude`, never prompts, and the test suite walks the whole command tree to make
+sure every command and every non bool flag is completable. The shell side (how `git ss
+<TAB>` gets back to us through bash, zsh and fish's own git completion) is written up in
+[`completion.md`](completion.md).
+
+**MCP and roots.** Protocol 2026-07-28 (the SDK default) removed the initialise handshake
+and roots altogether, and older protocols forbid `roots/list` while a request is being
+served. So roots are fetched asynchronously at session start for old protocol clients only,
+and resolution is `repo_path`, then roots, then cwd. See [`mcp.md`](mcp.md) for the tools.
+
+**No task runner, no fuzzy matching dependency.** The whole check is `go build`, `go vet`,
+`golangci-lint run`, `go test` (recorded in AGENTS.md and CI), and the picker's filter is a
+small native subsequence matcher.
+
+## Testing
+
+The rules are in AGENTS.md; the short version is that tests must never touch the real user
+environment (`gittest.Isolate`), `gh`/`claude`/`codex` are faked, nothing in the default
+run hits the network, TUIs get teatest goldens at a fixed size and colour profile, MCP tools
+are tested over the in memory transport with a guard that fails if anything writes to
+stdout, and the shell hooks are tested against real shells (zsh via zpty, pressing Tab for
+real) behind the `shellintegration` tag.
+
+## Later
+
+- A native backend (our own metadata and push) would unlock everything in the "don't
+  mirror" list above. The ports are shaped for it already; `Children` returns a slice and
+  `Scope` has an `Only` even though gh stack can't use them.
+- Rebase the bottom branch onto local trunk during `restack` instead of printing a notice.
+- `submit --reviewers`/`--team-reviewers` via the forge after submit.
