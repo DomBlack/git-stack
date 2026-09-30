@@ -9,8 +9,9 @@ It's a CLI for stacked branches, installed as `git-stack` so git picks it up as
 i.e. the metadata lives in your repo and the PRs are plain GitHub PRs. The same binary also
 runs as a stdio MCP server so coding agents can drive the stack the same way you do.
 
-**Status:** under construction. The design, what we learnt about gh stack and the reasoning
-behind the decisions are in [`docs/architecture.md`](docs/architecture.md).
+The design, what we learnt about gh stack and the reasoning behind the decisions are in
+[`docs/architecture.md`](docs/architecture.md), if you want to know why things are the way
+they are.
 
 ## Install
 
@@ -76,17 +77,48 @@ git co                      # the picker, if you've lost track of where you are
 works just as well. `git ss --ai -p` drafts the PR titles and bodies for you and opens
 them ready for review rather than as drafts.
 
-## Shell completion
+## `git stack install`
 
-`git stack install` sets up completion for your shell, and that includes `git stack <TAB>`
-and the aliases (`git co <TAB>`), which is the bit that normally doesn't work with git
-subcommands. Details in [`docs/completion.md`](docs/completion.md).
+One command sets everything up. `--dry-run` prints every change before it happens, and
+`--uninstall` removes exactly what was installed and nothing else (we record what we touched in
+`git config --global stack.managed*`, so we never guess).
 
-## Agents
+- **Aliases** (`--aliases`, on by default): `git create|modify|restack|submit|sync|up|down|top|bottom`
+  and the short ones `git c|m|rs|ss|u|d|t|b|co`, written with `git config --global`. Anything
+  that clashes with a git builtin or an installed command is skipped, and an alias you already
+  have is only replaced if you pass `--force` or say yes when asked.
+- **Completion** (`--completion`, `--shell bash|zsh|fish`): the cobra completion script plus the
+  hooks that make `git stack <TAB>` and the aliases complete. See
+  [`docs/completion.md`](docs/completion.md).
+- **Agents** (`--agents`): registers `git stack mcp` with Claude Code (`claude mcp add -s user`)
+  and Codex (`codex mcp add`) using the absolute path of the binary. If a CLI isn't installed
+  it's skipped. See [`docs/mcp.md`](docs/mcp.md).
+- **Skill** (`--skill`, asked interactively if you don't pass it): a Claude Code skill at
+  `~/.claude/skills/git-stack/SKILL.md` describing the stacked workflow.
 
-`git stack install` also registers `git stack mcp` with Claude Code and Codex at user scope,
-and can drop in a Claude Code skill that explains the stacked workflow so the agent actually
-uses it. See [`docs/mcp.md`](docs/mcp.md).
+## Configuration
+
+Everything is plain `git config`, so set it globally or per repo as you like.
+
+| `git config` key | Default | Meaning |
+|---|---|---|
+| `stack.branchPrefix` | (none) | prefix for generated branch names, e.g. `dom/` |
+| `stack.ai.command` | `claude` | the Claude Code binary used for `--ai` |
+| `stack.ai.model` | `haiku` | model alias passed to `--model` |
+| `stack.ai.extraPrompt` | (none) | house style instructions appended to the prompts |
+| `stack.ai.timeout` | `60s` | timeout per AI call |
+| `stack.cacheTTL` | `5m` | how long pull request state is cached for |
+| `stack.submit.default` | `ask` | `draft`, `publish` or `ask` for new PRs |
+
+## Differences from Graphite
+
+It's worth being upfront about this; gh stack is linear and only lets you add branches at the
+top, so a handful of `gt` behaviours aren't possible yet: `create --insert`, `restack --only`,
+`submit --update-only`, `sync --all` and `modify --into`. Each one prints a single line saying
+why rather than silently doing something else.
+
+`submit` also always submits the whole stack (gt submits downstack by default). Pass `--stack`
+to acknowledge that's what you want.
 
 ## Development
 

@@ -36,3 +36,24 @@ jobs:
       - uses: golangci/golangci-lint-action@v8
         with:
           version: v2.13.2
+
+  shell-integration:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.27.x"
+          check-latest: true
+      - name: Install shells
+        run: |
+          if [ "$RUNNER_OS" = "Linux" ]; then
+            sudo apt-get update && sudo apt-get install -y fish zsh bash-completion
+          else
+            brew install fish
+          fi
+      - run: go test -tags shellintegration -run 'GitIntegration' -v ./pkg/shell/

@@ -45,6 +45,7 @@ git-stack is a Graphite-style stacked-branch CLI (`git stack <cmd>`) and stdio M
 - Tests must never touch the real user environment. Use `gittest.Isolate(t)` (sets `HOME`, `XDG_CONFIG_HOME`, `GIT_CONFIG_GLOBAL`, `GIT_CONFIG_NOSYSTEM`) in any test that runs git or installers.
 - `gh`, `claude` and `codex` are faked with `exectest.Fake` in unit tests and with recording executables on `PATH` in integration tests. No network in the default test run; live tests sit behind the `live` build tag.
 - Domain logic gets table-driven unit tests; `pkg/git` gets integration tests against temp repos; TUIs get teatest golden snapshots with fixed size and colour profile; MCP tools get in-memory-transport tests.
+- Shell completion hooks are verified against real shells with `go test -tags shellintegration ./pkg/shell/` (fish, bash; zsh via zpty). Run it after touching `pkg/shell/hooks`.
 
 ## Workflow
 - Small, focused commits; each leaves the tree green.
