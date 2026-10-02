@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/DomBlack/git-stack/pkg/exec"
 )
@@ -15,11 +16,38 @@ import (
 // Client runs git commands.
 type Client struct {
 	run exec.Runner
+	// lockBudget is how long to keep retrying a command that failed because
+	// another process holds .git/index.lock. Zero disables retries.
+	lockBudget time.Duration
+	sleep      func(context.Context, time.Duration) error
+}
+
+// Option configures a Client.
+type Option func(*Client)
+
+// DefaultLockRetryBudget is how long git commands wait for a held index lock
+// before giving up. IDEs and agents take the lock for milliseconds at a time
+// while refreshing status, which is plenty to make a bare `git add` fail.
+const DefaultLockRetryBudget = 2 * time.Second
+
+// WithLockRetry sets the retry budget for a held index lock and the function
+// used to wait between attempts (tests pass a fake).
+func WithLockRetry(budget time.Duration, sleep func(context.Context, time.Duration) error) Option {
+	return func(c *Client) {
+		c.lockBudget = budget
+		if sleep != nil {
+			c.sleep = sleep
+		}
+	}
 }
 
 // New returns a Client that runs git through r.
-func New(r exec.Runner) *Client {
-	return &Client{run: r}
+func New(r exec.Runner, opts ...Option) *Client {
+	c := &Client{run: r, lockBudget: DefaultLockRetryBudget, sleep: sleepCtx}
+	for _, o := range opts {
+		o(c)
+	}
+	return c
 }
 
 // Runner exposes the underlying runner (used by adapters that run other
@@ -49,8 +77,52 @@ var ErrDetached = errors.New("HEAD is detached")
 // baseEnv keeps git output parseable and non-interactive.
 var baseEnv = []string{"GIT_TERMINAL_PROMPT=0", "LC_ALL=C"}
 
+// git runs a captured git command. If git reports that another process
+// holds the index lock it retries with a short backoff until lockBudget is
+// spent, so an IDE or agent refreshing status in the background doesn't fail
+// the user's command.
 func (c *Client) git(ctx context.Context, dir string, args ...string) (exec.Result, error) {
-	return c.run.Run(ctx, exec.Cmd{Name: "git", Args: args, Dir: dir, Env: baseEnv})
+	cmd := exec.Cmd{Name: "git", Args: args, Dir: dir, Env: baseEnv}
+	var waited time.Duration
+	delay := 25 * time.Millisecond
+	for {
+		res, err := c.run.Run(ctx, cmd)
+		if err == nil || !isIndexLocked(err) {
+			return res, err
+		}
+		if waited+delay > c.lockBudget {
+			return res, fmt.Errorf("git %s: the repository index is locked (.git/index.lock) and stayed locked for %s; "+
+				"another git process (an IDE, another agent) is running, or the lock file is stale and can be deleted: %w",
+				strings.Join(args, " "), c.lockBudget, err)
+		}
+		if err := c.sleep(ctx, delay); err != nil {
+			return res, err
+		}
+		waited += delay
+		delay = min(delay*2, 400*time.Millisecond)
+	}
+}
+
+// isIndexLocked reports whether err is git refusing to run because
+// .git/index.lock already exists.
+func isIndexLocked(err error) bool {
+	ee, ok := errors.AsType[*exec.ExitError](err)
+	if !ok || ee.Result.ExitCode != 128 {
+		return false
+	}
+	stderr := ee.Result.Err()
+	return strings.Contains(stderr, "index.lock") || strings.Contains(stderr, "Another git process seems to be running")
+}
+
+func sleepCtx(ctx context.Context, d time.Duration) error {
+	t := time.NewTimer(d)
+	defer t.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-t.C:
+		return nil
+	}
 }
 
 // gitIn runs git inside the repo's working tree.

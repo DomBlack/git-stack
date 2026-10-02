@@ -96,7 +96,7 @@ type ExitError struct {
 }
 
 func (e *ExitError) Error() string {
-	msg := fmt.Sprintf("%s exited with code %d", e.Cmd.Name, e.Result.ExitCode)
+	msg := fmt.Sprintf("%s exited with code %d", e.Cmd.String(), e.Result.ExitCode)
 	if s := e.Result.Err(); s != "" {
 		msg += ": " + lastLine(s)
 	}

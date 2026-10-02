@@ -62,6 +62,12 @@ TTY handed to the child) is opt in, only exists on the CLI runner, and is only u
 without a TTY so it physically can't enter passthrough mode, which is how we guarantee an
 MCP tool never blocks waiting on a terminal.
 
+`pkg/git` also retries a command that failed because another process held
+`.git/index.lock`, backing off from 25ms up to 400ms for about 2 seconds in total before
+giving up with an error that names the command. IDEs and coding agents take that lock for a
+few milliseconds every time they refresh status, and in a big repo a bare `git add -A` lands
+in that window often enough to be annoying; git itself never retries.
+
 ## What gh stack actually is
 
 All of this came from reading the gh-stack source (pinned at commit `2bd699a`, a copy of
