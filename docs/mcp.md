@@ -30,6 +30,10 @@ path is resolved with `git rev-parse`; anything outside a repository returns `no
 Agents write commit messages and PR text themselves; `use_ai` opts into git-stack's own
 Claude Code drafter.
 
+`git stack version` and `git stack update` have no MCP tools on purpose; they're about the
+binary, not the stack, and an agent replacing the server it's talking to mid session is not
+something we want to make easy. The server does report its version in the MCP handshake.
+
 ## Errors
 
 Tool errors (`isError: true`) carry a JSON object in the text content:

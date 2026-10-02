@@ -44,6 +44,7 @@ If you know `gt` you already know most of this; the table is the mapping.
 | (none) | `git stack completion <shell>` | bash, zsh, fish |
 | (none) | `git stack mcp` | stdio MCP server |
 | (none) | `git stack version` | `--json` for scripts |
+| (none) | `git stack update` | `--check` `--force`; plain HTTPS, no login needed |
 
 ## Day to day
 
@@ -120,6 +121,15 @@ why rather than silently doing something else.
 
 `submit` also always submits the whole stack (gt submits downstack by default). Pass `--stack`
 to acknowledge that's what you want.
+
+## Updating
+
+`git stack update` fetches the latest GitHub release over plain HTTPS (no `gh` login
+needed), checks the archive against the release's `checksums.txt` and swaps the binary in
+place. `--check` just tells you whether there's something newer.
+
+If you built from source, `git stack version` says `dev` along with the commit, and `update`
+leaves you alone unless you pass `--force`; i.e. we assume you built it that way on purpose.
 
 ## Releasing
 

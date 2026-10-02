@@ -28,6 +28,7 @@ import (
 	"github.com/DomBlack/git-stack/pkg/git"
 	"github.com/DomBlack/git-stack/pkg/stack"
 	"github.com/DomBlack/git-stack/pkg/ui"
+	"github.com/DomBlack/git-stack/pkg/update"
 	"github.com/DomBlack/git-stack/pkg/version"
 )
 
@@ -102,8 +103,12 @@ type cli struct {
 	globals Globals
 	// newRunner builds the subprocess runner; tests inject fakes here.
 	newRunner func(opts ...exec.Option) exec.Runner
-	rtOnce    sync.Once
-	rt        *Runtime
+	// updateClient and updateTarget override the release source and the
+	// binary that `update` replaces; tests inject these.
+	updateClient *update.Client
+	updateTarget string
+	rtOnce       sync.Once
+	rt           *Runtime
 }
 
 // runtime builds the full Runtime (TTY-aware runner, prompts allowed when
@@ -294,6 +299,7 @@ func newRootCmd(c *cli) *cobra.Command {
 		newMcpCmd(c),
 		newCompletionCmd(c),
 		newVersionCmd(c),
+		newUpdateCmd(c),
 	)
 	return root
 }

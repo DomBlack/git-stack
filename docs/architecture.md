@@ -206,6 +206,16 @@ and roots altogether, and older protocols forbid `roots/list` while a request is
 served. So roots are fetched asynchronously at session start for old protocol clients only,
 and resolution is `repo_path`, then roots, then cwd. See [`mcp.md`](mcp.md) for the tools.
 
+**Version and self update.** `pkg/version` tries three sources; the value goreleaser stamps
+in with ldflags, then the module version `go install @vX.Y.Z` records in the build info, then
+the VCS details `go build` records for a checkout (so a dev build says `dev (3a9f2c1,
+2026-09-30, dirty)` rather than just `dev`). `pkg/update` talks plain HTTPS to the GitHub
+releases API and the asset URLs rather than going through `gh`, so updating doesn't need a
+login. It verifies the archive against goreleaser's `checksums.txt`, writes the new binary
+next to the old one and renames it into place. Dev builds aren't replaced without `--force`.
+Releases are cut by tagging; the workflow runs goreleaser for linux and darwin on amd64 and
+arm64.
+
 **No task runner, no fuzzy matching dependency.** The whole check is `go build`, `go vet`,
 `golangci-lint run`, `go test` (recorded in AGENTS.md and CI), and the picker's filter is a
 small native subsequence matcher.
