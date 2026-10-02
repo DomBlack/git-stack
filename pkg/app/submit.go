@@ -90,12 +90,6 @@ func (a *App) Submit(ctx context.Context, repo git.Repo, o SubmitOptions) (Submi
 	}
 	res := SubmitResult{Stack: s.Names(), DryRun: o.DryRun}
 
-	draft, err := a.submitDraftChoice(o)
-	if err != nil {
-		return SubmitResult{}, err
-	}
-	res.Draft = draft
-
 	// Existing PRs decide which branches are new.
 	before := PRsFor(a.loadPRs(ctx, repo, PRsFresh))
 	var newBranches []string
@@ -113,6 +107,14 @@ func (a *App) Submit(ctx context.Context, repo git.Repo, o SubmitOptions) (Submi
 		}
 		res.PullRequests = append(res.PullRequests, entry)
 	}
+
+	// Draft or ready for review only matters for PRs that are about to be
+	// created, so the question is only asked when there is at least one.
+	draft, err := a.submitDraftChoice(o, len(newBranches) > 0)
+	if err != nil {
+		return SubmitResult{}, err
+	}
+	res.Draft = draft
 	if o.DryRun {
 		return res, nil
 	}
@@ -183,8 +185,9 @@ func (a *App) Submit(ctx context.Context, repo git.Repo, o SubmitOptions) (Submi
 }
 
 // submitDraftChoice resolves draft vs publish from flags, config and, when
-// possible, a prompt.
-func (a *App) submitDraftChoice(o SubmitOptions) (bool, error) {
+// ask is true and a prompter exists, a prompt. With nothing to ask about
+// (no new PRs) the configured default is used silently.
+func (a *App) submitDraftChoice(o SubmitOptions, ask bool) (bool, error) {
 	switch {
 	case o.Draft && o.Publish:
 		return false, stack.New(stack.KindInvalidArgs, "--draft and --publish are mutually exclusive")
@@ -199,7 +202,7 @@ func (a *App) submitDraftChoice(o SubmitOptions) (bool, error) {
 	case config.SubmitPublish:
 		return false, nil
 	}
-	if a.d.Prompter == nil {
+	if a.d.Prompter == nil || !ask {
 		return true, nil
 	}
 	i, err := a.d.Prompter.Select("Create new pull requests as", []string{"draft", "ready for review"})
