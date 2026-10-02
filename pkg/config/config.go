@@ -17,6 +17,7 @@ const (
 	KeyAIModel        = "stack.ai.model"
 	KeyAIExtraPrompt  = "stack.ai.extraPrompt"
 	KeyAITimeout      = "stack.ai.timeout"
+	KeyAIAuto         = "stack.ai.auto"
 	KeyCacheTTL       = "stack.cacheTTL"
 	KeySubmitDefault  = "stack.submit.default"
 	KeyManagedAliases = "stack.managedAliases"
@@ -37,7 +38,10 @@ type Config struct {
 	AIModel       string
 	AIExtraPrompt string
 	AITimeout     time.Duration
-	CacheTTL      time.Duration
+	// AIAuto makes create and submit behave as if --ai was passed, unless
+	// --no-ai is given.
+	AIAuto   bool
+	CacheTTL time.Duration
 	// SubmitDefault is ask, draft or publish.
 	SubmitDefault  string
 	ManagedAliases []string
@@ -86,6 +90,12 @@ func FromEntries(entries []git.ConfigEntry) (*Config, error) {
 				return nil, fmt.Errorf("%s: %w", KeyAITimeout, err)
 			}
 			c.AITimeout = d
+		case strings.ToLower(KeyAIAuto):
+			b, err := parseBool(v)
+			if err != nil {
+				return nil, fmt.Errorf("%s: %w", KeyAIAuto, err)
+			}
+			c.AIAuto = b
 		case strings.ToLower(KeyCacheTTL):
 			d, err := time.ParseDuration(v)
 			if err != nil {
@@ -106,4 +116,15 @@ func FromEntries(entries []git.ConfigEntry) (*Config, error) {
 		}
 	}
 	return c, nil
+}
+
+// parseBool accepts what git itself accepts for a boolean.
+func parseBool(v string) (bool, error) {
+	switch strings.ToLower(v) {
+	case "true", "yes", "on", "1":
+		return true, nil
+	case "false", "no", "off", "0", "":
+		return false, nil
+	}
+	return false, fmt.Errorf("%q is not a boolean (true/false)", v)
 }

@@ -237,6 +237,22 @@ func newLogger(w io.Writer, debug bool) *slog.Logger {
 // report is the Reporter for this invocation (built with the runtime).
 func (c *cli) report() *ui.Reporter { return c.runtime().Report }
 
+// wantAI resolves the --ai / --no-ai flags against stack.ai.auto: --no-ai
+// always wins, otherwise --ai or the config turns drafting on.
+func (c *cli) wantAI(ctx context.Context, ai, noAI bool) (bool, error) {
+	if noAI {
+		return false, nil
+	}
+	if ai {
+		return true, nil
+	}
+	cfg, err := c.runtime().Config(ctx)
+	if err != nil {
+		return false, err
+	}
+	return cfg.AIAuto, nil
+}
+
 func isTerminal(v any) bool {
 	f, ok := v.(*os.File)
 	if !ok {

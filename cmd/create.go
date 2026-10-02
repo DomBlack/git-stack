@@ -30,11 +30,15 @@ by --ai). With nothing staged an empty branch is created.`,
 			if err != nil {
 				return err
 			}
+			ai, err := c.wantAI(ctx, useAI, noAI)
+			if err != nil {
+				return err
+			}
 			o := app.CreateOptions{
 				Message:  messages,
 				Staging:  staging,
 				Insert:   insert,
-				UseAI:    useAI && !noAI,
+				UseAI:    ai,
 				NoVerify: c.globals.NoVerify,
 			}
 			if len(args) == 1 {
@@ -58,8 +62,8 @@ by --ai). With nothing staged an empty branch is created.`,
 	must(cmd.RegisterFlagCompletionFunc("message", completeNothing))
 	st.add(cmd)
 	cmd.Flags().BoolVarP(&insert, "insert", "i", false, "insert between the current branch and its child (not supported by gh stack yet)")
-	cmd.Flags().BoolVar(&useAI, "ai", false, "draft the branch name (and the commit message if -m is absent) with Claude Code")
-	cmd.Flags().BoolVar(&noAI, "no-ai", false, "never use AI; takes precedence over --ai")
+	cmd.Flags().BoolVar(&useAI, "ai", false, "draft the branch name (and the commit message if -m is absent) with Claude Code; git config stack.ai.auto true makes this the default")
+	cmd.Flags().BoolVar(&noAI, "no-ai", false, "never use AI; takes precedence over --ai and stack.ai.auto")
 	return cmd
 }
 

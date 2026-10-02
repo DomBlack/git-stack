@@ -40,12 +40,16 @@ pass --stack to acknowledge the difference and silence the notice.`,
 				return err
 			}
 			rep := c.report()
+			ai, err := c.wantAI(ctx, useAI, noAI)
+			if err != nil {
+				return err
+			}
 			res, err := a.Submit(ctx, repo, app.SubmitOptions{
 				Draft:      draft,
 				Publish:    publish,
 				NoEdit:     noEdit || (!edit && c.globals.NoInteractive),
 				DryRun:     dryRun,
-				UseAI:      useAI && !noAI,
+				UseAI:      ai,
 				UpdateOnly: updateOnly,
 			})
 			if err != nil {
@@ -100,7 +104,7 @@ pass --stack to acknowledge the difference and silence the notice.`,
 	cmd.MarkFlagsMutuallyExclusive("edit", "no-edit")
 	cmd.Flags().BoolVarP(&updateOnly, "update-only", "u", false, "only update branches that already have PRs (not supported by gh stack)")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "report what would be submitted without pushing")
-	cmd.Flags().BoolVar(&useAI, "ai", false, "draft titles and descriptions for new PRs with Claude Code")
-	cmd.Flags().BoolVar(&noAI, "no-ai", false, "never use AI; takes precedence over --ai")
+	cmd.Flags().BoolVar(&useAI, "ai", false, "draft titles and descriptions for new PRs with Claude Code; git config stack.ai.auto true makes this the default")
+	cmd.Flags().BoolVar(&noAI, "no-ai", false, "never use AI; takes precedence over --ai and stack.ai.auto")
 	return cmd
 }

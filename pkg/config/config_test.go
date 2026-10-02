@@ -18,6 +18,7 @@ func TestFromEntries(t *testing.T) {
 		{Key: "stack.branchprefix", Value: "dom/"},
 		{Key: "stack.ai.model", Value: "sonnet"},
 		{Key: "stack.ai.timeout", Value: "2m"},
+		{Key: "stack.ai.auto", Value: "yes"},
 		{Key: "stack.cachettl", Value: "30s"},
 		{Key: "stack.submit.default", Value: "publish"},
 		{Key: "stack.managedaliases", Value: "c"},
@@ -33,6 +34,9 @@ func TestFromEntries(t *testing.T) {
 	if c.AITimeout != 2*time.Minute || c.CacheTTL != 30*time.Second {
 		t.Errorf("durations: %+v", c)
 	}
+	if !c.AIAuto {
+		t.Errorf("stack.ai.auto yes should enable auto AI: %+v", c)
+	}
 	if c.SubmitDefault != config.SubmitPublish || !slices.Equal(c.ManagedAliases, []string{"c", "co"}) {
 		t.Errorf("submit/aliases: %+v", c)
 	}
@@ -43,6 +47,7 @@ func TestFromEntriesRejectsBadValues(t *testing.T) {
 		{Key: "stack.ai.timeout", Value: "soon"},
 		{Key: "stack.cachettl", Value: "5"},
 		{Key: "stack.submit.default", Value: "maybe"},
+		{Key: "stack.ai.auto", Value: "sometimes"},
 	} {
 		_, err := config.FromEntries([]git.ConfigEntry{e})
 		if err == nil || !strings.Contains(err.Error(), "stack.") {

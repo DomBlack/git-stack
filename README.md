@@ -79,7 +79,9 @@ git co                      # the picker, to jump somewhere else
 
 `--ai` is optional everywhere; `git create -a -m "message"` or plain `git create name`
 works just as well. `git ss --ai -p` drafts the PR titles and bodies for you and opens
-them ready for review rather than as drafts.
+them ready for review rather than as drafts. If you always want the drafting, set
+`git config --global stack.ai.auto true` and drop the flag; `--no-ai` turns it off for one
+run.
 
 ### Where am I?
 
@@ -135,6 +137,7 @@ Everything is plain `git config`, so set it globally or per repo as you like.
 | `stack.ai.model` | `haiku` | model alias passed to `--model` |
 | `stack.ai.extraPrompt` | (none) | house style instructions appended to the prompts |
 | `stack.ai.timeout` | `60s` | timeout per AI call |
+| `stack.ai.auto` | `false` | `true` makes `create` and `submit` behave as if `--ai` was passed; `--no-ai` still wins |
 | `stack.cacheTTL` | `5m` | how long pull request state is cached for |
 | `stack.submit.default` | `ask` | `draft`, `publish` or `ask` for new PRs |
 
