@@ -81,6 +81,30 @@ git co                      # the picker, to jump somewhere else
 works just as well. `git ss --ai -p` drafts the PR titles and bodies for you and opens
 them ready for review rather than as drafts.
 
+### Where am I?
+
+`git stack` on its own (or `git stack log`) shows every stack the way `gt log` does; trunk at
+the bottom, newest branch at the top, `●` on the branch you're on, and under each branch its
+PR (clickable in terminals that support it), how old it is and whether it needs a restack.
+Two stacks on the same trunk sit side by side and join above it.
+
+```
+● billing-webhook-retries
+│  #418 open · 2h ago
+│
+○ billing-webhook-schema
+│  #412 open · 1d ago
+│
+│ ○ fix-login-timeout
+│ │  #399 draft · needs restack · 3d ago
+├─┘
+■ main  20m ago
+```
+
+The rest of the output follows the same rules (one headline with a spinner while something
+runs, `✔` `✖` `⚠` result lines, plain `ok:`/`note:`/`error:` when piped); that's all written
+down in [`docs/style.md`](docs/style.md).
+
 ## `git stack install`
 
 One command sets everything up. `--dry-run` prints every change before it happens, and
