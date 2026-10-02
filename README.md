@@ -40,7 +40,7 @@ If you know `gt` you already know most of this; the table is the mapping.
 | `gt checkout` | `git stack checkout` (`git co`) | interactive tree picker |
 | `gt log` | `git stack` or `git stack log` | every stack as a tree, trunk at the bottom, with PR state |
 | `gt submit` / `gt ss` | `git stack submit` (`git ss`) | `-d` `-p` `--no-edit` `--dry-run` `--ai` |
-| `gt sync` | `git stack sync` (`git sync`) | every checked out stack, across worktrees; merged branches deleted (`stack.sync.prune`) |
+| `gt sync` | `git stack sync` (`git sync`) | every stack, checked out or not, across worktrees; merged branches deleted (`stack.sync.prune`) |
 | (none) | `git stack install` | aliases, completion, agent MCP registration |
 | (none) | `git stack completion <shell>` | bash, zsh, fish |
 | (none) | `git stack mcp` | stdio MCP server |

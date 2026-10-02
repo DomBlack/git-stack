@@ -374,7 +374,7 @@ func (s *Server) registerTools() {
 	mcp.AddTool(s.mcp, &mcp.Tool{
 		Name:        "stack_sync",
 		Title:       "Sync the stack",
-		Description: "Fetch from the remote, update trunk, restack and push every stack that is checked out in some worktree, deleting merged branches according to stack.sync.prune (always by default; prune forces it).",
+		Description: "Fetch from the remote, update trunk, restack and push every stack (checked out or not, in any worktree; a stack that is not checked out has a branch checked out in its worktree for the sync and the previous branch restored), deleting merged branches according to stack.sync.prune (always by default; prune forces it).",
 		Annotations: &mcp.ToolAnnotations{DestructiveHint: boolp(true), OpenWorldHint: boolp(true)},
 	}, s.sync)
 }

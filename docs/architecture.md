@@ -185,15 +185,18 @@ question.
 `modify --into` all need a backend that can do more than gh stack can. Each prints a single
 line saying why.
 
-**Sync covers every worktree.** gh stack keeps its metadata per worktree
+**Sync covers every stack, like gt.** gh stack keeps its metadata per worktree
 (`.git/worktrees/<name>/gh-stack`), so a stack created in a linked worktree is invisible from
-the main checkout and can only be synced where it lives. The metadata adapter therefore reads
-every worktree's file and merges them (current worktree first, a branch keeps its first stack),
-which is what makes `git stack` show everything you have checked out on the machine. `sync`
-then runs `gh stack sync` in each worktree whose checked out branch is in a stack, current
-worktree first, and names any stack nobody has checked out instead of silently skipping it.
-Stacks in the same worktree that aren't checked out would need a checkout to sync, so they
-get the notice too. `--all` is accepted for gt muscle memory and changes nothing.
+the main checkout and can only be synced from the worktree that holds it, and `gh stack sync`
+only syncs the stack of the branch checked out where it runs. The metadata adapter reads every
+worktree's file and merges them (current worktree first, a branch keeps its first stack), which
+is what makes `git stack` show everything on the machine. `sync` then plans one `gh stack
+sync` per stack, in the stack's home worktree: your current stack first, then the rest of this
+worktree's, then other worktrees'. A stack with none of its branches checked out there gets one
+checked out (top first, skipping branches checked out in other worktrees) for the duration and
+the previous branch (or detached HEAD) restored afterwards; that needs a clean worktree, so a
+dirty one gets a notice instead, as does a stack whose every branch is checked out somewhere
+else. `--all` is accepted for gt muscle memory and changes nothing.
 
 **Merged branches are deleted by default.** gh stack only prunes with `--prune` and would only
 ask on a terminal it never gets from us, so `stack.sync.prune` decides; `always` (default)

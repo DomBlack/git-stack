@@ -28,6 +28,9 @@ type submitFake struct {
 	syncOut  string
 	output   string // Submit's backend output
 	streamed bool   // reported as already relayed live
+	// onSync, when set, observes each Sync call (tests check which branch
+	// was checked out at the time).
+	onSync func(stack.SyncOptions)
 }
 
 func (s *submitFake) Submit(_ context.Context, _ git.Repo, o stack.SubmitOptions) (stack.SubmitResult, error) {
@@ -54,6 +57,9 @@ func (s *submitFake) Submit(_ context.Context, _ git.Repo, o stack.SubmitOptions
 
 func (s *submitFake) Sync(_ context.Context, _ git.Repo, o stack.SyncOptions) (stack.SyncResult, error) {
 	s.syncs = append(s.syncs, o)
+	if s.onSync != nil {
+		s.onSync(o)
+	}
 	return stack.SyncResult{Output: s.syncOut, Streamed: s.streamed}, nil
 }
 
@@ -261,8 +267,8 @@ func TestSync(t *testing.T) {
 	if len(sf.syncs) != 1 || !sf.syncs[0].Prune || res.Output != "Stack synced" || res.Aborted {
 		t.Errorf("sync = %+v %+v", res, sf.syncs)
 	}
-	if len(res.Notices) != 0 || len(res.Worktrees) != 1 || res.Worktrees[0].Branch != "b" {
-		t.Errorf("notices/worktrees = %v %+v", res.Notices, res.Worktrees)
+	if len(res.Notices) != 0 || len(res.Stacks) != 1 || res.Stacks[0].Branch != "b" || res.Stacks[0].CheckedOut {
+		t.Errorf("notices/stacks = %v %+v", res.Notices, res.Stacks)
 	}
 	if fg.lists == 0 {
 		t.Error("PR cache should refresh after sync")

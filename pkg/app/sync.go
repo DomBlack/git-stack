@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/DomBlack/git-stack/pkg/config"
@@ -17,16 +18,21 @@ import (
 type SyncOptions struct {
 	// Prune deletes merged branches whatever stack.sync.prune says (gt -f).
 	Prune bool
-	// All is accepted for gt parity; every worktree's stack is synced anyway.
+	// All is accepted for gt parity; every stack is synced anyway.
 	All bool
 }
 
-// SyncedWorktree is one worktree that was synced.
-type SyncedWorktree struct {
-	Path   string `json:"path"`
+// SyncedStack is one stack that was synced.
+type SyncedStack struct {
+	// Branch is the branch gh stack ran from (identifies the stack).
 	Branch string `json:"branch"`
-	// Aborted is true when gh stack refused to sync this worktree (the
-	// remote stack diverged) without changing anything.
+	// Worktree is where it ran: the worktree holding the stack's metadata.
+	Worktree string `json:"worktree"`
+	// CheckedOut is true when Branch had to be checked out in that worktree
+	// for the sync (and the previous branch restored afterwards).
+	CheckedOut bool `json:"checkedOut,omitempty"`
+	// Aborted is true when gh stack refused to sync (the remote stack
+	// diverged) without changing anything.
 	Aborted bool `json:"aborted"`
 }
 
@@ -34,20 +40,34 @@ type SyncedWorktree struct {
 type SyncResult struct {
 	Output  string   `json:"output,omitempty"`
 	Notices []string `json:"notices,omitempty"`
-	// Aborted is true when any worktree's sync was refused.
+	// Aborted is true when any stack's sync was refused.
 	Aborted bool `json:"aborted"`
 	// Pruned is true when merged branches were deleted (by policy, flag or
 	// confirmation at the prompt).
 	Pruned bool `json:"pruned"`
-	// Worktrees lists what was synced, the current worktree first.
-	Worktrees []SyncedWorktree `json:"worktrees"`
+	// Stacks lists what was synced, the current stack first.
+	Stacks []SyncedStack `json:"stacks"`
 }
 
-// Sync fetches, updates trunk, restacks and pushes every stack that is
-// checked out somewhere: the current worktree first, then each linked
-// worktree that is on one of its stacks (gh stack keeps stacks per worktree
-// and syncs the one that is checked out where it runs). Merged branches are
-// deleted according to stack.sync.prune.
+// syncJob is one gh stack sync run.
+type syncJob struct {
+	stack *stack.Stack
+	dir   string // worktree to run in
+	// branch is the stack branch to run from; switchBack is the branch the
+	// worktree was on and gets restored, when a checkout was needed.
+	branch     string
+	switchBack string
+	detached   string // original HEAD when the worktree was detached
+}
+
+// Sync fetches, updates trunk, restacks and pushes every stack, the way
+// `gt sync` does: the one you are on first, then every other stack whether
+// it is checked out or not and whichever worktree holds it. gh stack syncs
+// the stack of the branch checked out where it runs and only knows the stacks
+// in that worktree's metadata, so a stack that is not checked out gets one of
+// its branches checked out in its home worktree for the duration and the
+// previous branch restored afterwards. Merged branches are deleted according
+// to stack.sync.prune.
 func (a *App) Sync(ctx context.Context, repo git.Repo, o SyncOptions) (SyncResult, error) {
 	if a.d.Sync == nil {
 		return SyncResult{}, stack.New(stack.KindUnsupported, "no sync backend configured")
@@ -57,6 +77,10 @@ func (a *App) Sync(ctx context.Context, repo git.Repo, o SyncOptions) (SyncResul
 	if err != nil {
 		return SyncResult{}, err
 	}
+	if len(graph.Stacks) == 0 {
+		return SyncResult{}, stack.New(stack.KindNotInStack, "there are no stacks to sync").
+			WithSteps("check out your trunk and run git stack create to start one")
+	}
 
 	prune, err := a.syncPrune(ctx, repo, graph, o.Prune, &res)
 	if err != nil {
@@ -64,41 +88,25 @@ func (a *App) Sync(ctx context.Context, repo git.Repo, o SyncOptions) (SyncResul
 	}
 	res.Pruned = prune
 
-	targets, err := a.syncTargets(ctx, repo, graph, &res)
+	jobs, err := a.planSync(ctx, repo, graph, &res)
 	if err != nil {
 		return SyncResult{}, err
 	}
-	if len(targets) == 0 {
-		return SyncResult{}, stack.New(stack.KindNotInStack, "no checked out branch is in a stack; nothing to sync").
-			WithSteps("check out a stacked branch (git stack checkout) and run git stack sync again")
-	}
 
 	var outputs []string
-	for _, wt := range targets {
-		headline := "Syncing with origin"
-		if wt.Path != repo.TopLevel {
-			headline = "Syncing worktree " + shortPath(wt.Path)
-		}
-		var out stack.SyncResult
-		err := a.progress(ctx, PhaseSync, headline, func(ctx context.Context) error {
-			var err error
-			dir := ""
-			if wt.Path != repo.TopLevel {
-				dir = wt.Path
-			}
-			out, err = a.d.Sync.Sync(ctx, repo, stack.SyncOptions{Prune: prune, Dir: dir})
-			return err
-		})
+	for _, job := range jobs {
+		out, err := a.runSyncJob(ctx, repo, job, prune)
 		if err != nil {
 			return SyncResult{}, err
 		}
-		synced := SyncedWorktree{Path: wt.Path, Branch: wt.Branch}
+		synced := SyncedStack{Branch: job.branch, Worktree: job.dir, CheckedOut: job.switchBack != "" || job.detached != ""}
 		if strings.Contains(out.Output, "Sync aborted") {
 			synced.Aborted = true
 			res.Aborted = true
-			res.Notices = append(res.Notices, fmt.Sprintf("the remote stack for %s has diverged; nothing was changed there. Run gh stack sync in that worktree to choose how to reconcile", shortPath(wt.Path)))
+			res.Notices = append(res.Notices, fmt.Sprintf("the remote stack for %s has diverged; nothing was changed there. Run gh stack sync from %s in %s to choose how to reconcile",
+				job.branch, job.branch, shortPath(job.dir)))
 		}
-		res.Worktrees = append(res.Worktrees, synced)
+		res.Stacks = append(res.Stacks, synced)
 		if !out.Streamed && out.Output != "" {
 			outputs = append(outputs, out.Output)
 		}
@@ -111,6 +119,133 @@ func (a *App) Sync(ctx context.Context, repo git.Repo, o SyncOptions) (SyncResul
 		}
 	}
 	return res, nil
+}
+
+// runSyncJob runs one job under a headline, checking a branch out and back
+// when the stack isn't checked out in its worktree.
+func (a *App) runSyncJob(ctx context.Context, repo git.Repo, job syncJob, prune bool) (stack.SyncResult, error) {
+	wtRepo := repo
+	wtRepo.TopLevel = job.dir
+	headline := "Syncing " + job.branch
+	if job.dir != repo.TopLevel {
+		headline += " in " + shortPath(job.dir)
+	}
+	var out stack.SyncResult
+	err := a.progress(ctx, PhaseSync, headline, func(ctx context.Context) error {
+		if job.switchBack != "" || job.detached != "" {
+			if err := a.d.Git.Switch(ctx, wtRepo, job.branch); err != nil {
+				return err
+			}
+			defer func() {
+				// gh stack may have deleted (pruned) or moved things; put the
+				// worktree back where it was if that still exists.
+				if job.detached != "" {
+					_ = a.d.Git.SwitchDetached(ctx, wtRepo, job.detached)
+					return
+				}
+				if ok, _ := a.d.Git.BranchExists(ctx, wtRepo, job.switchBack); ok {
+					if err := a.d.Git.Switch(ctx, wtRepo, job.switchBack); err != nil {
+						a.d.Log.Warn("could not switch back", "branch", job.switchBack, "err", err)
+					}
+				}
+			}()
+		}
+		dir := ""
+		if job.dir != repo.TopLevel {
+			dir = job.dir
+		}
+		var err error
+		out, err = a.d.Sync.Sync(ctx, repo, stack.SyncOptions{Prune: prune, Dir: dir})
+		return err
+	})
+	return out, err
+}
+
+// planSync decides where and from which branch each stack is synced. Order:
+// the current worktree's checked out stack, the rest of the current
+// worktree's stacks, then other worktrees. Stacks that cannot be synced
+// (every branch checked out elsewhere, or a dirty worktree that would need a
+// checkout) are reported in notices.
+func (a *App) planSync(ctx context.Context, repo git.Repo, graph *stack.Graph, res *SyncResult) ([]syncJob, error) {
+	wts, err := a.d.Git.Worktrees(ctx, repo)
+	if err != nil {
+		return nil, err
+	}
+	byPath := map[string]git.Worktree{}
+	checkedOut := map[string]string{} // branch -> worktree path
+	for _, wt := range wts {
+		byPath[wt.Path] = wt
+		if wt.Branch != "" {
+			checkedOut[wt.Branch] = wt.Path
+		}
+	}
+	dirty := map[string]bool{} // worktree path -> has uncommitted changes (cached)
+	isDirty := func(dir string) bool {
+		if v, ok := dirty[dir]; ok {
+			return v
+		}
+		r := repo
+		r.TopLevel = dir
+		staged, _ := a.d.Git.HasStagedChanges(ctx, r)
+		unstaged, _ := a.d.Git.HasUnstagedChanges(ctx, r)
+		dirty[dir] = staged || unstaged
+		return dirty[dir]
+	}
+
+	// Order: current worktree (checked out stack, then the rest), then other
+	// worktrees (checked out stacks, then the rest).
+	var first, mine, others, othersSwitch []syncJob
+	for i := range graph.Stacks {
+		s := &graph.Stacks[i]
+		if len(s.Branches) == 0 {
+			continue
+		}
+		home := s.Worktree
+		if home == "" {
+			home = repo.TopLevel
+		}
+		wt, ok := byPath[home]
+		if !ok {
+			res.Notices = append(res.Notices, fmt.Sprintf("stack %s lives in %s, which is not a worktree any more; it was not synced", s.Bottom(), shortPath(home)))
+			continue
+		}
+		job := syncJob{stack: s, dir: home}
+		if s.Index(wt.Branch) >= 0 {
+			job.branch = wt.Branch
+		} else {
+			// Pick a branch of the stack nobody has checked out, top first.
+			for j := len(s.Branches) - 1; j >= 0; j-- {
+				if _, taken := checkedOut[s.Branches[j].Name]; !taken {
+					job.branch = s.Branches[j].Name
+					break
+				}
+			}
+			switch {
+			case job.branch == "":
+				res.Notices = append(res.Notices, fmt.Sprintf("stack %s: every branch is checked out in another worktree; sync it from there", s.Bottom()))
+				continue
+			case isDirty(home):
+				res.Notices = append(res.Notices, fmt.Sprintf("stack %s is not checked out and %s has uncommitted changes; commit or stash them and sync again", s.Bottom(), shortPath(home)))
+				continue
+			case wt.Detached:
+				job.detached = wt.Head
+			default:
+				job.switchBack = wt.Branch
+			}
+		}
+		needsCheckout := job.switchBack != "" || job.detached != ""
+		switch {
+		case home == repo.TopLevel && !needsCheckout:
+			first = append(first, job)
+		case home == repo.TopLevel:
+			mine = append(mine, job)
+		case !needsCheckout:
+			others = append(others, job)
+		default:
+			othersSwitch = append(othersSwitch, job)
+		}
+	}
+	return slices.Concat(first, mine, others, othersSwitch), nil
 }
 
 // syncPrune decides whether merged branches get deleted: the -f flag or the
@@ -137,51 +272,6 @@ func (a *App) syncPrune(ctx context.Context, repo git.Repo, graph *stack.Graph, 
 		return false, nil
 	}
 	return a.d.Prompter.Confirm("Delete "+what+" once synced?", true)
-}
-
-// syncTargets picks the worktrees to run gh stack sync in: those whose
-// checked out branch is in a stack (or that sit on a trunk with exactly one
-// stack), current worktree first. Stacks nobody has checked out get a notice.
-func (a *App) syncTargets(ctx context.Context, repo git.Repo, graph *stack.Graph, res *SyncResult) ([]git.Worktree, error) {
-	wts, err := a.d.Git.Worktrees(ctx, repo)
-	if err != nil {
-		return nil, err
-	}
-	var targets []git.Worktree
-	covered := map[*stack.Stack]bool{}
-	for _, wt := range wts {
-		if wt.Bare || wt.Detached || wt.Branch == "" {
-			continue
-		}
-		var s *stack.Stack
-		if st, _, ok := graph.StackOf(wt.Branch); ok {
-			s = st
-		} else if graph.IsTrunk(wt.Branch) {
-			if on := graph.StacksOn(wt.Branch); len(on) == 1 && on[0].Worktree == wt.Path {
-				s = on[0]
-			}
-		}
-		if s == nil {
-			continue
-		}
-		covered[s] = true
-		if wt.Path == repo.TopLevel {
-			targets = append([]git.Worktree{wt}, targets...)
-		} else {
-			targets = append(targets, wt)
-		}
-	}
-	for i := range graph.Stacks {
-		s := &graph.Stacks[i]
-		if !covered[s] && len(s.Branches) > 0 {
-			where := ""
-			if s.Worktree != "" {
-				where = " in " + shortPath(s.Worktree)
-			}
-			res.Notices = append(res.Notices, fmt.Sprintf("stack %s is not checked out%s; it was not synced", s.Bottom(), where))
-		}
-	}
-	return targets, nil
 }
 
 // mergedBranches lists every stacked branch whose pull request has merged,

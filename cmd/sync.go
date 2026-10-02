@@ -18,11 +18,12 @@ func newSyncCmd(c *cli) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "sync",
 		Short: "Sync every stack with the remote: fetch, update trunk, restack, push, prune merged branches",
-		Long: `Fetch the remote, fast-forward trunk, restack and push every stack that is checked
-out: this worktree's first, then each linked worktree's (gh stack keeps stacks per
-worktree). Branches whose pull requests have merged are deleted; set
-git config stack.sync.prune to "ask" to be asked first or "never" to keep them. -f
-deletes them whatever the config says.`,
+		Long: `Fetch the remote, fast-forward trunk, restack and push every stack, like gt sync: the
+one you are on first, then the rest, whether or not they are checked out and whichever
+worktree holds them (a stack that is not checked out gets a branch checked out in its
+worktree for the sync, then the previous branch back). Branches whose pull requests have
+merged are deleted; set git config stack.sync.prune to "ask" to be asked first or "never"
+to keep them. -f deletes them whatever the config says.`,
 		Args:              cobra.NoArgs,
 		ValidArgsFunction: completeNothing,
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -46,8 +47,8 @@ deletes them whatever the config says.`,
 				rep.Warn("%s", n)
 			}
 			if !res.Aborted {
-				if n := len(res.Worktrees); n > 1 {
-					rep.Success("Synced %d worktrees", n)
+				if n := len(res.Stacks); n > 1 {
+					rep.Success("Synced %d stacks", n)
 				} else {
 					rep.Success("Synced")
 				}
@@ -56,7 +57,7 @@ deletes them whatever the config says.`,
 		},
 	}
 	cmd.Flags().BoolVarP(&force, "force", "f", false, "delete merged branches even when stack.sync.prune is ask or never")
-	cmd.Flags().BoolVarP(&all, "all", "a", false, "accepted for gt parity; every checked out stack is synced anyway")
+	cmd.Flags().BoolVarP(&all, "all", "a", false, "accepted for gt parity; every stack is synced anyway")
 	cmd.Flags().BoolVar(&noRestack, "no-restack", false, "not available with gh stack")
 	return cmd
 }

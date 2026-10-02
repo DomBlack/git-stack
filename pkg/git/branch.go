@@ -114,6 +114,18 @@ func (c *Client) DefaultBranch(ctx context.Context, repo Repo) (string, bool, er
 	return "", false, nil
 }
 
+// SwitchDetached checks out rev with a detached HEAD.
+func (c *Client) SwitchDetached(ctx context.Context, repo Repo, rev string) error {
+	_, err := c.gitIn(ctx, repo, "switch", "--detach", rev)
+	if err != nil {
+		if ee, ok := errors.AsType[*exec.ExitError](err); ok {
+			return fmt.Errorf("switch --detach %q: %s", rev, ee.Result.Err())
+		}
+		return err
+	}
+	return nil
+}
+
 // Worktree is one entry of `git worktree list`.
 type Worktree struct {
 	// Path is the working tree root.
