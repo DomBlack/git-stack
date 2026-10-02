@@ -198,6 +198,16 @@ the previous branch (or detached HEAD) restored afterwards; that needs a clean w
 dirty one gets a notice instead, as does a stack whose every branch is checked out somewhere
 else. `--all` is accepted for gt muscle memory and changes nothing.
 
+**gh stack treats queued PRs as gone; we put the bases back.** When a branch's PR is sitting
+in a merge queue, `gh stack submit` skips it like a merged one and bases the next PR on the
+first branch below that is neither merged nor queued, usually trunk. Until the queue drains
+that new PR shows the whole stack's diff, which is exactly what you don't want from a stack.
+GitHub does let the base of a stacked PR be changed, so after every submit we compare each
+open PR's base with its real parent (the nearest branch below whose PR has not actually
+merged, queued or not), move it back with `gh pr edit --base` when it differs, and say so in a
+notice. gh stack will grumble that the base isn't what it expected on later submits; that's a
+warning, not a failure.
+
 **Merged branches are deleted by default.** gh stack only prunes with `--prune` and would only
 ask on a terminal it never gets from us, so `stack.sync.prune` decides; `always` (default)
 passes `--prune`, `ask` prompts on a terminal and keeps with a notice otherwise, `never`

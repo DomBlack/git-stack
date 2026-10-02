@@ -31,6 +31,9 @@ type submitFake struct {
 	// onSync, when set, observes each Sync call (tests check which branch
 	// was checked out at the time).
 	onSync func(stack.SyncOptions)
+	// baseOnTrunk makes new PRs target trunk instead of their parent, the
+	// way gh stack does when the branches below are queued for merge.
+	baseOnTrunk bool
 }
 
 func (s *submitFake) Submit(_ context.Context, _ git.Repo, o stack.SubmitOptions) (stack.SubmitResult, error) {
@@ -39,11 +42,15 @@ func (s *submitFake) Submit(_ context.Context, _ git.Repo, o stack.SubmitOptions
 		parent := st.Trunk
 		for _, b := range st.Branches {
 			if _, ok := app.PRsFor(s.forge.prs)[b.Name]; !ok {
-				st := forge.StateDraft
+				state := forge.StateDraft
 				if o.Publish {
-					st = forge.StateOpen
+					state = forge.StateOpen
 				}
-				s.forge.prs = append(s.forge.prs, forge.PullRequest{Number: 100 + len(s.forge.prs), Head: b.Name, Base: parent, State: st, Title: "auto: " + b.Name, URL: "u/" + b.Name})
+				base := parent
+				if s.baseOnTrunk {
+					base = st.Trunk
+				}
+				s.forge.prs = append(s.forge.prs, forge.PullRequest{Number: 100 + len(s.forge.prs), Head: b.Name, Base: base, State: state, Title: "auto: " + b.Name, URL: "u/" + b.Name})
 			}
 			parent = b.Name
 		}
@@ -80,7 +87,21 @@ func (f *recordingForge) UpdatePR(_ context.Context, _ git.Repo, n int, in forge
 	if f.updates == nil {
 		f.updates = map[int]forge.UpdatePR{}
 	}
-	f.updates[n] = in
+	// Merge, so a base fix after a title/body update keeps both visible.
+	cur := f.updates[n]
+	if in.Title != nil {
+		cur.Title = in.Title
+	}
+	if in.Body != nil {
+		cur.Body = in.Body
+	}
+	if in.Base != nil {
+		cur.Base = in.Base
+	}
+	if in.Ready != nil {
+		cur.Ready = in.Ready
+	}
+	f.updates[n] = cur
 	return nil
 }
 

@@ -48,6 +48,9 @@ type SubmittedPR struct {
 	WouldCreate bool `json:"wouldCreate,omitempty"`
 	// TextUpdated is true when a supplied or drafted title/body was applied.
 	TextUpdated bool `json:"textUpdated,omitempty"`
+	// BaseFixed is true when the PR's base was moved back onto its parent
+	// branch after gh stack had pointed it elsewhere (see fixBases).
+	BaseFixed bool `json:"baseFixed,omitempty"`
 }
 
 // SubmitResult reports the outcome.
@@ -188,13 +191,62 @@ func (a *App) Submit(ctx context.Context, repo git.Repo, o SubmitOptions) (Submi
 		}
 		e.TextUpdated = true
 	}
-	if len(texts) > 0 && a.d.Forge != nil {
-		// Titles changed; refresh the cache so completions show them.
+	fixed := a.fixBases(ctx, repo, s, after, &res)
+	if (len(texts) > 0 || fixed) && a.d.Forge != nil {
+		// Titles or bases changed; refresh the cache so views show them.
 		if _, err := a.RefreshPRs(ctx, repo); err != nil {
 			a.d.Log.Debug("refresh after submit", "err", err)
 		}
 	}
 	return res, nil
+}
+
+// fixBases puts every open PR's base back on its parent branch. gh stack
+// treats a PR that is sitting in a merge queue like a merged one: it skips
+// the branch and bases the next PR on the first branch below that is neither
+// merged nor queued, usually trunk, so a brand new PR shows the whole stack's
+// diff until the queue drains. The parent is the right base until the parent
+// has actually merged, so we correct it here and say so. Returns true when a
+// base was changed.
+func (a *App) fixBases(ctx context.Context, repo git.Repo, s *stack.Stack, after map[string]forge.PullRequest, res *SubmitResult) bool {
+	if a.d.Forge == nil {
+		return false
+	}
+	merged := func(b stack.Branch) bool {
+		pr, has := after[b.Name]
+		return b.Merged() || (has && pr.State == forge.StateMerged)
+	}
+	fixed := false
+	for i := range res.PullRequests {
+		e := &res.PullRequests[i]
+		pr, ok := after[e.Branch]
+		if !ok || (pr.State != forge.StateOpen && pr.State != forge.StateDraft) {
+			continue
+		}
+		idx := s.Index(e.Branch)
+		if idx < 0 {
+			continue
+		}
+		want := s.Trunk
+		for j := idx - 1; j >= 0; j-- {
+			if !merged(s.Branches[j]) {
+				want = s.Branches[j].Name
+				break
+			}
+		}
+		if pr.Base == "" || pr.Base == want {
+			continue
+		}
+		base := want
+		if err := a.d.Forge.UpdatePR(ctx, repo, pr.Number, forge.UpdatePR{Base: &base}); err != nil {
+			res.Notices = append(res.Notices, fmt.Sprintf("#%d (%s) is based on %s rather than %s and the base could not be changed: %v", pr.Number, e.Branch, pr.Base, want, err))
+			continue
+		}
+		e.BaseFixed = true
+		fixed = true
+		res.Notices = append(res.Notices, fmt.Sprintf("moved the base of #%d (%s) from %s back to %s; gh stack skips branches whose PRs are queued for merge and would have shown the whole stack's diff", pr.Number, e.Branch, pr.Base, want))
+	}
+	return fixed
 }
 
 // submitDraftChoice resolves draft vs publish from flags, config and, when

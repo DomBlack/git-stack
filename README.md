@@ -152,6 +152,10 @@ why rather than silently doing something else.
 `submit` also always submits the whole stack (gt submits downstack by default). Pass `--stack`
 to acknowledge that's what you want.
 
+One thing we actively correct; gh stack treats a PR that is queued for merge like a merged one
+and bases the next PR on main, so a new PR shows the whole stack's diff. `submit` moves such a
+base back onto the real parent and tells you.
+
 ## Updating
 
 `git stack update` fetches the latest GitHub release over plain HTTPS (no `gh` login
