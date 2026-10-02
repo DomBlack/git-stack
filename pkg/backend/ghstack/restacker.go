@@ -26,8 +26,7 @@ func (b *Backend) Restack(ctx context.Context, repo git.Repo, scope stack.Scope)
 		return stack.New(stack.KindUnsupported, "gh stack cannot rebase a single branch").
 			WithSteps("use --upstack (this branch and everything above) or --downstack")
 	}
-	_, err := b.gh(ctx, repo, args...)
-	return err
+	return b.gh(ctx, repo, args...)
 }
 
 // Continue resumes an interrupted rebase.
@@ -35,8 +34,7 @@ func (b *Backend) Continue(ctx context.Context, repo git.Repo) error {
 	if err := b.Preflight(ctx); err != nil {
 		return err
 	}
-	_, err := b.gh(ctx, repo, "rebase", "--continue")
-	return err
+	return b.gh(ctx, repo, "rebase", "--continue")
 }
 
 // Abort abandons an interrupted rebase and restores every branch.
@@ -44,6 +42,5 @@ func (b *Backend) Abort(ctx context.Context, repo git.Repo) error {
 	if err := b.Preflight(ctx); err != nil {
 		return err
 	}
-	_, err := b.gh(ctx, repo, "rebase", "--abort")
-	return err
+	return b.gh(ctx, repo, "rebase", "--abort")
 }

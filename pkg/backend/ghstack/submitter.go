@@ -29,8 +29,8 @@ func (b *Backend) Submit(ctx context.Context, repo git.Repo, o stack.SubmitOptio
 		return stack.SubmitResult{}, b.ghTTY(ctx, repo, args...)
 	}
 	args = append(args, "--auto")
-	res, err := b.gh(ctx, repo, args...)
-	return stack.SubmitResult{Output: res.Err()}, err
+	res, err := b.ghRun(ctx, repo, b.out, args...)
+	return stack.SubmitResult{Output: res.Err(), Streamed: b.out != nil}, err
 }
 
 // Sync runs `gh stack sync [--prune]`.
@@ -42,8 +42,8 @@ func (b *Backend) Sync(ctx context.Context, repo git.Repo, o stack.SyncOptions) 
 	if o.Prune {
 		args = append(args, "--prune")
 	}
-	res, err := b.gh(ctx, repo, args...)
-	return stack.SyncResult{Output: res.Err()}, err
+	res, err := b.ghRun(ctx, repo, b.out, args...)
+	return stack.SyncResult{Output: res.Err(), Streamed: b.out != nil}, err
 }
 
 // ghTTY runs `gh stack <args>` with the terminal attached. Only the CLI's

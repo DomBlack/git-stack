@@ -51,3 +51,25 @@ func TestSubmitDoesNotAskWhenEveryBranchHasAPR(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+// TestSubmitStreamedOutputIsNotEchoed checks that output the backend already
+// relayed live is not returned for printing a second time.
+func TestSubmitStreamedOutputIsNotEchoed(t *testing.T) {
+	deps, sf, _, repo, _ := submitFixture(t)
+	sf.streamed = true
+	sf.output = "✓ Created 1 PR"
+	res, err := app.New(deps).Submit(context.Background(), repo, app.SubmitOptions{NoEdit: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Output != "" {
+		t.Errorf("streamed output must not be echoed, got %q", res.Output)
+	}
+	sres, err := app.New(deps).Sync(context.Background(), repo, app.SyncOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sres.Output != "" {
+		t.Errorf("streamed sync output must not be echoed, got %q", sres.Output)
+	}
+}

@@ -68,6 +68,9 @@ type SubmitOptions struct {
 // SubmitResult carries the backend's human-readable output for relaying.
 type SubmitResult struct {
 	Output string
+	// Streamed is true when Output was already written to the user's
+	// terminal as it was produced, so callers must not print it again.
+	Streamed bool
 }
 
 // Submitter pushes the current stack and creates or updates its PRs.
@@ -84,6 +87,9 @@ type SyncOptions struct {
 // SyncResult carries the backend's human-readable output for relaying.
 type SyncResult struct {
 	Output string
+	// Streamed is true when Output was already written to the user's
+	// terminal as it was produced, so callers must not print it again.
+	Streamed bool
 }
 
 // Syncer fetches, updates trunk, restacks and prunes the current stack.

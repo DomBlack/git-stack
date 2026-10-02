@@ -119,10 +119,12 @@ func (f *Fake) Run(_ context.Context, c exec.Cmd) (exec.Result, error) {
 	f.mu.Unlock()
 
 	if fn != nil {
-		return fn(c)
+		res, err := fn(c)
+		return stream(c, res, err)
 	}
 	if fallback != nil {
-		return fallback(c)
+		res, err := fallback(c)
+		return stream(c, res, err)
 	}
 	return exec.Result{ExitCode: -1}, fmt.Errorf("exectest: unexpected command %q", c.String())
 }
@@ -157,4 +159,13 @@ func hasPrefix(args, prefix []string) bool {
 		return false
 	}
 	return slices.Equal(args[:len(prefix)], prefix)
+}
+
+// stream mirrors the real runner: in Capture mode a Stream writer receives
+// the stderr the stub produced.
+func stream(c exec.Cmd, res exec.Result, err error) (exec.Result, error) {
+	if c.Stream != nil && c.Mode == exec.Capture && len(res.Stderr) > 0 {
+		_, _ = c.Stream.Write(res.Stderr)
+	}
+	return res, err
 }

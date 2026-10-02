@@ -222,6 +222,23 @@ next to the old one and renames it into place. Dev builds aren't replaced withou
 Releases are cut by tagging; the workflow runs goreleaser for linux and darwin on amd64 and
 arm64.
 
+**Terminal niceties live in the CLI, never the MCP server.** Long gh stack commands
+(submit, sync) have their stderr relayed to the terminal as it arrives rather than
+dumped at the end; `pkg/exec` tees it through `Cmd.Stream`, `pkg/backend/ghstack` only
+sets that when `cmd/root.go` asks via `WithOutput`, and the result carries a `Streamed`
+flag so nothing is printed twice. PR numbers and URLs are OSC 8 hyperlinks when stdout is a
+terminal (Ghostty, iTerm2, WezTerm make them clickable), and long operations set the OSC 9;4
+"busy" progress state on stderr so the terminal can show something is happening; terminals
+that don't know the sequence ignore it.
+
+**Prompts and bubbletea's inline renderer.** bubbletea v2.0.10 mispositions a final frame
+that is shorter than the previous one (the question line showed up twice after answering)
+and erases a final frame that has no trailing newline. So the select prompt's final frame
+keeps the height of the interactive one and `Prompter.Select` erases the padding after the
+program exits, while the confirm prompt renders an empty final frame and prints its own
+summary line. Both were verified by driving the real prompt under a pty with expect; if the
+renderer gets fixed upstream this can go back to the obvious implementation.
+
 **No task runner, no fuzzy matching dependency.** The whole check is `go build`, `go vet`,
 `golangci-lint run`, `go test` (recorded in AGENTS.md and CI), and the picker's filter is a
 small native subsequence matcher.

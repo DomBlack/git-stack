@@ -3,6 +3,7 @@ package ghstack
 import (
 	"context"
 	"errors"
+	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -14,13 +15,28 @@ import (
 
 // Backend implements the stack ports via gh-stack.
 type Backend struct {
+	out io.Writer // live output for submit/sync, see WithOutput
 	run exec.Runner
 	git *git.Client
 }
 
+// Option configures a Backend.
+type Option func(*Backend)
+
+// WithOutput relays the output of long running gh stack commands (submit,
+// sync) to w as it is produced instead of only returning it afterwards.
+// The CLI sets this to stderr; the MCP server never does.
+func WithOutput(w io.Writer) Option {
+	return func(b *Backend) { b.out = w }
+}
+
 // New returns a Backend that runs gh through r.
-func New(r exec.Runner, g *git.Client) *Backend {
-	return &Backend{run: r, git: g}
+func New(r exec.Runner, g *git.Client, opts ...Option) *Backend {
+	b := &Backend{run: r, git: g}
+	for _, o := range opts {
+		o(b)
+	}
+	return b
 }
 
 // Compile-time port checks.
@@ -56,13 +72,22 @@ var ghUnset = []string{"GH_FORCE_TTY", "CLICOLOR_FORCE"}
 
 // gh runs `gh stack <args>` captured, mapping failures to *stack.Error.
 // The result carries gh-stack's output for commands that relay it.
-func (b *Backend) gh(ctx context.Context, repo git.Repo, args ...string) (exec.Result, error) {
+// gh runs `gh stack <args>` captured and maps failures to stack.Error.
+func (b *Backend) gh(ctx context.Context, repo git.Repo, args ...string) error {
+	_, err := b.ghRun(ctx, repo, nil, args...)
+	return err
+}
+
+// ghRun is gh with the captured stderr also relayed live to stream when it
+// is non-nil (the long submit and sync commands pass the WithOutput writer).
+func (b *Backend) ghRun(ctx context.Context, repo git.Repo, stream io.Writer, args ...string) (exec.Result, error) {
 	res, err := b.run.Run(ctx, exec.Cmd{
-		Name:  "gh",
-		Args:  append([]string{"stack"}, args...),
-		Dir:   repo.TopLevel,
-		Env:   ghEnv,
-		Unset: ghUnset,
+		Name:   "gh",
+		Args:   append([]string{"stack"}, args...),
+		Dir:    repo.TopLevel,
+		Env:    ghEnv,
+		Unset:  ghUnset,
+		Stream: stream,
 	})
 	if err != nil {
 		return res, mapError(args, err)

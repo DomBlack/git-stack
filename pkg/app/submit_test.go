@@ -21,11 +21,13 @@ import (
 // submitFake simulates gh stack submit: every branch without a PR gets one
 // in the forge, drafts unless Publish.
 type submitFake struct {
-	forge   *recordingForge
-	graph   *stack.Graph
-	opts    []stack.SubmitOptions
-	syncs   []stack.SyncOptions
-	syncOut string
+	forge    *recordingForge
+	graph    *stack.Graph
+	opts     []stack.SubmitOptions
+	syncs    []stack.SyncOptions
+	syncOut  string
+	output   string // Submit's backend output
+	streamed bool   // reported as already relayed live
 }
 
 func (s *submitFake) Submit(_ context.Context, _ git.Repo, o stack.SubmitOptions) (stack.SubmitResult, error) {
@@ -43,12 +45,16 @@ func (s *submitFake) Submit(_ context.Context, _ git.Repo, o stack.SubmitOptions
 			parent = b.Name
 		}
 	}
-	return stack.SubmitResult{Output: "✓ pushed"}, nil
+	out := s.output
+	if out == "" {
+		out = "✓ pushed"
+	}
+	return stack.SubmitResult{Output: out, Streamed: s.streamed}, nil
 }
 
 func (s *submitFake) Sync(_ context.Context, _ git.Repo, o stack.SyncOptions) (stack.SyncResult, error) {
 	s.syncs = append(s.syncs, o)
-	return stack.SyncResult{Output: s.syncOut}, nil
+	return stack.SyncResult{Output: s.syncOut, Streamed: s.streamed}, nil
 }
 
 type recordingForge struct {

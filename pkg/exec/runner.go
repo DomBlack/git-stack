@@ -54,7 +54,11 @@ type Cmd struct {
 	Unset []string
 	// Stdin is fed to the process in Capture mode. Nil means no input.
 	Stdin io.Reader
-	Mode  Mode
+	// Stream, when set in Capture mode, also receives the process's stderr as
+	// it is produced so progress from a long backend command can be relayed
+	// live. Stderr is still captured in the Result. Ignored in Passthrough.
+	Stream io.Writer
+	Mode   Mode
 }
 
 // String renders the command line for logs and error messages.
@@ -172,6 +176,9 @@ func (r *runner) Run(ctx context.Context, c Cmd) (Result, error) {
 		cmd.Stdin = c.Stdin
 		cmd.Stdout = &stdout
 		cmd.Stderr = &stderr
+		if c.Stream != nil {
+			cmd.Stderr = io.MultiWriter(&stderr, c.Stream)
+		}
 	}
 
 	start := time.Now()

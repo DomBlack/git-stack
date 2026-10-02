@@ -6,6 +6,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/DomBlack/git-stack/pkg/app"
+	"github.com/DomBlack/git-stack/pkg/ui"
 )
 
 func newSubmitCmd(c *cli) *cobra.Command {
@@ -39,6 +40,8 @@ pass --stack to acknowledge the difference and silence the notice.`,
 			if err != nil {
 				return err
 			}
+			done := ui.Busy(cmd.ErrOrStderr(), c.termErr())
+			defer done()
 			res, err := a.Submit(ctx, repo, app.SubmitOptions{
 				Draft:      draft,
 				Publish:    publish,
@@ -50,7 +53,9 @@ pass --stack to acknowledge the difference and silence the notice.`,
 			if err != nil {
 				return err
 			}
+			done()
 			out, errOut := cmd.OutOrStdout(), cmd.ErrOrStderr()
+			links := c.termOut()
 			if !wholeStack && len(res.Stack) > 1 {
 				fmt.Fprintln(errOut, "note: gh stack submits the whole stack (Graphite submits downstack by default); pass --stack to silence this")
 			}
@@ -76,7 +81,8 @@ pass --stack to acknowledge the difference and silence the notice.`,
 					if res.DryRun {
 						marker = "update"
 					}
-					fmt.Fprintf(out, "  %s  #%d %s %s\n", pr.Branch, pr.Number, marker, pr.URL)
+					fmt.Fprintf(out, "  %s  %s %s %s\n", pr.Branch,
+						ui.Hyperlink(links, pr.URL, fmt.Sprintf("#%d", pr.Number)), marker, ui.Hyperlink(links, pr.URL, pr.URL))
 				default:
 					fmt.Fprintf(out, "  %s\n", pr.Branch)
 				}

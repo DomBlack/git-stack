@@ -143,7 +143,9 @@ func (a *App) Submit(ctx context.Context, repo git.Repo, o SubmitOptions) (Submi
 	if err != nil {
 		return SubmitResult{}, err
 	}
-	res.Output = out.Output
+	if !out.Streamed {
+		res.Output = out.Output
+	}
 
 	// The cache was refreshed moments ago, so ask the forge again explicitly.
 	afterPRs, err := a.RefreshPRs(ctx, repo)

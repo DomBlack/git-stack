@@ -172,7 +172,8 @@ func (c *cli) app(ctx context.Context) (*app.App, git.Repo, error) {
 	if err != nil {
 		return nil, git.Repo{}, err
 	}
-	backend := ghstack.New(rt.Runner, rt.Git)
+	// Long gh stack commands relay their progress to stderr as it happens.
+	backend := ghstack.New(rt.Runner, rt.Git, ghstack.WithOutput(rt.Streams.Err))
 	deps := app.Deps{
 		Git:     rt.Git,
 		Meta:    backend,
@@ -191,6 +192,7 @@ func (c *cli) app(ctx context.Context) (*app.App, git.Repo, error) {
 	if rt.Interactive {
 		deps.Prompter = ui.Prompter{In: rt.Streams.In, Out: rt.Streams.Err, Ctx: ctx}
 		deps.Progress = func(ctx context.Context, message string, fn func(ctx context.Context) error) error {
+			defer ui.Busy(rt.Streams.Err, true)()
 			return ui.WithSpinner(ctx, rt.Streams.In, rt.Streams.Err, message, fn)
 		}
 	}
@@ -230,6 +232,11 @@ func newLogger(w io.Writer, debug bool) *slog.Logger {
 	}
 	return slog.New(slog.NewTextHandler(w, &slog.HandlerOptions{Level: level}))
 }
+
+// termOut and termErr report whether stdout / stderr are terminals, which
+// decides hyperlinks and progress indicators.
+func (c *cli) termOut() bool { return isTerminal(c.streams.Out) }
+func (c *cli) termErr() bool { return isTerminal(c.streams.Err) }
 
 func isTerminal(v any) bool {
 	f, ok := v.(*os.File)

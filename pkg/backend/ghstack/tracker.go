@@ -17,8 +17,7 @@ func (b *Backend) InitStack(ctx context.Context, repo git.Repo, trunk string, br
 		return err
 	}
 	args := append([]string{"init", "--base", trunk}, branches...)
-	_, err := b.gh(ctx, repo, args...)
-	return err
+	return b.gh(ctx, repo, args...)
 }
 
 // AddTop runs `gh stack add <name>` without committing (we commit natively).
@@ -26,7 +25,7 @@ func (b *Backend) AddTop(ctx context.Context, repo git.Repo, name string) error 
 	if err := b.Preflight(ctx); err != nil {
 		return err
 	}
-	_, err := b.gh(ctx, repo, "add", name)
+	err := b.gh(ctx, repo, "add", name)
 	if err != nil {
 		if se, ok := errors.AsType[*stack.Error](err); ok && se.Kind == stack.KindInvalidArgs &&
 			strings.Contains(se.Detail, "top of the stack") {

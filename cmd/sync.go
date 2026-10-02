@@ -6,6 +6,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/DomBlack/git-stack/pkg/app"
+	"github.com/DomBlack/git-stack/pkg/ui"
 )
 
 func newSyncCmd(c *cli) *cobra.Command {
@@ -30,10 +31,13 @@ with -f delete local branches whose pull requests were merged.`,
 			if err != nil {
 				return err
 			}
+			done := ui.Busy(cmd.ErrOrStderr(), c.termErr())
+			defer done()
 			res, err := a.Sync(ctx, repo, app.SyncOptions{Prune: force, All: all})
 			if err != nil {
 				return err
 			}
+			done()
 			errOut := cmd.ErrOrStderr()
 			if res.Output != "" && !c.globals.Quiet {
 				fmt.Fprintln(errOut, res.Output)

@@ -159,7 +159,7 @@ func TestGhEnvIsNonInteractive(t *testing.T) {
 	f := exectest.New()
 	f.On("gh", "stack", "view").Reply("")
 	b := New(f, nil)
-	if _, err := b.gh(context.Background(), git.Repo{TopLevel: "/repo"}, "view"); err != nil {
+	if err := b.gh(context.Background(), git.Repo{TopLevel: "/repo"}, "view"); err != nil {
 		t.Fatal(err)
 	}
 	call := f.Calls()[0]

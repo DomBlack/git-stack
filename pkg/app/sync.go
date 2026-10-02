@@ -39,7 +39,9 @@ func (a *App) Sync(ctx context.Context, repo git.Repo, o SyncOptions) (SyncResul
 	if err != nil {
 		return SyncResult{}, err
 	}
-	res.Output = out.Output
+	if !out.Streamed {
+		res.Output = out.Output
+	}
 	if strings.Contains(out.Output, "Sync aborted") {
 		res.Aborted = true
 		res.Notices = append(res.Notices, "the remote stack has diverged; nothing was changed. Run `gh stack sync` in a terminal to choose how to reconcile")
