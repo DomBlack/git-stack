@@ -30,7 +30,24 @@ type env struct {
 
 func setup(t *testing.T) *env {
 	t.Helper()
+	// Isolate moves HOME, and with no GOPATH set Go would derive its module
+	// cache and build cache from the new HOME. The go build below would then
+	// fill the temp dir with read-only module files that TempDir can't clean
+	// up. Pin the caches to wherever they were before HOME moved.
+	run := exec.New()
+	ctx := context.Background()
+	res, err := run.Run(ctx, exec.Cmd{Name: "go", Args: []string{"env", "GOPATH", "GOMODCACHE", "GOCACHE"}})
+	if err != nil {
+		t.Fatalf("go env: %v\n%s", err, res.Err())
+	}
+	goEnv := strings.Split(strings.TrimSpace(string(res.Stdout)), "\n")
+	if len(goEnv) != 3 {
+		t.Fatalf("unexpected go env output: %q", res.Stdout)
+	}
 	gittest.Isolate(t)
+	t.Setenv("GOPATH", goEnv[0])
+	t.Setenv("GOMODCACHE", goEnv[1])
+	t.Setenv("GOCACHE", goEnv[2])
 	home := os.Getenv("HOME")
 	xdg := filepath.Join(home, ".config")
 	t.Setenv("XDG_CONFIG_HOME", xdg)
@@ -39,8 +56,6 @@ func setup(t *testing.T) *env {
 	if err := os.MkdirAll(bin, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	run := exec.New()
-	ctx := context.Background()
 	if res, err := run.Run(ctx, exec.Cmd{Name: "go", Args: []string{"build", "-o", filepath.Join(bin, "git-stack"), "../.."}}); err != nil {
 		t.Fatalf("build: %v\n%s", err, res.Err())
 	}
