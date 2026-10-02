@@ -40,7 +40,7 @@ If you know `gt` you already know most of this; the table is the mapping.
 | `gt checkout` | `git stack checkout` (`git co`) | interactive tree picker |
 | `gt log` | `git stack` or `git stack log` | every stack as a tree, trunk at the bottom, with PR state |
 | `gt submit` / `gt ss` | `git stack submit` (`git ss`) | `-d` `-p` `--no-edit` `--dry-run` `--ai` |
-| `gt sync` | `git stack sync` (`git sync`) | `-f` prunes merged branches |
+| `gt sync` | `git stack sync` (`git sync`) | asks before deleting merged branches; `-f` deletes without asking |
 | (none) | `git stack install` | aliases, completion, agent MCP registration |
 | (none) | `git stack completion <shell>` | bash, zsh, fish |
 | (none) | `git stack mcp` | stdio MCP server |
@@ -72,7 +72,7 @@ git ss                      # push both again
 Once the bottom PR merges;
 
 ```sh
-git sync -f                 # fetch, move trunk, restack what's left, prune the merged branch
+git sync                    # fetch, move trunk, restack what's left; asks before deleting the merged branch
 git stack                   # where am I? every stack as a tree with its PRs
 git co                      # the picker, to jump somewhere else
 ```

@@ -18,8 +18,9 @@ func newSyncCmd(c *cli) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "sync",
 		Short: "Sync the stack with the remote: fetch, update trunk, restack, prune merged branches",
-		Long: `Fetch the remote, fast-forward trunk, restack the current stack onto it, push, and
-with -f delete local branches whose pull requests were merged.`,
+		Long: `Fetch the remote, fast-forward trunk, restack the current stack onto it and push.
+Branches whose pull requests have merged are offered for deletion on a terminal; -f
+deletes them without asking, and without a terminal they are kept and listed.`,
 		Args:              cobra.NoArgs,
 		ValidArgsFunction: completeNothing,
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -48,7 +49,7 @@ with -f delete local branches whose pull requests were merged.`,
 			return nil
 		},
 	}
-	cmd.Flags().BoolVarP(&force, "force", "f", false, "delete merged branches without asking (gh stack sync --prune)")
+	cmd.Flags().BoolVarP(&force, "force", "f", false, "delete merged branches without asking (otherwise you are asked on a terminal)")
 	cmd.Flags().BoolVarP(&all, "all", "a", false, "sync every stack (gh stack only syncs the current one; a notice is printed)")
 	cmd.Flags().BoolVar(&noRestack, "no-restack", false, "not available with gh stack")
 	return cmd
