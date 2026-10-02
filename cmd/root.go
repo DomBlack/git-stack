@@ -28,10 +28,8 @@ import (
 	"github.com/DomBlack/git-stack/pkg/git"
 	"github.com/DomBlack/git-stack/pkg/stack"
 	"github.com/DomBlack/git-stack/pkg/ui"
+	"github.com/DomBlack/git-stack/pkg/version"
 )
-
-// version is set by the linker (see .goreleaser.yaml).
-var version = "dev"
 
 // Streams are the process's standard streams, injectable for tests.
 type Streams struct {
@@ -255,7 +253,7 @@ func newRootCmd(c *cli) *cobra.Command {
 		Use:     "git-stack",
 		Short:   "Graphite-style stacked branches on top of gh stack",
 		Long:    "git-stack manages stacked branches and stacked pull requests.\nInstalled as git-stack, git exposes it as `git stack <command>`.",
-		Version: version,
+		Version: version.Current().String(),
 		Args:    cobra.NoArgs,
 		// Every command sets ValidArgsFunction; the root has no positional args.
 		ValidArgsFunction: completeNothing,
@@ -295,6 +293,7 @@ func newRootCmd(c *cli) *cobra.Command {
 		newInstallCmd(c),
 		newMcpCmd(c),
 		newCompletionCmd(c),
+		newVersionCmd(c),
 	)
 	return root
 }

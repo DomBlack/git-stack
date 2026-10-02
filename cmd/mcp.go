@@ -15,6 +15,7 @@ import (
 	"github.com/DomBlack/git-stack/pkg/forge/github"
 	"github.com/DomBlack/git-stack/pkg/git"
 	mcpserver "github.com/DomBlack/git-stack/pkg/mcp"
+	"github.com/DomBlack/git-stack/pkg/version"
 )
 
 func newMcpCmd(c *cli) *cobra.Command {
@@ -45,7 +46,7 @@ agents such as Claude Code and Codex can drive git-stack. Register it with
 				cwd, _ = os.Getwd()
 			}
 			srv := mcpserver.New(mcpserver.Options{
-				Version: version,
+				Version: version.Current().Version,
 				Cwd:     cwd,
 				Git:     g,
 				Log:     log,

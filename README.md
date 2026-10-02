@@ -43,6 +43,7 @@ If you know `gt` you already know most of this; the table is the mapping.
 | (none) | `git stack install` | aliases, completion, agent MCP registration |
 | (none) | `git stack completion <shell>` | bash, zsh, fish |
 | (none) | `git stack mcp` | stdio MCP server |
+| (none) | `git stack version` | `--json` for scripts |
 
 ## Day to day
 
