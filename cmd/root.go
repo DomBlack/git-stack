@@ -270,6 +270,10 @@ func newRootCmd(c *cli) *cobra.Command {
 		ValidArgsFunction: completeNothing,
 		SilenceUsage:      true,
 		SilenceErrors:     true,
+		// A bare `git stack` shows the stacks, like `gt log`.
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			return showLog(cmd.Context(), c)
+		},
 		PersistentPreRun: func(cmd *cobra.Command, _ []string) {
 			if c.globals.Cwd != "" {
 				c.globals.Cwd = filepath.Clean(c.globals.Cwd)
@@ -301,6 +305,7 @@ func newRootCmd(c *cli) *cobra.Command {
 		newTopCmd(c),
 		newBottomCmd(c),
 		newCheckoutCmd(c),
+		newLogCmd(c),
 		newInstallCmd(c),
 		newMcpCmd(c),
 		newCompletionCmd(c),

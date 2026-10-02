@@ -38,6 +38,7 @@ If you know `gt` you already know most of this; the table is the mapping.
 | `gt restack` | `git stack restack` (`git rs`) | `--upstack` `--downstack` `--continue` `--abort` |
 | `gt up/down/top/bottom` | `git stack up/down/top/bottom` (`git u/d/t/b`) | `down` from the bottom branch takes you to trunk |
 | `gt checkout` | `git stack checkout` (`git co`) | interactive tree picker |
+| `gt log` | `git stack` or `git stack log` | every stack as a tree, trunk at the bottom, with PR state |
 | `gt submit` / `gt ss` | `git stack submit` (`git ss`) | `-d` `-p` `--no-edit` `--dry-run` `--ai` |
 | `gt sync` | `git stack sync` (`git sync`) | `-f` prunes merged branches |
 | (none) | `git stack install` | aliases, completion, agent MCP registration |
@@ -72,7 +73,8 @@ Once the bottom PR merges;
 
 ```sh
 git sync -f                 # fetch, move trunk, restack what's left, prune the merged branch
-git co                      # the picker, if you've lost track of where you are
+git stack                   # where am I? every stack as a tree with its PRs
+git co                      # the picker, to jump somewhere else
 ```
 
 `--ai` is optional everywhere; `git create -a -m "message"` or plain `git create name`
