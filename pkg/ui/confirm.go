@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
+	"github.com/charmbracelet/x/ansi"
 )
 
 // Prompter asks yes/no and pick-one questions on the terminal. It satisfies
@@ -28,6 +29,14 @@ func (p Prompter) Confirm(question string, defaultYes bool) (bool, error) {
 		return false, err
 	}
 	fm := final.(*confirmModel)
+	answer := "no"
+	switch {
+	case fm.cancelled:
+		answer = "cancelled"
+	case fm.value:
+		answer = "yes"
+	}
+	p.summary(question, answer)
 	if fm.cancelled {
 		return false, ErrCancelled
 	}
@@ -42,10 +51,23 @@ func (p Prompter) Select(question string, options []string) (int, error) {
 		return -1, err
 	}
 	fm := final.(*selectModel)
+	// The final frame is padded to the height of the interactive one (see
+	// selectModel.View); bubbletea leaves the cursor on its last line, so
+	// move up to the line after the summary and erase the padding.
+	fmt.Fprint(p.Out, ansi.CursorUp(len(options))+ansi.EraseScreenBelow)
 	if fm.cancelled {
 		return -1, ErrCancelled
 	}
 	return fm.cursor, nil
+}
+
+// summary prints the answered question on its own line once the program has
+// exited. Confirm renders an empty final frame and prints this instead,
+// because bubbletea's inline renderer erases a final frame that has no
+// trailing newline.
+func (p Prompter) summary(question, answer string) {
+	s := DefaultStyles()
+	fmt.Fprintln(p.Out, s.Title.Render("? ")+question+" "+s.Muted.Render(answer))
 }
 
 func (p Prompter) ctx() context.Context {
@@ -93,14 +115,7 @@ func (m *confirmModel) View() tea.View {
 		hint = "[Y/n]"
 	}
 	if m.done {
-		answer := "no"
-		if m.value {
-			answer = "yes"
-		}
-		if m.cancelled {
-			answer = "cancelled"
-		}
-		return tea.NewView(m.styles.Title.Render("? ") + m.question + " " + m.styles.Muted.Render(answer) + "\n")
+		return tea.NewView("")
 	}
 	return tea.NewView(m.styles.Title.Render("? ") + m.question + " " + m.styles.Muted.Render(hint) + " ")
 }
@@ -146,11 +161,16 @@ func (m *selectModel) View() tea.View {
 	var b strings.Builder
 	b.WriteString(m.styles.Title.Render("? ") + m.question)
 	if m.done {
-		if m.cancelled {
-			b.WriteString(" " + m.styles.Muted.Render("cancelled") + "\n")
-		} else {
-			b.WriteString(" " + m.styles.Muted.Render(m.options[m.cursor]) + "\n")
+		// bubbletea's inline renderer mispositions a final frame that is
+		// shorter than the previous one (the question showed up twice), so
+		// keep the height: the summary line plus blank padding, which
+		// Prompter.Select erases after the program exits.
+		answer := "cancelled"
+		if !m.cancelled {
+			answer = m.options[m.cursor]
 		}
+		b.WriteString(" " + m.styles.Muted.Render(answer) + "\n")
+		b.WriteString(strings.Repeat("\n", len(m.options)))
 		return tea.NewView(b.String())
 	}
 	b.WriteString("\n")
