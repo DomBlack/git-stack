@@ -33,6 +33,17 @@ func newTestPicker(t *testing.T, o PickerOptions) *teatest.TestModel {
 	)
 }
 
+// waitForText waits until the rendered output contains text. The output is
+// stripped of ANSI sequences first: bubbletea's renderer updates the screen
+// incrementally, so a word can arrive split around a cursor or insert-mode
+// sequence and a raw byte search would miss it.
+func waitForText(t *testing.T, tm *teatest.TestModel, text string) {
+	t.Helper()
+	teatest.WaitFor(t, tm.Output(), func(b []byte) bool {
+		return bytes.Contains([]byte(ansi.Strip(string(b))), []byte(text))
+	}, teatest.WithDuration(5*time.Second))
+}
+
 func finalPicker(t *testing.T, tm *teatest.TestModel) *Picker {
 	t.Helper()
 	m := tm.FinalModel(t, teatest.WithFinalTimeout(5*time.Second))
@@ -45,7 +56,7 @@ func finalPicker(t *testing.T, tm *teatest.TestModel) *Picker {
 
 func TestPickerStartsOnCurrentAndSelectsWithEnter(t *testing.T) {
 	tm := newTestPicker(t, PickerOptions{})
-	teatest.WaitFor(t, tm.Output(), func(b []byte) bool { return bytes.Contains(b, []byte("feat/ui-tests")) })
+	waitForText(t, tm, "feat/ui-tests")
 	tm.Send(tea.KeyPressMsg{Code: tea.KeyEnter})
 	if r := finalPicker(t, tm).Result(); r.Cancelled || r.Branch != "feat/ui" {
 		t.Errorf("result = %+v, want current branch feat/ui", r)
@@ -82,7 +93,7 @@ func TestPickerNavigationKeys(t *testing.T) {
 func TestPickerFilterKeepsTreeContext(t *testing.T) {
 	tm := newTestPicker(t, PickerOptions{})
 	tm.Type("hot")
-	teatest.WaitFor(t, tm.Output(), func(b []byte) bool { return bytes.Contains(b, []byte("> hot")) })
+	waitForText(t, tm, "> hot")
 	tm.Send(tea.KeyPressMsg{Code: tea.KeyEnter})
 	p := finalPicker(t, tm)
 	if r := p.Result(); r.Branch != "hotfix" {
@@ -99,7 +110,7 @@ func TestPickerFilterKeepsTreeContext(t *testing.T) {
 	// While a filter is active, j/k are typed into the filter, not navigation.
 	tm = newTestPicker(t, PickerOptions{})
 	tm.Type("fj")
-	teatest.WaitFor(t, tm.Output(), func(b []byte) bool { return bytes.Contains(b, []byte("no branches match")) })
+	waitForText(t, tm, "no branches match")
 	tm.Send(tea.KeyPressMsg{Code: tea.KeyEnter})
 	if r := finalPicker(t, tm).Result(); !r.Cancelled {
 		t.Errorf("enter with no matches should cancel: %+v", r)
@@ -123,14 +134,14 @@ func TestPickerBackgroundRefreshUpdatesRows(t *testing.T) {
 		return []forge.PullRequest{{Number: 99, Head: "feat/ui-tests", State: forge.StateOpen}}, nil
 	}
 	tm := newTestPicker(t, PickerOptions{Refresh: refresh})
-	teatest.WaitFor(t, tm.Output(), func(b []byte) bool { return bytes.Contains(b, []byte("refreshing pull requests")) })
+	waitForText(t, tm, "refreshing pull requests")
 	close(refreshed)
-	teatest.WaitFor(t, tm.Output(), func(b []byte) bool { return bytes.Contains(b, []byte("#99 open")) })
+	waitForText(t, tm, "#99 open")
 	tm.Send(tea.KeyPressMsg{Code: tea.KeyEscape})
 	finalPicker(t, tm)
 
 	tm = newTestPicker(t, PickerOptions{Refresh: func(context.Context) ([]forge.PullRequest, error) { return nil, errors.New("offline") }})
-	teatest.WaitFor(t, tm.Output(), func(b []byte) bool { return bytes.Contains(b, []byte("could not refresh")) })
+	waitForText(t, tm, "could not refresh")
 	tm.Send(tea.KeyPressMsg{Code: tea.KeyEscape})
 	finalPicker(t, tm)
 }
@@ -140,7 +151,7 @@ func TestPickerGolden(t *testing.T) {
 	for range 4 {
 		tm.Send(tea.KeyPressMsg{Code: 'j', Text: "j"})
 	}
-	teatest.WaitFor(t, tm.Output(), func(b []byte) bool { return bytes.Contains(b, []byte("7/8")) })
+	waitForText(t, tm, "7/8")
 	tm.Send(tea.KeyPressMsg{Code: tea.KeyEscape})
 	p := finalPicker(t, tm)
 	// Snapshot the last frame as plain text: the inline program clears its
