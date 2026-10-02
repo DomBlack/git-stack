@@ -165,9 +165,12 @@ func RenderRow(tr TreeRow, o RenderOptions) string {
 	if len(tr.Matched) > 0 {
 		name = lipgloss.StyleRunes(r.Name, tr.Matched, st.Match.Inherit(nameStyle), nameStyle)
 	}
-	marker := "  "
-	if r.IsCurrent {
-		marker = "* "
+	marker := st.Muted.Render("○") + " "
+	switch {
+	case r.IsCurrent:
+		marker = st.Current.Render("●") + " "
+	case r.IsTrunk:
+		marker = st.Trunk.Render("■") + " "
 	}
 
 	var meta []string

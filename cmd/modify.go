@@ -1,8 +1,6 @@
 package cmd
 
 import (
-	"fmt"
-
 	"github.com/spf13/cobra"
 
 	"github.com/DomBlack/git-stack/pkg/app"
@@ -48,25 +46,22 @@ created so the parent's commit is never rewritten.`,
 			if err != nil {
 				return err
 			}
-			if c.globals.Quiet {
-				return nil
-			}
-			out := cmd.OutOrStdout()
+			rep := c.report()
 			switch {
 			case cont:
-				fmt.Fprintln(out, "Restack continued.")
+				rep.Success("Restack continued")
 			case abort:
-				fmt.Fprintln(out, "Restack aborted; branches restored.")
+				rep.Success("Restack aborted; branches restored")
 			case res.Amended:
-				fmt.Fprintf(out, "Amended %s: %s %s\n", res.Branch, res.Commit.Short(), res.Commit.Subject)
+				rep.Success("Amended %s  %s %s", rep.Branch(res.Branch), rep.SHA(res.Commit.Short()), res.Commit.Subject)
 			default:
 				if res.ForcedNewCommit {
-					fmt.Fprintf(out, "%s had no commits of its own; created one instead of amending.\n", res.Branch)
+					rep.Warn("%s had no commits of its own; created one instead of amending", res.Branch)
 				}
-				fmt.Fprintf(out, "Committed to %s: %s %s\n", res.Branch, res.Commit.Short(), res.Commit.Subject)
+				rep.Success("Committed to %s  %s %s", rep.Branch(res.Branch), rep.SHA(res.Commit.Short()), res.Commit.Subject)
 			}
 			if n := len(res.Restacked); n > 0 {
-				fmt.Fprintf(out, "Restacked %d %s above %s.\n", n, plural(n, "branch", "branches"), res.Branch)
+				rep.Success("Restacked %d %s above %s", n, plural(n, "branch", "branches"), rep.Branch(res.Branch))
 			}
 			return nil
 		},

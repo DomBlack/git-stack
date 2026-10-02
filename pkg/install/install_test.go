@@ -3,6 +3,8 @@ package install
 import (
 	"bytes"
 	"context"
+	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"slices"
@@ -41,7 +43,7 @@ func newInstaller(t *testing.T, f *exectest.Fake, out *bytes.Buffer) *Installer 
 			}
 			return "__start_git-stack() { :; }\n", nil
 		},
-		Out: out,
+		Report: bufReport{out},
 	}
 }
 
@@ -216,3 +218,11 @@ func TestSkillOptInIsAsked(t *testing.T) {
 	}
 	_ = agents.ServerName
 }
+
+// bufReport collects the installer's report the way the piped reporter
+// would print it.
+type bufReport struct{ w io.Writer }
+
+func (b bufReport) Success(format string, args ...any) { fmt.Fprintf(b.w, "ok: "+format+"\n", args...) }
+func (b bufReport) Info(format string, args ...any)    { fmt.Fprintf(b.w, "  "+format+"\n", args...) }
+func (b bufReport) Warn(format string, args ...any)    { fmt.Fprintf(b.w, "note: "+format+"\n", args...) }

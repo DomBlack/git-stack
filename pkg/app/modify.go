@@ -115,7 +115,12 @@ func (a *App) Modify(ctx context.Context, repo git.Repo, o ModifyOptions) (Modif
 	if len(children) == 0 || a.d.Restack == nil {
 		return res, nil
 	}
-	if err := a.d.Restack.Restack(ctx, repo, stack.ScopeUpstack); err != nil {
+	n := len(children)
+	headline := fmt.Sprintf("Restacking %d %s above %s", n, pluralise(n, "branch", "branches"), res.Branch)
+	err = a.progress(ctx, PhaseRestack, headline, func(ctx context.Context) error {
+		return a.d.Restack.Restack(ctx, repo, stack.ScopeUpstack)
+	})
+	if err != nil {
 		return res, withConflictSteps(err, "git stack modify")
 	}
 	res.Restacked = children
@@ -161,4 +166,12 @@ func withConflictSteps(err error, command string) error {
 	}
 	steps = append(steps, fmt.Sprintf("%s --continue", command), fmt.Sprintf("or give up with %s --abort", command))
 	return se.WithSteps(steps...)
+}
+
+// pluralise picks the singular or plural word for n.
+func pluralise(n int, one, many string) string {
+	if n == 1 {
+		return one
+	}
+	return many
 }

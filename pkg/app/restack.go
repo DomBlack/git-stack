@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"errors"
+	"strings"
 
 	"github.com/DomBlack/git-stack/pkg/git"
 	"github.com/DomBlack/git-stack/pkg/stack"
@@ -66,7 +67,10 @@ func (a *App) Restack(ctx context.Context, repo git.Repo, o RestackOptions) (Res
 	default:
 		res.Branches = names
 	}
-	if err := a.d.Restack.Restack(ctx, repo, o.Scope); err != nil {
+	err = a.progress(ctx, PhaseRestack, "Restacking "+strings.Join(res.Branches, ", "), func(ctx context.Context) error {
+		return a.d.Restack.Restack(ctx, repo, o.Scope)
+	})
+	if err != nil {
 		return res, withConflictSteps(err, "git stack restack")
 	}
 	behind, err := a.d.Git.IsAncestor(ctx, repo, s.Trunk, s.Bottom())

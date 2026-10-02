@@ -2,11 +2,11 @@ package cmd
 
 import (
 	"fmt"
+	"io"
 
 	"github.com/spf13/cobra"
 
 	"github.com/DomBlack/git-stack/pkg/app"
-	"github.com/DomBlack/git-stack/pkg/ui"
 )
 
 func newSyncCmd(c *cli) *cobra.Command {
@@ -31,22 +31,19 @@ with -f delete local branches whose pull requests were merged.`,
 			if err != nil {
 				return err
 			}
-			done := ui.Busy(cmd.ErrOrStderr(), c.termErr())
-			defer done()
+			rep := c.report()
 			res, err := a.Sync(ctx, repo, app.SyncOptions{Prune: force, All: all})
 			if err != nil {
 				return err
 			}
-			done()
-			errOut := cmd.ErrOrStderr()
-			if res.Output != "" && !c.globals.Quiet {
-				fmt.Fprintln(errOut, res.Output)
+			if res.Output != "" {
+				_, _ = io.WriteString(rep.Stream(), res.Output+"\n")
 			}
 			for _, n := range res.Notices {
-				fmt.Fprintln(errOut, "note: "+n)
+				rep.Warn("%s", n)
 			}
-			if !res.Aborted && !c.globals.Quiet {
-				fmt.Fprintln(cmd.OutOrStdout(), "Synced.")
+			if !res.Aborted {
+				rep.Success("Synced")
 			}
 			return nil
 		},

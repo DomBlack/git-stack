@@ -139,7 +139,18 @@ func (a *App) Submit(ctx context.Context, repo git.Repo, o SubmitOptions) (Submi
 
 	// Route (b): let gh stack push and create everything, then set texts.
 	interactive := !o.NoEdit && len(texts) == 0 && a.d.Prompter != nil && len(newBranches) > 0
-	out, err := a.d.Submit.Submit(ctx, repo, stack.SubmitOptions{Publish: !draft, Interactive: interactive})
+	var out stack.SubmitResult
+	submit := func(ctx context.Context) error {
+		var err error
+		out, err = a.d.Submit.Submit(ctx, repo, stack.SubmitOptions{Publish: !draft, Interactive: interactive})
+		return err
+	}
+	if interactive {
+		// gh stack's editor owns the terminal; no headline over it.
+		err = submit(ctx)
+	} else {
+		err = a.progress(ctx, PhaseSubmit, "Submitting stack", submit)
+	}
 	if err != nil {
 		return SubmitResult{}, err
 	}
@@ -239,7 +250,7 @@ func (a *App) draftPR(ctx context.Context, repo git.Repo, trunk, parent, branch 
 		Commits: commits, RecentSubjects: subjects, Template: template, ExtraPrompt: a.d.Config.AIExtraPrompt,
 	}
 	var out ai.PullRequest
-	err = a.progress(ctx, fmt.Sprintf("Drafting pull request for %s with Claude…", branch), func(ctx context.Context) error {
+	err = a.progress(ctx, PhaseAI, fmt.Sprintf("Drafting pull request for %s with Claude", branch), func(ctx context.Context) error {
 		var err error
 		out, err = a.d.AI.DraftPR(ctx, in)
 		return err

@@ -27,7 +27,7 @@ func TestSubmitAndSyncCommands(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(out, "Dry run") || !strings.Contains(out, "feat-a  (new PR, draft)") || !strings.Contains(out, "feat-b  (new PR, draft)") {
+	if !strings.Contains(errOut, "Dry run") || !strings.Contains(out, "feat-a  (new PR, draft)") || !strings.Contains(out, "feat-b  (new PR, draft)") {
 		t.Errorf("dry run output = %q", out)
 	}
 	if !strings.Contains(errOut, "note: gh stack submits the whole stack") {
@@ -77,7 +77,7 @@ func TestSubmitAndSyncCommands(t *testing.T) {
 	})
 	f.Reset()
 	out, errOut, err = runWith(t, f, "--cwd", dir, "sync", "-f", "--all")
-	if err != nil || out != "Synced.\n" || !strings.Contains(errOut, "Stack synced") || !strings.Contains(errOut, "--all was ignored") {
+	if err != nil || out != "ok: Synced\n" || !strings.Contains(errOut, "Stack synced") || !strings.Contains(errOut, "--all was ignored") {
 		t.Errorf("sync: %q %q %v", out, errOut, err)
 	}
 	var syncArgs string

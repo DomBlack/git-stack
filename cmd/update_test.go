@@ -68,7 +68,8 @@ func TestUpdateCommand(t *testing.T) {
 		root := newRootCmd(c)
 		root.SetArgs(append([]string{"update"}, args...))
 		err := root.Execute()
-		return c.streams.Out.(*bytes.Buffer).String(), err
+		// stdout then stderr: notices (dev build, update available) go to stderr.
+		return c.streams.Out.(*bytes.Buffer).String() + c.streams.Err.(*bytes.Buffer).String(), err
 	}
 
 	// The test binary is a dev build, so a plain update only reports.
@@ -92,7 +93,7 @@ func TestUpdateCommand(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.HasPrefix(out, "Updated git-stack ") || !strings.Contains(out, "to v9.9.9") || !strings.Contains(out, target) {
+	if !strings.Contains(out, "ok: Updated git-stack ") || !strings.Contains(out, "to v9.9.9") || !strings.Contains(out, target) {
 		t.Errorf("--force output = %q", out)
 	}
 	if got, _ := os.ReadFile(target); string(got) != "new binary" {

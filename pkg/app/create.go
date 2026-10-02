@@ -88,11 +88,12 @@ func (a *App) Create(ctx context.Context, repo git.Repo, o CreateOptions) (Creat
 		return CreateResult{}, err
 	}
 
-	if newStack {
-		err = a.d.Tracker.InitStack(ctx, repo, trunk, []string{name})
-	} else {
-		err = a.d.Tracker.AddTop(ctx, repo, name)
-	}
+	err = a.progress(ctx, PhaseCreate, fmt.Sprintf("Creating branch %s", name), func(ctx context.Context) error {
+		if newStack {
+			return a.d.Tracker.InitStack(ctx, repo, trunk, []string{name})
+		}
+		return a.d.Tracker.AddTop(ctx, repo, name)
+	})
 	if err != nil {
 		return CreateResult{}, err
 	}
@@ -192,7 +193,7 @@ func (a *App) draftCommit(ctx context.Context, repo git.Repo, trunk, fixedMessag
 		TakenBranches: taken, ExtraPrompt: a.d.Config.AIExtraPrompt,
 	}
 	var out ai.Commit
-	err = a.progress(ctx, "Drafting branch name and commit message with Claude…", func(ctx context.Context) error {
+	err = a.progress(ctx, PhaseAI, "Drafting branch name and commit message with Claude", func(ctx context.Context) error {
 		var err error
 		out, err = a.d.AI.DraftCommit(ctx, in)
 		return err
@@ -201,9 +202,9 @@ func (a *App) draftCommit(ctx context.Context, repo git.Repo, trunk, fixedMessag
 }
 
 // progress runs fn under the Progress hook when one is configured.
-func (a *App) progress(ctx context.Context, message string, fn func(ctx context.Context) error) error {
+func (a *App) progress(ctx context.Context, phase Phase, message string, fn func(ctx context.Context) error) error {
 	if a.d.Progress == nil {
 		return fn(ctx)
 	}
-	return a.d.Progress(ctx, message, fn)
+	return a.d.Progress(ctx, phase, message, fn)
 }

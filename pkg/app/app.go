@@ -29,10 +29,28 @@ type Deps struct {
 	Config   *config.Config
 	Log      *slog.Logger
 	Prompter Prompter
-	// Progress, when set, wraps slow operations (AI calls) so the CLI can
-	// show a spinner. It must run fn and return its error.
-	Progress func(ctx context.Context, message string, fn func(ctx context.Context) error) error
+	// Progress, when set, wraps slow operations (backend calls, AI calls) so
+	// the CLI can show a headline and spinner. It must run fn and return its
+	// error. The phase says what kind of work it is; the message is the
+	// headline without decoration ("Submitting stack").
+	Progress func(ctx context.Context, phase Phase, message string, fn func(ctx context.Context) error) error
 }
+
+// Phase names a kind of long running work. The CLI decorates each phase the
+// same way every time (see docs/style.md); use cases only pick the phase.
+type Phase string
+
+// Phases.
+const (
+	PhaseCreate  Phase = "create"
+	PhaseModify  Phase = "modify"
+	PhaseRestack Phase = "restack"
+	PhaseSubmit  Phase = "submit"
+	PhaseSync    Phase = "sync"
+	PhaseAI      Phase = "ai"
+	PhaseUpdate  Phase = "update"
+	PhaseInstall Phase = "install"
+)
 
 // Prompter asks the user a question. It is nil under --no-interactive and in
 // the MCP server, in which case use cases must fall back to a default or

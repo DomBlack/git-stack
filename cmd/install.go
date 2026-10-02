@@ -76,7 +76,7 @@ change without making it.`,
 					}
 					return buf.String(), err
 				},
-				Out: cmd.OutOrStdout(),
+				Report: c.report(),
 			}
 			if rt.Interactive {
 				in.Prompter = ui.Prompter{In: rt.Streams.In, Out: rt.Streams.Err, Ctx: ctx}

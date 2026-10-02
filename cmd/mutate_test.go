@@ -126,7 +126,7 @@ func TestCreateModifyRestackCommands(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create: %v", err)
 	}
-	if !strings.HasPrefix(out, "Created add-feature-a on main: ") || !strings.HasSuffix(out, " Add feature A\n") {
+	if !strings.HasPrefix(out, "ok: Created add-feature-a on main  ") || !strings.HasSuffix(out, " Add feature A\n") {
 		t.Errorf("create output = %q", out)
 	}
 	if cur() != "add-feature-a" || !strings.Contains(strings.Join(ghCalls(), "|"), "stack init --base main add-feature-a") {
@@ -135,14 +135,14 @@ func TestCreateModifyRestackCommands(t *testing.T) {
 
 	// create on top with explicit name and nothing staged: empty branch via add.
 	out, _, err = runWith(t, f, "--cwd", dir, "c", "feat/b")
-	if err != nil || !strings.Contains(out, "created empty branch feat/b on add-feature-a") || cur() != "feat/b" {
+	if err != nil || !strings.Contains(out, "Created empty branch feat/b on add-feature-a") || cur() != "feat/b" {
 		t.Errorf("empty create: %q %v (on %s)", out, err, cur())
 	}
 
 	// modify on the empty branch creates a commit (never amends the parent).
 	gittest.WriteFile(t, dir, "b.txt", "b")
-	out, _, err = runWith(t, f, "--cwd", dir, "modify", "-a", "-m", "Add B")
-	if err != nil || !strings.Contains(out, "had no commits of its own") || !strings.Contains(out, "Committed to feat/b") {
+	out, errOut, err := runWith(t, f, "--cwd", dir, "modify", "-a", "-m", "Add B")
+	if err != nil || !strings.Contains(errOut, "had no commits of its own") || !strings.Contains(out, "Committed to feat/b") {
 		t.Errorf("modify empty: %q %v", out, err)
 	}
 	if subj := gittest.Run(t, dir, "log", "-1", "--format=%s", "add-feature-a"); subj != "Add feature A" {
@@ -154,7 +154,7 @@ func TestCreateModifyRestackCommands(t *testing.T) {
 	gittest.WriteFile(t, dir, "a.txt", "a2")
 	f.Reset()
 	out, _, err = runWith(t, f, "--cwd", dir, "m", "-u")
-	if err != nil || !strings.HasPrefix(out, "Amended add-feature-a: ") || !strings.Contains(out, "Restacked 1 branch above add-feature-a.") {
+	if err != nil || !strings.HasPrefix(out, "ok: Amended add-feature-a  ") || !strings.Contains(out, "Restacked 1 branch above add-feature-a") {
 		t.Errorf("modify amend: %q %v", out, err)
 	}
 	if calls := ghCalls(); !strings.Contains(strings.Join(calls, "|"), "stack rebase --no-trunk --upstack") {
@@ -163,15 +163,15 @@ func TestCreateModifyRestackCommands(t *testing.T) {
 
 	// restack with scopes.
 	f.Reset()
-	out, errOut, err := runWith(t, f, "--cwd", dir, "restack", "--upstack")
-	if err != nil || out != "Restacked add-feature-a, feat/b.\n" || errOut != "" {
+	out, errOut, err = runWith(t, f, "--cwd", dir, "restack", "--upstack")
+	if err != nil || out != "ok: Restacked add-feature-a, feat/b\n" || !strings.Contains(errOut, "Restacking add-feature-a, feat/b...") {
 		t.Errorf("restack: %q %q %v", out, errOut, err)
 	}
 	if calls := ghCalls(); len(calls) != 2 || calls[1] != "stack rebase --no-trunk --upstack" {
 		t.Errorf("restack calls = %v", calls)
 	}
 	out, _, err = runWith(t, f, "--cwd", dir, "rs", "--continue")
-	if err != nil || out != "Restack continued.\n" {
+	if err != nil || out != "ok: Restack continued\n" {
 		t.Errorf("continue: %q %v", out, err)
 	}
 	if _, _, err := runWith(t, f, "--cwd", dir, "restack", "--only"); err == nil || !strings.Contains(err.Error(), "single branch") {
@@ -213,7 +213,7 @@ func TestCreateWithAIUsesClaude(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create --ai: %v", err)
 	}
-	if !strings.HasPrefix(out, "Created dom/add-adder on main: ") || !strings.HasSuffix(out, " feat: add adder\n") {
+	if !strings.HasPrefix(out, "ok: Created dom/add-adder on main  ") || !strings.HasSuffix(out, " feat: add adder\n") {
 		t.Errorf("output = %q", out)
 	}
 	calls := f.CallsTo("claude")

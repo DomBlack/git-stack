@@ -222,6 +222,8 @@ next to the old one and renames it into place. Dev builds aren't replaced withou
 Releases are cut by tagging; the workflow runs goreleaser for linux and darwin on amd64 and
 arm64.
 
+**How the CLI talks is one thing, in one place.** Every command prints through `ui.Reporter` (marks, emoji headlines, spinners on a terminal; `ok:`/`note:`/`error:` when piped) and the rules are written down in [`style.md`](style.md). `pkg/app` decides where a phase starts and ends through the `Progress` hook and only names the phase; the reporter owns the look.
+
 **Terminal niceties live in the CLI, never the MCP server.** Long gh stack commands
 (submit, sync) have their stderr relayed to the terminal as it arrives rather than
 dumped at the end; `pkg/exec` tees it through `Cmd.Stream`, `pkg/backend/ghstack` only

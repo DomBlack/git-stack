@@ -1,8 +1,6 @@
 package cmd
 
 import (
-	"fmt"
-
 	"github.com/spf13/cobra"
 
 	"github.com/DomBlack/git-stack/pkg/app"
@@ -46,15 +44,12 @@ by --ai). With nothing staged an empty branch is created.`,
 			if err != nil {
 				return err
 			}
-			if c.globals.Quiet {
-				return nil
-			}
-			out := cmd.OutOrStdout()
+			rep := c.report()
 			switch {
 			case res.Commit != nil:
-				fmt.Fprintf(out, "Created %s on %s: %s %s\n", res.Branch, res.Parent, res.Commit.Short(), res.Commit.Subject)
+				rep.Success("Created %s on %s  %s %s", rep.Branch(res.Branch), rep.Branch(res.Parent), rep.SHA(res.Commit.Short()), res.Commit.Subject)
 			default:
-				fmt.Fprintf(out, "No staged changes; created empty branch %s on %s.\n", res.Branch, res.Parent)
+				rep.Success("Created empty branch %s on %s (nothing was staged)", rep.Branch(res.Branch), rep.Branch(res.Parent))
 			}
 			return nil
 		},

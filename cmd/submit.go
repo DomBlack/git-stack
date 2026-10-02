@@ -1,12 +1,11 @@
 package cmd
 
 import (
-	"fmt"
+	"io"
 
 	"github.com/spf13/cobra"
 
 	"github.com/DomBlack/git-stack/pkg/app"
-	"github.com/DomBlack/git-stack/pkg/ui"
 )
 
 func newSubmitCmd(c *cli) *cobra.Command {
@@ -40,8 +39,7 @@ pass --stack to acknowledge the difference and silence the notice.`,
 			if err != nil {
 				return err
 			}
-			done := ui.Busy(cmd.ErrOrStderr(), c.termErr())
-			defer done()
+			rep := c.report()
 			res, err := a.Submit(ctx, repo, app.SubmitOptions{
 				Draft:      draft,
 				Publish:    publish,
@@ -53,17 +51,18 @@ pass --stack to acknowledge the difference and silence the notice.`,
 			if err != nil {
 				return err
 			}
-			done()
-			out, errOut := cmd.OutOrStdout(), cmd.ErrOrStderr()
-			links := c.termOut()
 			if !wholeStack && len(res.Stack) > 1 {
-				fmt.Fprintln(errOut, "note: gh stack submits the whole stack (Graphite submits downstack by default); pass --stack to silence this")
+				rep.Warn("gh stack submits the whole stack (Graphite submits downstack by default); pass --stack to silence this")
 			}
-			if res.Output != "" && !c.globals.Quiet {
-				fmt.Fprintln(errOut, res.Output)
+			if res.Output != "" {
+				// Not streamed live (no terminal gutter was available); show it now.
+				_, _ = io.WriteString(rep.Stream(), res.Output+"\n")
 			}
 			if res.DryRun {
-				fmt.Fprintln(out, "Dry run; nothing was pushed. Would submit:")
+				rep.Warn("Dry run; nothing was pushed. Would submit:")
+			} else {
+				n := len(res.PullRequests)
+				rep.Success("Submitted %d %s", n, plural(n, "branch", "branches"))
 			}
 			for _, pr := range res.PullRequests {
 				switch {
@@ -72,7 +71,7 @@ pass --stack to acknowledge the difference and silence the notice.`,
 					if !res.Draft {
 						state = "ready for review"
 					}
-					fmt.Fprintf(out, "  %s  (new PR, %s)\n", pr.Branch, state)
+					rep.Info("%s  (new PR, %s)", rep.Branch(pr.Branch), state)
 				case pr.Number > 0:
 					marker := "updated"
 					if pr.Created {
@@ -81,14 +80,13 @@ pass --stack to acknowledge the difference and silence the notice.`,
 					if res.DryRun {
 						marker = "update"
 					}
-					fmt.Fprintf(out, "  %s  %s %s %s\n", pr.Branch,
-						ui.Hyperlink(links, pr.URL, fmt.Sprintf("#%d", pr.Number)), marker, ui.Hyperlink(links, pr.URL, pr.URL))
+					rep.Info("%s  %s %s %s", rep.Branch(pr.Branch), rep.Ref(pr.Number, pr.URL), marker, rep.Link(pr.URL))
 				default:
-					fmt.Fprintf(out, "  %s\n", pr.Branch)
+					rep.Info("%s", rep.Branch(pr.Branch))
 				}
 			}
 			for _, n := range res.Notices {
-				fmt.Fprintln(errOut, "note: "+n)
+				rep.Warn("%s", n)
 			}
 			return nil
 		},

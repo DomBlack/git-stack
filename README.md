@@ -152,8 +152,9 @@ There's no task runner on purpose; this is the whole check:
 go build ./... && go vet ./... && golangci-lint run && go test ./...
 ```
 
-The rules for contributors (human or agent) are in [`AGENTS.md`](AGENTS.md), and the
-architecture notes are in [`docs/architecture.md`](docs/architecture.md).
+The rules for contributors (human or agent) are in [`AGENTS.md`](AGENTS.md), the
+architecture notes are in [`docs/architecture.md`](docs/architecture.md), and how the CLI
+should look and talk is in [`docs/style.md`](docs/style.md).
 
 ## License
 

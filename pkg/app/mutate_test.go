@@ -220,7 +220,7 @@ func TestCreateWithAIAndStagingPrompt(t *testing.T) {
 	var progressMsgs []string
 	deps.AI = fa
 	deps.Prompter = fp
-	deps.Progress = func(ctx context.Context, msg string, fn func(context.Context) error) error {
+	deps.Progress = func(ctx context.Context, _ app.Phase, msg string, fn func(context.Context) error) error {
 		progressMsgs = append(progressMsgs, msg)
 		return fn(ctx)
 	}
@@ -238,7 +238,8 @@ func TestCreateWithAIAndStagingPrompt(t *testing.T) {
 	if res.Branch != "dom/add-widget-2" || res.Commit == nil || res.Commit.Subject != "feat: add widget" {
 		t.Errorf("res = %+v", res)
 	}
-	if len(progressMsgs) != 1 || len(fa.inputs) != 1 {
+	// Two phases: the Claude draft, then creating the branch through the backend.
+	if len(progressMsgs) != 2 || progressMsgs[1] != "Creating branch dom/add-widget-2" || len(fa.inputs) != 1 {
 		t.Errorf("progress/AI calls: %v %d", progressMsgs, len(fa.inputs))
 	}
 	in := fa.inputs[0]

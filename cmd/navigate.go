@@ -1,7 +1,6 @@
 package cmd
 
 import (
-	"fmt"
 	"strconv"
 
 	"github.com/spf13/cobra"
@@ -48,13 +47,11 @@ func (c *cli) navigate(cmd *cobra.Command, dir stack.Direction, args []string, o
 	if err != nil {
 		return err
 	}
-	out := cmd.OutOrStdout()
+	rep := c.report()
 	if res.Moved == 0 {
-		fmt.Fprintln(out, res.Message)
+		rep.Warn("%s", res.Message)
 		return nil
 	}
-	if !c.globals.Quiet {
-		fmt.Fprintf(out, "Checked out %s.\n", res.Target)
-	}
+	rep.Success("Checked out %s", rep.Branch(res.Target))
 	return nil
 }

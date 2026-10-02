@@ -12,7 +12,6 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
-	"strings"
 	"sync"
 	"syscall"
 
@@ -57,6 +56,8 @@ type Runtime struct {
 	Runner      exec.Runner
 	Git         *git.Client
 	Log         *slog.Logger
+	// Report prints every human facing line (docs/style.md).
+	Report *ui.Reporter
 
 	repoOnce sync.Once
 	repo     git.Repo
@@ -142,6 +143,9 @@ func (c *cli) runtime() *Runtime {
 			Runner:      runner,
 			Git:         git.New(runner),
 			Log:         newLogger(c.streams.Err, c.globals.Debug),
+			Report: ui.NewReporter(c.streams.In, c.streams.Out, c.streams.Err, ui.ReporterOptions{
+				OutTTY: isTerminal(c.streams.Out), ErrTTY: isTerminal(c.streams.Err), Spinners: interactive, Quiet: c.globals.Quiet,
+			}),
 		}
 	})
 	return c.rt
@@ -172,8 +176,8 @@ func (c *cli) app(ctx context.Context) (*app.App, git.Repo, error) {
 	if err != nil {
 		return nil, git.Repo{}, err
 	}
-	// Long gh stack commands relay their progress to stderr as it happens.
-	backend := ghstack.New(rt.Runner, rt.Git, ghstack.WithOutput(rt.Streams.Err))
+	// Long gh stack commands relay their progress live through the reporter's gutter.
+	backend := ghstack.New(rt.Runner, rt.Git, ghstack.WithOutput(rt.Report.Stream()))
 	deps := app.Deps{
 		Git:     rt.Git,
 		Meta:    backend,
@@ -185,16 +189,13 @@ func (c *cli) app(ctx context.Context) (*app.App, git.Repo, error) {
 		AI: claudecode.New(rt.Runner, claudecode.Config{
 			Command: cfg.AICommand, Model: cfg.AIModel, ExtraPrompt: cfg.AIExtraPrompt, Timeout: cfg.AITimeout,
 		}, rt.Log),
-		Cache:  cache.New(repo),
-		Config: cfg,
-		Log:    rt.Log,
+		Cache:    cache.New(repo),
+		Config:   cfg,
+		Log:      rt.Log,
+		Progress: rt.Report.Step,
 	}
 	if rt.Interactive {
 		deps.Prompter = ui.Prompter{In: rt.Streams.In, Out: rt.Streams.Err, Ctx: ctx}
-		deps.Progress = func(ctx context.Context, message string, fn func(ctx context.Context) error) error {
-			defer ui.Busy(rt.Streams.Err, true)()
-			return ui.WithSpinner(ctx, rt.Streams.In, rt.Streams.Err, message, fn)
-		}
 	}
 	return app.New(deps), repo, nil
 }
@@ -233,10 +234,8 @@ func newLogger(w io.Writer, debug bool) *slog.Logger {
 	return slog.New(slog.NewTextHandler(w, &slog.HandlerOptions{Level: level}))
 }
 
-// termOut and termErr report whether stdout / stderr are terminals, which
-// decides hyperlinks and progress indicators.
-func (c *cli) termOut() bool { return isTerminal(c.streams.Out) }
-func (c *cli) termErr() bool { return isTerminal(c.streams.Err) }
+// report is the Reporter for this invocation (built with the runtime).
+func (c *cli) report() *ui.Reporter { return c.runtime().Report }
 
 func isTerminal(v any) bool {
 	f, ok := v.(*os.File)
@@ -318,31 +317,19 @@ func Execute() int {
 
 	root := NewRootCmd(Streams{In: os.Stdin, Out: os.Stdout, Err: os.Stderr})
 	if err := root.ExecuteContext(ctx); err != nil {
-		printError(os.Stderr, err)
+		ui.NewReporter(os.Stdin, os.Stdout, os.Stderr, ui.ReporterOptions{
+			OutTTY: isTerminal(os.Stdout), ErrTTY: isTerminal(os.Stderr),
+		}).Error(err)
 		return exitCode(err)
 	}
 	return 0
 }
 
-// printError renders an error Graphite-style: one line, then next steps.
+// printError renders an error in the plain (non terminal) style; the CLI
+// itself goes through ui.Reporter, this is kept for tests and callers that
+// only have a writer.
 func printError(w io.Writer, err error) {
-	if errors.Is(err, context.Canceled) {
-		fmt.Fprintln(w, "interrupted")
-		return
-	}
-	if se, ok := errors.AsType[*stack.Error](err); ok {
-		fmt.Fprintf(w, "error: %s\n", se.Msg)
-		if se.Detail != "" {
-			for line := range strings.SplitSeq(se.Detail, "\n") {
-				fmt.Fprintf(w, "  %s\n", line)
-			}
-		}
-		for _, step := range se.NextSteps {
-			fmt.Fprintf(w, "  - %s\n", step)
-		}
-		return
-	}
-	fmt.Fprintf(w, "error: %v\n", err)
+	ui.NewReporter(nil, w, w, ui.ReporterOptions{}).Error(err)
 }
 
 // exitCode mirrors gh-stack for the codes scripts care about.

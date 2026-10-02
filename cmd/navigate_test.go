@@ -31,13 +31,15 @@ func stackRepo(t *testing.T) string {
 	return dir
 }
 
+// run executes the CLI with buffers and returns stdout followed by stderr
+// (notices such as "Already at the top" go to stderr).
 func run(t *testing.T, args ...string) (string, error) {
 	t.Helper()
-	var out bytes.Buffer
-	root := NewRootCmd(testStreams(&out))
+	var out, errOut bytes.Buffer
+	root := NewRootCmd(Streams{In: strings.NewReader(""), Out: &out, Err: &errOut})
 	root.SetArgs(args)
 	err := root.Execute()
-	return out.String(), err
+	return out.String() + errOut.String(), err
 }
 
 func TestNavigationCommands(t *testing.T) {
@@ -45,7 +47,7 @@ func TestNavigationCommands(t *testing.T) {
 	cur := func() string { return gittest.Run(t, dir, "branch", "--show-current") }
 
 	out, err := run(t, "--cwd", dir, "up")
-	if err != nil || out != "Checked out c.\n" || cur() != "c" {
+	if err != nil || out != "ok: Checked out c\n" || cur() != "c" {
 		t.Fatalf("up: %q %v (on %s)", out, err, cur())
 	}
 	out, err = run(t, "--cwd", dir, "up")
@@ -53,11 +55,11 @@ func TestNavigationCommands(t *testing.T) {
 		t.Fatalf("up at top: %q %v", out, err)
 	}
 	out, err = run(t, "--cwd", dir, "down", "2")
-	if err != nil || out != "Checked out a.\n" || cur() != "a" {
+	if err != nil || out != "ok: Checked out a\n" || cur() != "a" {
 		t.Fatalf("down 2: %q %v", out, err)
 	}
 	out, err = run(t, "--cwd", dir, "down")
-	if err != nil || out != "Checked out main.\n" || cur() != "main" {
+	if err != nil || out != "ok: Checked out main\n" || cur() != "main" {
 		t.Fatalf("down to trunk: %q %v", out, err)
 	}
 	out, err = run(t, "--cwd", dir, "d")
@@ -65,7 +67,7 @@ func TestNavigationCommands(t *testing.T) {
 		t.Fatalf("down from trunk: %q %v", out, err)
 	}
 	out, err = run(t, "--cwd", dir, "top")
-	if err != nil || out != "Checked out c.\n" {
+	if err != nil || out != "ok: Checked out c\n" {
 		t.Fatalf("top: %q %v", out, err)
 	}
 	out, err = run(t, "--cwd", dir, "bottom", "-q")
@@ -73,7 +75,7 @@ func TestNavigationCommands(t *testing.T) {
 		t.Fatalf("bottom -q: %q %v", out, err)
 	}
 	out, err = run(t, "--cwd", dir, "u", "-n", "2")
-	if err != nil || out != "Checked out c.\n" {
+	if err != nil || out != "ok: Checked out c\n" {
 		t.Fatalf("up -n 2: %q %v", out, err)
 	}
 	if _, err = run(t, "--cwd", dir, "up", "zero"); err == nil {
@@ -92,11 +94,11 @@ func TestNavigationCommands(t *testing.T) {
 func TestCheckoutCommand(t *testing.T) {
 	dir := stackRepo(t)
 	out, err := run(t, "--cwd", dir, "checkout", "c")
-	if err != nil || out != "Checked out c.\n" {
+	if err != nil || out != "ok: Checked out c\n" {
 		t.Fatalf("checkout c: %q %v", out, err)
 	}
 	out, err = run(t, "--cwd", dir, "co", "--trunk")
-	if err != nil || out != "Checked out main.\n" {
+	if err != nil || out != "ok: Checked out main\n" {
 		t.Fatalf("checkout --trunk: %q %v", out, err)
 	}
 	if _, err = run(t, "--cwd", dir, "checkout", "nope"); err == nil {

@@ -35,7 +35,12 @@ func (a *App) Sync(ctx context.Context, repo git.Repo, o SyncOptions) (SyncResul
 	if o.All {
 		res.Notices = append(res.Notices, "gh stack syncs the current stack only; --all was ignored")
 	}
-	out, err := a.d.Sync.Sync(ctx, repo, stack.SyncOptions{Prune: o.Prune})
+	var out stack.SyncResult
+	err := a.progress(ctx, PhaseSync, "Syncing with origin", func(ctx context.Context) error {
+		var err error
+		out, err = a.d.Sync.Sync(ctx, repo, stack.SyncOptions{Prune: o.Prune})
+		return err
+	})
 	if err != nil {
 		return SyncResult{}, err
 	}

@@ -2,7 +2,6 @@ package cmd
 
 import (
 	"context"
-	"fmt"
 
 	"github.com/spf13/cobra"
 
@@ -58,9 +57,8 @@ enter to switch, esc to cancel.`,
 			if err := a.Checkout(ctx, repo, target); err != nil {
 				return err
 			}
-			if !c.globals.Quiet {
-				fmt.Fprintf(cmd.OutOrStdout(), "Checked out %s.\n", target)
-			}
+			rep := c.report()
+			rep.Success("Checked out %s", rep.Branch(target))
 			return nil
 		},
 	}

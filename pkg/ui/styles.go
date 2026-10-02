@@ -22,6 +22,10 @@ type Styles struct {
 	Muted     lipgloss.Style
 	Help      lipgloss.Style
 	Title     lipgloss.Style
+	// Reporter marks.
+	Success lipgloss.Style
+	Warning lipgloss.Style
+	Error   lipgloss.Style
 }
 
 // DefaultStyles returns the standard palette (ANSI colours so NO_COLOR and
@@ -43,5 +47,8 @@ func DefaultStyles() Styles {
 		Muted:     lipgloss.NewStyle().Faint(true),
 		Help:      lipgloss.NewStyle().Faint(true),
 		Title:     lipgloss.NewStyle().Bold(true),
+		Success:   lipgloss.NewStyle().Foreground(lipgloss.Color("2")),
+		Warning:   lipgloss.NewStyle().Foreground(lipgloss.Color("3")),
+		Error:     lipgloss.NewStyle().Foreground(lipgloss.Color("1")),
 	}
 }

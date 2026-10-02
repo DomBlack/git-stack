@@ -9,7 +9,6 @@ import (
 	_ "embed"
 	"errors"
 	"fmt"
-	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -51,22 +50,37 @@ type Installer struct {
 	CobraScript func(sh shell.Shell) (string, error)
 	// Prompter is nil when non-interactive.
 	Prompter app.Prompter
-	// Out receives the human-readable report.
-	Out io.Writer
+	// Report receives the human readable report (the CLI passes ui.Reporter).
+	Report Report
 	// Agents overrides the agent list (tests).
 	Agents []agents.Agent
 }
 
+// Report is where the installer's lines go; see docs/style.md. Info lines are
+// the table of what was (or would be) done, Warn is for dry runs and things
+// that were skipped or kept, Success closes a run.
+type Report interface {
+	Success(format string, args ...any)
+	Info(format string, args ...any)
+	Warn(format string, args ...any)
+}
+
 func (i *Installer) say(format string, args ...any) {
-	if i.Out != nil {
-		fmt.Fprintf(i.Out, format+"\n", args...)
+	if i.Report != nil {
+		i.Report.Info(strings.TrimPrefix(format, "  "), args...)
+	}
+}
+
+func (i *Installer) warn(format string, args ...any) {
+	if i.Report != nil {
+		i.Report.Warn(format, args...)
 	}
 }
 
 // Run installs the selected components.
 func (i *Installer) Run(ctx context.Context, o Options) error {
 	if o.DryRun {
-		i.say("dry run: nothing will be changed")
+		i.warn("dry run: nothing will be changed")
 	}
 	if o.Aliases {
 		if err := i.installAliases(ctx, o); err != nil {
@@ -277,7 +291,7 @@ func (i *Installer) recordFile(ctx context.Context, path string) error {
 // Uninstall reverses everything recorded as managed.
 func (i *Installer) Uninstall(ctx context.Context, o Options) error {
 	if o.DryRun {
-		i.say("dry run: nothing will be changed")
+		i.warn("dry run: nothing will be changed")
 	}
 	if o.Aliases {
 		m := gitconfig.New(i.Git)

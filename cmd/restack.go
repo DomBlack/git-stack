@@ -1,7 +1,6 @@
 package cmd
 
 import (
-	"fmt"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -43,20 +42,17 @@ files, then run "git stack restack --continue" (or --abort).`,
 			if err != nil {
 				return err
 			}
-			if c.globals.Quiet {
-				return nil
-			}
-			out := cmd.OutOrStdout()
+			rep := c.report()
 			switch {
 			case cont:
-				fmt.Fprintln(out, "Restack continued.")
+				rep.Success("Restack continued")
 			case abort:
-				fmt.Fprintln(out, "Restack aborted; branches restored.")
+				rep.Success("Restack aborted; branches restored")
 			default:
-				fmt.Fprintf(out, "Restacked %s.\n", strings.Join(res.Branches, ", "))
+				rep.Success("Restacked %s", strings.Join(res.Branches, ", "))
 			}
 			if res.BottomBehindTrunk {
-				fmt.Fprintf(cmd.ErrOrStderr(), "note: %s is behind %s; restack never rebases onto trunk locally, run `git stack sync` for that.\n", res.Bottom, res.Trunk)
+				rep.Warn("%s is behind %s; restack never rebases onto trunk locally, run git stack sync for that", res.Bottom, res.Trunk)
 			}
 			return nil
 		},

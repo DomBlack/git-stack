@@ -28,7 +28,7 @@ git-stack is a Graphite-style stacked-branch CLI (`git stack <cmd>`) and stdio M
 - Completion code must not touch the network, prompt, or write non-completion output. It may only run `git`.
 - Mirror Graphite (`gt`) names, flags and short aliases where practical. When behaviour differs because of a backend limitation, say so in one line of output rather than silently diverging.
 - Every command works non-interactively (`--no-interactive` or no TTY).
-- Human output goes to stdout via the command's writer; diagnostics and progress go to stderr.
+- Every human facing line goes through `ui.Reporter` (results on stdout, notices, progress and errors on stderr) and follows `docs/style.md`; `cmd/style_test.go` fails the build on raw `fmt.Fprint` in `cmd/`.
 
 ## MCP rules
 - Stdout is reserved for JSON-RPC. Log to stderr. Capture all subprocess stdout.

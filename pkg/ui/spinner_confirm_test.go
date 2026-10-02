@@ -1,36 +1,36 @@
 package ui
 
 import (
-	"context"
-	"errors"
 	"testing"
 	"time"
 
+	"charm.land/bubbles/v2/spinner"
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/colorprofile"
 	"github.com/charmbracelet/x/exp/teatest/v2"
 )
 
-func TestSpinnerModelReturnsFnError(t *testing.T) {
-	want := errors.New("boom")
-	m := newSpinnerModel(context.Background(), "working", func(context.Context) error { return want })
+func TestSpinnerModelStopsAndCancels(t *testing.T) {
+	cancelled := false
+	m := &spinnerModel{sp: spinner.New(spinner.WithSpinner(spinner.Dot)), message: "working", cancel: func() { cancelled = true }, styles: DefaultStyles()}
 	tm := teatest.NewTestModel(t, m, teatest.WithInitialTermSize(80, 24), teatest.WithProgramOptions(tea.WithColorProfile(colorprofile.Ascii)))
+	tm.Send(spinnerStopMsg{})
 	fm := tm.FinalModel(t, teatest.WithFinalTimeout(5*time.Second)).(*spinnerModel)
-	if !errors.Is(fm.err, want) || !fm.done {
-		t.Errorf("final = %+v", fm)
+	if !fm.done || cancelled {
+		t.Errorf("stop should finish without cancelling: %+v cancelled=%v", fm, cancelled)
+	}
+	if fm.View().Content != "" {
+		t.Errorf("final frame must be empty so the next line replaces the spinner, got %q", fm.View().Content)
 	}
 
-	block := make(chan struct{})
-	m = newSpinnerModel(context.Background(), "working", func(ctx context.Context) error {
-		<-block
-		return nil
-	})
+	cancelled = false
+	m = &spinnerModel{sp: spinner.New(spinner.WithSpinner(spinner.Dot)), message: "working", cancel: func() { cancelled = true }, styles: DefaultStyles()}
 	tm = teatest.NewTestModel(t, m, teatest.WithInitialTermSize(80, 24))
 	tm.Send(tea.KeyPressMsg{Code: 'c', Mod: tea.ModCtrl})
-	fm = tm.FinalModel(t, teatest.WithFinalTimeout(5*time.Second)).(*spinnerModel)
-	close(block)
-	if !errors.Is(fm.err, context.Canceled) {
-		t.Errorf("ctrl+c should cancel: %v", fm.err)
+	tm.Send(spinnerStopMsg{})
+	tm.FinalModel(t, teatest.WithFinalTimeout(5*time.Second))
+	if !cancelled {
+		t.Error("ctrl+c should cancel the work")
 	}
 }
 

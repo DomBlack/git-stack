@@ -118,14 +118,14 @@ func TestRenderTreePlain(t *testing.T) {
 	// Styles zero value renders without escape codes.
 	out := RenderTree(BuildTree(sampleRows()), RenderOptions{Now: now})
 	want := strings.Join([]string{
-		"  main  30m ago",
-		"  ├─ feat/api  #12 open · 3h ago",
-		"* │  └─ feat/ui  #13 draft · 2d ago",
-		"  │     └─ feat/ui-tests  needs restack · 1w ago",
-		"  └─ fix/typo  #3 merged · 1mo ago · in /tmp/wt",
-		"  release",
-		"  └─ hotfix  #7 closed",
-		"  scratch  untracked · 1y ago",
+		"■ main  30m ago",
+		"○ ├─ feat/api  #12 open · 3h ago",
+		"● │  └─ feat/ui  #13 draft · 2d ago",
+		"○ │     └─ feat/ui-tests  needs restack · 1w ago",
+		"○ └─ fix/typo  #3 merged · 1mo ago · in /tmp/wt",
+		"■ release",
+		"○ └─ hotfix  #7 closed",
+		"○ scratch  untracked · 1y ago",
 	}, "\n")
 	if out != want {
 		t.Errorf("RenderTree =\n%s\nwant\n%s", out, want)
