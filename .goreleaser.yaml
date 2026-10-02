@@ -1,5 +1,5 @@
-# Configured but not publishing: `release.disable` keeps `goreleaser release`
-# from creating a GitHub release. Use `goreleaser build --snapshot --clean`.
+# Releases are cut by .github/workflows/release.yml on a v* tag. Locally,
+# `goreleaser build --snapshot --clean` builds every target without publishing.
 version: 2
 
 project_name: git-stack
@@ -15,6 +15,8 @@ builds:
     ldflags:
       - -s -w -X github.com/DomBlack/git-stack/pkg/version.version={{ .Version }}
 
+# `git stack update` downloads these by name, so keep the template in step with
+# pkg/update.assetName.
 archives:
   - id: default
     formats: [tar.gz]
@@ -23,5 +25,13 @@ archives:
 checksum:
   name_template: checksums.txt
 
+changelog:
+  use: git
+  sort: asc
+
 release:
-  disable: true
+  github:
+    owner: DomBlack
+    name: git-stack
+  draft: false
+  prerelease: auto

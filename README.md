@@ -121,6 +121,19 @@ why rather than silently doing something else.
 `submit` also always submits the whole stack (gt submits downstack by default). Pass `--stack`
 to acknowledge that's what you want.
 
+## Releasing
+
+Tag and push, that's it;
+
+```sh
+git tag v0.1.0
+git push origin v0.1.0
+```
+
+The release workflow runs goreleaser, which builds linux and darwin on amd64 and arm64,
+stamps the version in, and publishes the archives plus `checksums.txt` to a GitHub release.
+`git stack update` and `go install github.com/DomBlack/git-stack@latest` both pick it up.
+
 ## Development
 
 There's no task runner on purpose; this is the whole check:
