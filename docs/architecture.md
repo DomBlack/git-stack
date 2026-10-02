@@ -205,8 +205,11 @@ that new PR shows the whole stack's diff, which is exactly what you don't want f
 GitHub does let the base of a stacked PR be changed, so after every submit we compare each
 open PR's base with its real parent (the nearest branch below whose PR has not actually
 merged, queued or not), move it back with `gh pr edit --base` when it differs, and say so in a
-notice. gh stack will grumble that the base isn't what it expected on later submits; that's a
-warning, not a failure.
+notice. The same wrong base also made GitHub reject gh stack's attempt to append the PR to the
+stack object (the Stacks API wants an unbroken base to head chain; a queue only stops PRs being
+removed, not added), so after a fix we run the backend submit once more and it appends cleanly.
+gh stack will grumble that the base isn't what it expected on later submits; that's a warning,
+not a failure.
 
 **Merged branches are deleted by default.** gh stack only prunes with `--prune` and would only
 ask on a terminal it never gets from us, so `stack.sync.prune` decides; `always` (default)

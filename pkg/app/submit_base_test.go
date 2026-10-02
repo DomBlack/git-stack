@@ -57,7 +57,7 @@ func TestSubmitFixesBaseWhenGhStackSkipsQueuedBranches(t *testing.T) {
 	}
 
 	// Correct bases are left alone.
-	deps3, _, fg3, repo3, _ := submitFixture(t)
+	deps3, sf3, fg3, repo3, _ := submitFixture(t)
 	if _, err := app.New(deps3).Submit(context.Background(), repo3, app.SubmitOptions{NoEdit: true}); err != nil {
 		t.Fatal(err)
 	}
@@ -65,5 +65,8 @@ func TestSubmitFixesBaseWhenGhStackSkipsQueuedBranches(t *testing.T) {
 		if fg3.updates[n].Base != nil {
 			t.Errorf("unexpected base update: %+v", fg3.updates)
 		}
+	}
+	if len(sf3.opts) != 1 {
+		t.Errorf("no base fix means a single backend submit, got %d", len(sf3.opts))
 	}
 }

@@ -192,6 +192,16 @@ func (a *App) Submit(ctx context.Context, repo git.Repo, o SubmitOptions) (Submi
 		e.TextUpdated = true
 	}
 	fixed := a.fixBases(ctx, repo, s, after, &res)
+	if fixed {
+		// gh stack also keeps GitHub's stack object (the thing the PR page
+		// shows as a stack) and appends new PRs to it, but GitHub rejects the
+		// append while the chain is broken by a wrong base. Now that the base
+		// is right, run the backend once more so it gets another go; it pushes
+		// nothing new and only re-links.
+		if _, err := a.d.Submit.Submit(ctx, repo, stack.SubmitOptions{Publish: !draft}); err != nil {
+			res.Notices = append(res.Notices, fmt.Sprintf("could not re-link the stack on GitHub after fixing bases: %v", err))
+		}
+	}
 	if (len(texts) > 0 || fixed) && a.d.Forge != nil {
 		// Titles or bases changed; refresh the cache so views show them.
 		if _, err := a.RefreshPRs(ctx, repo); err != nil {
