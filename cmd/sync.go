@@ -17,10 +17,12 @@ func newSyncCmd(c *cli) *cobra.Command {
 	)
 	cmd := &cobra.Command{
 		Use:   "sync",
-		Short: "Sync the stack with the remote: fetch, update trunk, restack, prune merged branches",
-		Long: `Fetch the remote, fast-forward trunk, restack the current stack onto it and push.
-Branches whose pull requests have merged are offered for deletion on a terminal; -f
-deletes them without asking, and without a terminal they are kept and listed.`,
+		Short: "Sync every stack with the remote: fetch, update trunk, restack, push, prune merged branches",
+		Long: `Fetch the remote, fast-forward trunk, restack and push every stack that is checked
+out: this worktree's first, then each linked worktree's (gh stack keeps stacks per
+worktree). Branches whose pull requests have merged are deleted; set
+git config stack.sync.prune to "ask" to be asked first or "never" to keep them. -f
+deletes them whatever the config says.`,
 		Args:              cobra.NoArgs,
 		ValidArgsFunction: completeNothing,
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -44,13 +46,17 @@ deletes them without asking, and without a terminal they are kept and listed.`,
 				rep.Warn("%s", n)
 			}
 			if !res.Aborted {
-				rep.Success("Synced")
+				if n := len(res.Worktrees); n > 1 {
+					rep.Success("Synced %d worktrees", n)
+				} else {
+					rep.Success("Synced")
+				}
 			}
 			return nil
 		},
 	}
-	cmd.Flags().BoolVarP(&force, "force", "f", false, "delete merged branches without asking (otherwise you are asked on a terminal)")
-	cmd.Flags().BoolVarP(&all, "all", "a", false, "sync every stack (gh stack only syncs the current one; a notice is printed)")
+	cmd.Flags().BoolVarP(&force, "force", "f", false, "delete merged branches even when stack.sync.prune is ask or never")
+	cmd.Flags().BoolVarP(&all, "all", "a", false, "accepted for gt parity; every checked out stack is synced anyway")
 	cmd.Flags().BoolVar(&noRestack, "no-restack", false, "not available with gh stack")
 	return cmd
 }

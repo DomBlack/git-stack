@@ -25,7 +25,7 @@ path is resolved with `git rev-parse`; anything outside a repository returns `no
 | `stack_restack` | Local rebase of the stack | `scope` = `all`/`upstack`/`downstack`, `continue`, `abort` | destructive |
 | `stack_navigate` | `up`/`down`/`top`/`bottom` with `steps`, or `branch` | `direction`, `steps`, `branch` | idempotent |
 | `stack_submit` | Push and create/update chained PRs; drafts by default | `publish`, `dry_run`, `pull_requests` `{branch: {title, body}}`, `use_ai` | destructive, open-world |
-| `stack_sync` | Fetch, update trunk, restack, push, optionally prune merged | `prune` | destructive, open-world |
+| `stack_sync` | Fetch, update trunk, restack and push every checked out stack (all worktrees); merged branches deleted per `stack.sync.prune` | `prune` (force deletion) | destructive, open-world |
 
 Agents write commit messages and PR text themselves; `use_ai` opts into git-stack's own
 Claude Code drafter.

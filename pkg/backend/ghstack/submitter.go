@@ -42,6 +42,10 @@ func (b *Backend) Sync(ctx context.Context, repo git.Repo, o stack.SyncOptions) 
 	if o.Prune {
 		args = append(args, "--prune")
 	}
+	if o.Dir != "" {
+		// gh stack syncs the stack of whatever is checked out where it runs.
+		repo.TopLevel = o.Dir
+	}
 	res, err := b.ghRun(ctx, repo, b.out, args...)
 	return stack.SyncResult{Output: res.Err(), Streamed: b.out != nil}, err
 }

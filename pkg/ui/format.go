@@ -2,8 +2,21 @@ package ui
 
 import (
 	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
 	"time"
 )
+
+// ShortPath shows a path under $HOME as ~/...; other paths are unchanged.
+func ShortPath(p string) string {
+	if home, err := os.UserHomeDir(); err == nil && home != "" {
+		if rel, err := filepath.Rel(home, p); err == nil && !strings.HasPrefix(rel, "..") {
+			return "~/" + rel
+		}
+	}
+	return p
+}
 
 // RelativeTime renders t relative to now ("3h ago").
 func RelativeTime(t, now time.Time) string {

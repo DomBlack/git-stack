@@ -20,6 +20,7 @@ const (
 	KeyAIAuto         = "stack.ai.auto"
 	KeyCacheTTL       = "stack.cacheTTL"
 	KeySubmitDefault  = "stack.submit.default"
+	KeySyncPrune      = "stack.sync.prune"
 	KeyManagedAliases = "stack.managedAliases"
 	KeyManagedFiles   = "stack.managedFiles"
 )
@@ -29,6 +30,13 @@ const (
 	SubmitAsk     = "ask"
 	SubmitDraft   = "draft"
 	SubmitPublish = "publish"
+)
+
+// SyncPrune values: what sync does with branches whose PRs have merged.
+const (
+	SyncPruneAlways = "always"
+	SyncPruneAsk    = "ask"
+	SyncPruneNever  = "never"
 )
 
 // Config holds the effective settings.
@@ -43,7 +51,9 @@ type Config struct {
 	AIAuto   bool
 	CacheTTL time.Duration
 	// SubmitDefault is ask, draft or publish.
-	SubmitDefault  string
+	SubmitDefault string
+	// SyncPrune is always (default), ask or never.
+	SyncPrune      string
 	ManagedAliases []string
 	ManagedFiles   []string
 }
@@ -56,6 +66,7 @@ func Defaults() *Config {
 		AITimeout:     60 * time.Second,
 		CacheTTL:      5 * time.Minute,
 		SubmitDefault: SubmitAsk,
+		SyncPrune:     SyncPruneAlways,
 	}
 }
 
@@ -108,6 +119,13 @@ func FromEntries(entries []git.ConfigEntry) (*Config, error) {
 				c.SubmitDefault = v
 			default:
 				return nil, fmt.Errorf("%s: %q is not one of ask, draft, publish", KeySubmitDefault, v)
+			}
+		case strings.ToLower(KeySyncPrune):
+			switch strings.ToLower(v) {
+			case SyncPruneAlways, SyncPruneAsk, SyncPruneNever:
+				c.SyncPrune = strings.ToLower(v)
+			default:
+				return nil, fmt.Errorf("%s: %q is not one of always, ask, never", KeySyncPrune, v)
 			}
 		case strings.ToLower(KeyManagedAliases):
 			c.ManagedAliases = append(c.ManagedAliases, v)

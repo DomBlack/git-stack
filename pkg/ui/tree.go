@@ -187,7 +187,7 @@ func RenderRow(tr TreeRow, o RenderOptions) string {
 		meta = append(meta, st.Muted.Render(age))
 	}
 	if r.Worktree != "" {
-		meta = append(meta, st.Muted.Render("in "+r.Worktree))
+		meta = append(meta, st.Muted.Render("in "+ShortPath(r.Worktree)))
 	}
 
 	line := marker + st.Prefix.Render(tr.Prefix) + name

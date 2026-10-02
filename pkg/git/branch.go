@@ -113,3 +113,50 @@ func (c *Client) DefaultBranch(ctx context.Context, repo Repo) (string, bool, er
 	}
 	return "", false, nil
 }
+
+// Worktree is one entry of `git worktree list`.
+type Worktree struct {
+	// Path is the working tree root.
+	Path string
+	Head string
+	// Branch is the checked out branch (short name), empty when detached or bare.
+	Branch   string
+	Detached bool
+	Bare     bool
+}
+
+// Worktrees lists the main checkout and every linked worktree.
+func (c *Client) Worktrees(ctx context.Context, repo Repo) ([]Worktree, error) {
+	res, err := c.gitIn(ctx, repo, "worktree", "list", "--porcelain")
+	if err != nil {
+		return nil, err
+	}
+	var out []Worktree
+	var cur *Worktree
+	flush := func() {
+		if cur != nil {
+			out = append(out, *cur)
+			cur = nil
+		}
+	}
+	for line := range strings.SplitSeq(res.Out(), "\n") {
+		switch {
+		case line == "":
+			flush()
+		case strings.HasPrefix(line, "worktree "):
+			flush()
+			cur = &Worktree{Path: strings.TrimPrefix(line, "worktree ")}
+		case cur == nil:
+		case strings.HasPrefix(line, "HEAD "):
+			cur.Head = strings.TrimPrefix(line, "HEAD ")
+		case strings.HasPrefix(line, "branch "):
+			cur.Branch = strings.TrimPrefix(strings.TrimPrefix(line, "branch "), "refs/heads/")
+		case line == "detached":
+			cur.Detached = true
+		case line == "bare":
+			cur.Bare = true
+		}
+	}
+	flush()
+	return out, nil
+}

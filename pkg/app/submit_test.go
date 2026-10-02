@@ -261,8 +261,8 @@ func TestSync(t *testing.T) {
 	if len(sf.syncs) != 1 || !sf.syncs[0].Prune || res.Output != "Stack synced" || res.Aborted {
 		t.Errorf("sync = %+v %+v", res, sf.syncs)
 	}
-	if len(res.Notices) != 1 || !strings.Contains(res.Notices[0], "--all") {
-		t.Errorf("notices = %v", res.Notices)
+	if len(res.Notices) != 0 || len(res.Worktrees) != 1 || res.Worktrees[0].Branch != "b" {
+		t.Errorf("notices/worktrees = %v %+v", res.Notices, res.Worktrees)
 	}
 	if fg.lists == 0 {
 		t.Error("PR cache should refresh after sync")

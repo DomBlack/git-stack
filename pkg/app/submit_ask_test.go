@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/DomBlack/git-stack/pkg/app"
+	"github.com/DomBlack/git-stack/pkg/config"
 	"github.com/DomBlack/git-stack/pkg/forge"
 )
 
@@ -91,8 +92,9 @@ func (p *askPrompter) Select(string, []string) (int, error) { return 0, nil }
 // cannot prompt through us, so sync asks on a terminal and otherwise says
 // what it kept.
 func TestSyncAsksAboutMergedBranches(t *testing.T) {
-	// a's PR has merged.
+	// a's PR has merged; policy is ask.
 	deps, sf, fg, repo, _ := submitFixture(t)
+	deps.Config.SyncPrune = config.SyncPruneAsk
 	fg.prs[0].State = forge.StateMerged
 	ap := &askPrompter{answer: true}
 	deps.Prompter = ap
@@ -109,6 +111,7 @@ func TestSyncAsksAboutMergedBranches(t *testing.T) {
 
 	// Declining keeps them.
 	deps2, sf2, fg2, repo2, _ := submitFixture(t)
+	deps2.Config.SyncPrune = config.SyncPruneAsk
 	fg2.prs[0].State = forge.StateMerged
 	deps2.Prompter = &askPrompter{answer: false}
 	res2, err := app.New(deps2).Sync(context.Background(), repo2, app.SyncOptions{})
@@ -118,6 +121,7 @@ func TestSyncAsksAboutMergedBranches(t *testing.T) {
 
 	// No prompter (piped, MCP): keep and say so.
 	deps3, sf3, fg3, repo3, _ := submitFixture(t)
+	deps3.Config.SyncPrune = config.SyncPruneAsk
 	fg3.prs[0].State = forge.StateMerged
 	res3, err := app.New(deps3).Sync(context.Background(), repo3, app.SyncOptions{})
 	if err != nil || sf3.syncs[0].Prune {
@@ -125,7 +129,7 @@ func TestSyncAsksAboutMergedBranches(t *testing.T) {
 	}
 	found := false
 	for _, n := range res3.Notices {
-		if strings.Contains(n, "1 merged branch kept (a)") && strings.Contains(n, "sync -f") {
+		if strings.Contains(n, "1 merged branch (a) kept") && strings.Contains(n, "sync -f") {
 			found = true
 		}
 	}
@@ -135,6 +139,7 @@ func TestSyncAsksAboutMergedBranches(t *testing.T) {
 
 	// Nothing merged: no question asked.
 	deps4, _, _, repo4, _ := submitFixture(t)
+	deps4.Config.SyncPrune = config.SyncPruneAsk
 	ap4 := &askPrompter{answer: true}
 	deps4.Prompter = ap4
 	if _, err := app.New(deps4).Sync(context.Background(), repo4, app.SyncOptions{}); err != nil || len(ap4.asked) != 0 {

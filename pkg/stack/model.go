@@ -33,6 +33,9 @@ type Stack struct {
 	Trunk  string
 	// Branches run bottom (closest to trunk) to top.
 	Branches []Branch
+	// Worktree is the working tree whose metadata holds this stack (gh stack
+	// keeps stacks per worktree), or empty when unknown. Sync runs there.
+	Worktree string
 }
 
 // Index returns the position of name in the stack, or -1.

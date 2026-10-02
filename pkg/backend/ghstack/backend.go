@@ -3,10 +3,12 @@ package ghstack
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/DomBlack/git-stack/pkg/exec"
 	"github.com/DomBlack/git-stack/pkg/git"
@@ -42,21 +44,70 @@ func New(r exec.Runner, g *git.Client, opts ...Option) *Backend {
 // Compile-time port checks.
 var _ stack.Metadata = (*Backend)(nil)
 
-// Load implements stack.Metadata by reading <git-dir>/gh-stack. A missing
-// file means no stacks; it never runs gh.
+// Load implements stack.Metadata. gh stack keeps its file per worktree
+// (<git-dir>/gh-stack), so this reads the current worktree's file first, then
+// the main checkout's and every linked worktree's, and merges them so one view
+// covers everything checked out on the machine. A missing file means no
+// stacks; it never runs gh. A branch that appears in two files keeps its first
+// stack.
 func (b *Backend) Load(_ context.Context, repo git.Repo) (*stack.Graph, error) {
-	data, err := os.ReadFile(filepath.Join(repo.GitDir, FileName))
-	if err != nil {
-		if errors.Is(err, fs.ErrNotExist) {
-			return stack.NewGraph(nil), nil
+	type source struct{ gitDir, worktree string }
+	sources := []source{{repo.GitDir, repo.TopLevel}}
+	if repo.CommonDir != repo.GitDir {
+		sources = append(sources, source{repo.CommonDir, filepath.Dir(repo.CommonDir)})
+	}
+	if entries, err := os.ReadDir(filepath.Join(repo.CommonDir, "worktrees")); err == nil {
+		for _, e := range entries {
+			if !e.IsDir() {
+				continue
+			}
+			gitDir := filepath.Join(repo.CommonDir, "worktrees", e.Name())
+			if gitDir == repo.GitDir {
+				continue
+			}
+			sources = append(sources, source{gitDir, worktreePath(gitDir)})
 		}
-		return nil, err
 	}
-	f, err := parseFile(data)
+
+	var stacks []stack.Stack
+	seen := map[string]bool{}
+	for _, src := range sources {
+		data, err := os.ReadFile(filepath.Join(src.gitDir, FileName))
+		if err != nil {
+			if errors.Is(err, fs.ErrNotExist) {
+				continue
+			}
+			return nil, err
+		}
+		f, err := parseFile(data)
+		if err != nil {
+			return nil, fmt.Errorf("%s: %w", filepath.Join(src.gitDir, FileName), err)
+		}
+	next:
+		for _, s := range f.toGraph().Stacks {
+			for _, br := range s.Branches {
+				if seen[br.Name] {
+					continue next
+				}
+			}
+			for _, br := range s.Branches {
+				seen[br.Name] = true
+			}
+			s.Worktree = src.worktree
+			stacks = append(stacks, s)
+		}
+	}
+	return stack.NewGraph(stacks), nil
+}
+
+// worktreePath resolves a linked worktree's working tree from its git dir:
+// <common>/worktrees/<name>/gitdir holds the path of the worktree's .git file.
+func worktreePath(gitDir string) string {
+	data, err := os.ReadFile(filepath.Join(gitDir, "gitdir"))
 	if err != nil {
-		return nil, err
+		return ""
 	}
-	return f.toGraph(), nil
+	return filepath.Dir(strings.TrimSpace(string(data)))
 }
 
 // ghEnv keeps gh-stack non-interactive and its output plain when captured.

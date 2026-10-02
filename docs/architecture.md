@@ -181,10 +181,24 @@ unless `-d`/`-p` is passed; non-interactively it drafts. `stack.submit.default` 
 question.
 
 **What we deliberately don't mirror from `gt` (yet).** `create --insert`, `restack --only`,
-`submit --update-only`, `submit --edit-title/--edit-description`, `sync --all`,
-`sync --no-restack` and `modify --into` all need a backend that can do more than gh stack
-can. Each prints a single line saying why. `sync --all` *could* be done by checking out the
-bottom of each stack and syncing in turn, but that's slow and moves HEAD around, so no.
+`submit --update-only`, `submit --edit-title/--edit-description`, `sync --no-restack` and
+`modify --into` all need a backend that can do more than gh stack can. Each prints a single
+line saying why.
+
+**Sync covers every worktree.** gh stack keeps its metadata per worktree
+(`.git/worktrees/<name>/gh-stack`), so a stack created in a linked worktree is invisible from
+the main checkout and can only be synced where it lives. The metadata adapter therefore reads
+every worktree's file and merges them (current worktree first, a branch keeps its first stack),
+which is what makes `git stack` show everything you have checked out on the machine. `sync`
+then runs `gh stack sync` in each worktree whose checked out branch is in a stack, current
+worktree first, and names any stack nobody has checked out instead of silently skipping it.
+Stacks in the same worktree that aren't checked out would need a checkout to sync, so they
+get the notice too. `--all` is accepted for gt muscle memory and changes nothing.
+
+**Merged branches are deleted by default.** gh stack only prunes with `--prune` and would only
+ask on a terminal it never gets from us, so `stack.sync.prune` decides; `always` (default)
+passes `--prune`, `ask` prompts on a terminal and keeps with a notice otherwise, `never`
+keeps. `-f` deletes regardless. gh stack moves you off a branch it is about to delete.
 
 **Claude Code is driven through `claude -p`**, not an SDK, so it uses whatever login you
 already have. The call is `--tools ""`, `--output-format json`, `--json-schema <schema>`,

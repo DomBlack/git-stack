@@ -134,7 +134,7 @@ func logMeta(r app.Row, o LogOptions) string {
 		parts = append(parts, st.Muted.Render(age))
 	}
 	if r.Worktree != "" {
-		parts = append(parts, st.Muted.Render("in "+r.Worktree))
+		parts = append(parts, st.Muted.Render("in "+ShortPath(r.Worktree)))
 	}
 	return strings.Join(parts, st.Muted.Render(" · "))
 }

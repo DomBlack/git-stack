@@ -77,7 +77,7 @@ func TestSubmitAndSyncCommands(t *testing.T) {
 	})
 	f.Reset()
 	out, errOut, err = runWith(t, f, "--cwd", dir, "sync", "-f", "--all")
-	if err != nil || out != "ok: Synced\n" || !strings.Contains(errOut, "Stack synced") || !strings.Contains(errOut, "--all was ignored") {
+	if err != nil || out != "ok: Synced\n" || !strings.Contains(errOut, "Stack synced") {
 		t.Errorf("sync: %q %q %v", out, errOut, err)
 	}
 	var syncArgs string

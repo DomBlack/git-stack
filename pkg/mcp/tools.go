@@ -292,7 +292,7 @@ func (s *Server) submit(ctx context.Context, req *mcp.CallToolRequest, in submit
 
 type syncInput struct {
 	repoArg
-	Prune bool `json:"prune,omitempty" jsonschema:"delete local branches whose pull requests were merged"`
+	Prune bool `json:"prune,omitempty" jsonschema:"delete merged branches even when git config stack.sync.prune is ask or never (the default policy, always, deletes them anyway)"`
 }
 
 func (s *Server) sync(ctx context.Context, req *mcp.CallToolRequest, in syncInput) (*mcp.CallToolResult, app.SyncResult, error) {
@@ -374,7 +374,7 @@ func (s *Server) registerTools() {
 	mcp.AddTool(s.mcp, &mcp.Tool{
 		Name:        "stack_sync",
 		Title:       "Sync the stack",
-		Description: "Fetch from the remote, update trunk, restack the current stack, push, and with prune delete local branches whose pull requests were merged.",
+		Description: "Fetch from the remote, update trunk, restack and push every stack that is checked out in some worktree, deleting merged branches according to stack.sync.prune (always by default; prune forces it).",
 		Annotations: &mcp.ToolAnnotations{DestructiveHint: boolp(true), OpenWorldHint: boolp(true)},
 	}, s.sync)
 }

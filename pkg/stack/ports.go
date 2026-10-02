@@ -82,6 +82,9 @@ type Submitter interface {
 type SyncOptions struct {
 	// Prune deletes local branches whose PRs were merged.
 	Prune bool
+	// Dir is the worktree to sync in; empty means the repository's own
+	// working tree. gh stack syncs the stack of the branch checked out there.
+	Dir string
 }
 
 // SyncResult carries the backend's human-readable output for relaying.
