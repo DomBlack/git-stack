@@ -151,7 +151,9 @@ func TestPickerGolden(t *testing.T) {
 	for range 4 {
 		tm.Send(tea.KeyPressMsg{Code: 'j', Text: "j"})
 	}
-	waitForText(t, tm, "7/8")
+	// Send handles messages in order, so FinalModel below waits for all
+	// four moves. Do not wait for "7/8" in raw output: the renderer can
+	// leave "8" on screen and only emit "7/".
 	tm.Send(tea.KeyPressMsg{Code: tea.KeyEscape})
 	p := finalPicker(t, tm)
 	// Snapshot the last frame as plain text: the inline program clears its
