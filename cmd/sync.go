@@ -47,6 +47,10 @@ is only reset with -f or a yes at the prompt.`,
 				}
 			}
 			for _, d := range res.Deleted {
+				if d.Head == "" {
+					rep.Info("deleted %s (%s)", rep.Branch(d.Name), d.Reason)
+					continue
+				}
 				rep.Info("deleted %s (%s, was %s)", rep.Branch(d.Name), d.Reason, rep.SHA(d.Head))
 			}
 			for _, u := range res.Updated {

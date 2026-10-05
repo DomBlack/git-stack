@@ -341,6 +341,36 @@ func TestSubmitAndSync(t *testing.T) {
 	}
 }
 
+func TestSyncConflictKeepsTheResult(t *testing.T) {
+	h := newHarness(t)
+	defer h.assertNoStdout()
+	// main gains its own a.txt on the remote, which clashes with a's.
+	gittest.Run(t, h.dir, "switch", "-q", "--detach", "main")
+	gittest.Commit(t, h.dir, "a.txt", "main's version", "remote: a.txt")
+	gittest.Run(t, h.dir, "push", "-q", "origin", "HEAD:refs/heads/main")
+	gittest.Run(t, h.dir, "switch", "-q", "b")
+
+	res, text := h.call("stack_sync", nil, nil)
+	if !res.IsError {
+		t.Fatalf("want a tool error, got %+v", res.StructuredContent)
+	}
+	var te toolError
+	if err := json.Unmarshal([]byte(text), &te); err != nil || te.Code != stack.KindConflict.Code() || !strings.Contains(te.Message, "1 conflict (a)") {
+		t.Errorf("error = %q %v", text, err)
+	}
+	b, err := json.Marshal(res.StructuredContent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var sy app.SyncResult
+	if err := json.Unmarshal(b, &sy); err != nil {
+		t.Fatalf("structured result %s: %v", b, err)
+	}
+	if len(sy.Conflicts) != 1 || sy.Conflicts[0].Branch != "a" || len(sy.Trunks) != 1 || sy.Trunks[0].Status != app.TrunkFastForwarded || len(sy.Notices) == 0 {
+		t.Errorf("sync = %+v", sy)
+	}
+}
+
 func TestRepoResolution(t *testing.T) {
 	h := newHarness(t)
 	defer h.assertNoStdout()

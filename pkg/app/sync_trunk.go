@@ -35,15 +35,28 @@ func (a *App) syncTrunks(ctx context.Context, st *syncState, o SyncOptions, res 
 		}
 		t.To = remoteTip
 		err = a.progress(ctx, PhaseSync, "Updating "+trunk, func(ctx context.Context) error {
+			// Errors here must not read as "diverged": that path can reset the trunk.
+			behind, ahead := false, false
+			if lb.Head != remoteTip {
+				var err error
+				if behind, err = a.d.Git.IsAncestor(ctx, st.repo, lb.Head, remoteTip); err != nil {
+					return err
+				}
+				if !behind {
+					if ahead, err = a.d.Git.IsAncestor(ctx, st.repo, remoteTip, lb.Head); err != nil {
+						return err
+					}
+				}
+			}
 			switch {
 			case lb.Head == remoteTip:
 				t.To = ""
-			case a.ancestor(ctx, st, lb.Head, remoteTip):
+			case behind:
 				t.Status = TrunkFastForwarded
 				if err := a.moveBranch(ctx, st, trunk, lb.Head, remoteTip, false); err != nil {
 					return err
 				}
-			case a.ancestor(ctx, st, remoteTip, lb.Head):
+			case ahead:
 				t.Status = TrunkAhead
 				t.To = ""
 			default:

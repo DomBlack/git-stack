@@ -157,7 +157,7 @@ func (a *App) Sync(ctx context.Context, repo git.Repo, o SyncOptions) (SyncResul
 			WithDetail(err.Error()).WithCause(err).
 			WithSteps("check the remote and your network, then run git stack sync again")
 	}
-	st.prs = PRsFor(a.loadPRs(ctx, repo, PRsFresh))
+	st.prs = PRsFor(a.syncPRs(ctx, repo))
 	if err := a.syncTrunks(ctx, st, o, &res); err != nil {
 		return res, err
 	}
@@ -174,11 +174,6 @@ func (a *App) Sync(ctx context.Context, repo git.Repo, o SyncOptions) (SyncResul
 		}
 	}
 
-	if a.d.Forge != nil {
-		if _, err := a.RefreshPRs(ctx, repo); err != nil {
-			a.d.Log.Debug("refresh after sync", "err", err)
-		}
-	}
 	if len(res.Conflicts) > 0 || len(failed) > 0 {
 		var parts, steps []string
 		if n := len(res.Conflicts); n > 0 {
@@ -196,6 +191,21 @@ func (a *App) Sync(ctx context.Context, repo git.Repo, o SyncOptions) (SyncResul
 		return res, stack.Newf(stack.KindConflict, "%s; everything else is in sync", strings.Join(parts, "; ")).WithSteps(steps...)
 	}
 	return res, nil
+}
+
+// syncPRs asks the forge for every PR, whatever the age of the cache: a PR
+// merged a minute ago must be seen. The cache, refreshed by the same call,
+// is only the fallback when the forge can't be reached.
+func (a *App) syncPRs(ctx context.Context, repo git.Repo) []forge.PullRequest {
+	if a.d.Forge != nil {
+		prs, err := a.RefreshPRs(ctx, repo)
+		if err == nil {
+			return prs
+		}
+		a.d.Log.Debug("could not list pull requests; using the cache", "err", err)
+	}
+	prs, _, _ := a.CachedPRs(repo)
+	return prs
 }
 
 // gatherSync loads everything the phases look at.

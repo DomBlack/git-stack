@@ -8,6 +8,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/DomBlack/git-stack/pkg/app"
 	"github.com/DomBlack/git-stack/pkg/cache"
@@ -266,5 +267,27 @@ func TestSyncFetchFailure(t *testing.T) {
 	}
 	if f.forge.lists != 0 {
 		t.Error("the forge must not be listed when the fetch fails")
+	}
+}
+
+func TestSyncAsksTheForgeOnceWhateverTheCache(t *testing.T) {
+	f := newSyncFixture(t)
+	f.deps.Config.CacheTTL = time.Hour
+	gittest.Run(t, f.dir, "switch", "-q", "main")
+	// A fresh cache that still says a's PR is open.
+	if _, err := app.New(f.deps).RefreshPRs(context.Background(), f.repo); err != nil {
+		t.Fatal(err)
+	}
+	f.mergeOnRemote(t, "a", 0)
+	f.forge.lists = 0
+	res, err := f.sync(t, app.SyncOptions{NoRestack: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := deleted(res, "a"); !ok {
+		t.Errorf("the merge must be seen through a fresh cache: %+v", res.Deleted)
+	}
+	if f.forge.lists != 1 {
+		t.Errorf("forge listed %d times, want 1", f.forge.lists)
 	}
 }

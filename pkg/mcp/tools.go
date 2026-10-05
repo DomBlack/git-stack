@@ -2,6 +2,7 @@ package mcp
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -293,7 +294,7 @@ func (s *Server) submit(ctx context.Context, req *mcp.CallToolRequest, in submit
 type syncInput struct {
 	repoArg
 	Prune     bool `json:"prune,omitempty" jsonschema:"delete merged or closed branches even when git config stack.sync.prune is ask or never (the default policy, always, deletes them anyway)"`
-	Force     bool `json:"force,omitempty" jsonschema:"also reset a trunk that has diverged from the remote"`
+	Force     bool `json:"force,omitempty" jsonschema:"reset a trunk that has diverged from the remote, and delete merged or closed branches as prune does"`
 	NoRestack bool `json:"no_restack,omitempty" jsonschema:"skip restacking"`
 }
 
@@ -303,6 +304,11 @@ func (s *Server) sync(ctx context.Context, req *mcp.CallToolRequest, in syncInpu
 		return nil, app.SyncResult{}, wrapErr(err)
 	}
 	res, err := a.Sync(ctx, repo, app.SyncOptions{DeleteAll: in.Prune, Force: in.Force, NoRestack: in.NoRestack})
+	if _, ok := errors.AsType[*stack.Error](err); ok {
+		// The SDK drops the typed output when the handler returns an error,
+		// and a conflict comes after everything else ran: keep both.
+		return &mcp.CallToolResult{IsError: true, Content: []mcp.Content{&mcp.TextContent{Text: wrapErr(err).Error()}}}, res, nil
+	}
 	if err != nil {
 		return nil, res, wrapErr(err)
 	}
