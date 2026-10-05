@@ -15,7 +15,8 @@ import (
 )
 
 // fakeGh simulates the gh-stack extension: git commands run for real, gh
-// stack add/init create the branch and update the metadata file.
+// stack add/init create the branch and update the metadata file, recording
+// each branch's base the way gh stack does.
 func fakeGh(t *testing.T, dir string) *exectest.Fake {
 	t.Helper()
 	f := exectest.New()
@@ -28,6 +29,7 @@ func fakeGh(t *testing.T, dir string) *exectest.Fake {
 
 	type branch struct {
 		Branch string `json:"branch"`
+		Base   string `json:"base,omitzero"`
 	}
 	type stk struct {
 		Trunk    branch   `json:"trunk"`
@@ -59,13 +61,13 @@ func fakeGh(t *testing.T, dir string) *exectest.Fake {
 		// gh stack init --base <trunk> <branches...>
 		trunk, names := c.Args[3], c.Args[4:]
 		fl := load()
-		s := stk{Trunk: branch{trunk}}
+		s := stk{Trunk: branch{Branch: trunk}}
 		prev := trunk
 		for _, n := range names {
 			if err := gitRun("branch", n, prev); err != nil {
 				return exec.Result{}, err
 			}
-			s.Branches = append(s.Branches, branch{n})
+			s.Branches = append(s.Branches, branch{Branch: n, Base: gittest.Run(t, dir, "rev-parse", prev)})
 			prev = n
 		}
 		fl.Stacks = append(fl.Stacks, s)
@@ -82,7 +84,7 @@ func fakeGh(t *testing.T, dir string) *exectest.Fake {
 				if err := gitRun("branch", name, cur); err != nil {
 					return exec.Result{}, err
 				}
-				s.Branches = append(s.Branches, branch{name})
+				s.Branches = append(s.Branches, branch{Branch: name, Base: gittest.Run(t, dir, "rev-parse", cur)})
 				save(fl)
 				return exec.Result{}, gitRun("switch", name)
 			}
@@ -90,7 +92,6 @@ func fakeGh(t *testing.T, dir string) *exectest.Fake {
 		res := exec.Result{ExitCode: 5, Stderr: []byte("✗ can only add branches to the top of the stack; run `gh stack top` then `gh stack add`")}
 		return res, &exec.ExitError{Cmd: c, Result: res}
 	})
-	f.On("gh", "stack", "rebase").Reply("")
 	return f
 }
 
@@ -157,25 +158,18 @@ func TestCreateModifyRestackCommands(t *testing.T) {
 	if err != nil || !strings.HasPrefix(out, "ok: Amended add-feature-a  ") || !strings.Contains(out, "Restacked 1 branch above add-feature-a") {
 		t.Errorf("modify amend: %q %v", out, err)
 	}
-	if calls := ghCalls(); !strings.Contains(strings.Join(calls, "|"), "stack rebase --no-trunk --upstack") {
-		t.Errorf("restack call missing: %v", calls)
-	}
+	// gittest.Run fails the test when git exits non-zero.
+	gittest.Run(t, dir, "merge-base", "--is-ancestor", "add-feature-a", "feat/b")
 
 	// restack with scopes.
-	f.Reset()
-	out, errOut, err = runWith(t, f, "--cwd", dir, "restack", "--upstack")
-	if err != nil || out != "ok: Restacked add-feature-a, feat/b\n" || !strings.Contains(errOut, "Restacking add-feature-a, feat/b...") {
-		t.Errorf("restack: %q %q %v", out, errOut, err)
+	if _, _, err := runWith(t, f, "--cwd", dir, "restack", "--upstack"); err != nil {
+		t.Errorf("restack: %v", err)
 	}
-	if calls := ghCalls(); len(calls) != 2 || calls[1] != "stack rebase --no-trunk --upstack" {
-		t.Errorf("restack calls = %v", calls)
+	if _, _, err := runWith(t, f, "--cwd", dir, "rs", "--continue"); err == nil || !strings.Contains(err.Error(), "nothing to continue") {
+		t.Errorf("continue with nothing interrupted: %v", err)
 	}
-	out, _, err = runWith(t, f, "--cwd", dir, "rs", "--continue")
-	if err != nil || out != "ok: Restack continued\n" {
-		t.Errorf("continue: %q %v", out, err)
-	}
-	if _, _, err := runWith(t, f, "--cwd", dir, "restack", "--only"); err == nil || !strings.Contains(err.Error(), "single branch") {
-		t.Errorf("--only should be unsupported: %v", err)
+	if _, _, err := runWith(t, f, "--cwd", dir, "restack", "--only"); err != nil {
+		t.Errorf("--only: %v", err)
 	}
 	if _, _, err := runWith(t, f, "--cwd", dir, "restack", "-u", "-d"); err == nil {
 		t.Error("mutually exclusive scope flags")
@@ -191,14 +185,15 @@ func TestCreateModifyRestackCommands(t *testing.T) {
 		t.Errorf("insert: %v", err)
 	}
 
-	// Trunk moved: restack warns about the bottom branch.
+	// Trunk moved: restack puts the bottom branch on it.
 	gittest.Run(t, dir, "switch", "-q", "main")
 	gittest.Commit(t, dir, "m.txt", "m", "trunk moves")
 	gittest.Run(t, dir, "switch", "-q", "feat/b")
-	_, errOut, err = runWith(t, f, "--cwd", dir, "restack")
-	if err != nil || !strings.Contains(errOut, "add-feature-a is behind main") {
-		t.Errorf("behind-trunk note: %q %v", errOut, err)
+	if _, _, err := runWith(t, f, "--cwd", dir, "restack"); err != nil {
+		t.Errorf("restack onto moved trunk: %v", err)
 	}
+	gittest.Run(t, dir, "merge-base", "--is-ancestor", "main", "add-feature-a")
+	gittest.Run(t, dir, "merge-base", "--is-ancestor", "add-feature-a", "feat/b")
 }
 
 func TestCreateWithAIUsesClaude(t *testing.T) {

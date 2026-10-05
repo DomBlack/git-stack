@@ -3,8 +3,6 @@ package app_test
 import (
 	"context"
 	"errors"
-	"os"
-	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -18,15 +16,11 @@ import (
 	"github.com/DomBlack/git-stack/pkg/stack"
 )
 
-// fakeBackend implements Metadata, Tracker and Restacker in memory, doing
-// the git branch work for real so the use cases can be exercised end to end.
+// fakeBackend implements Metadata and Tracker in memory, doing the git
+// branch work for real so the use cases can be exercised end to end.
 type fakeBackend struct {
-	git        *git.Client
-	graph      *stack.Graph
-	restacks   []stack.Scope
-	restackErr error
-	continued  int
-	aborted    int
+	git   *git.Client
+	graph *stack.Graph
 }
 
 func (f *fakeBackend) Load(context.Context, git.Repo) (*stack.Graph, error) { return f.graph, nil }
@@ -65,13 +59,6 @@ func (f *fakeBackend) AddTop(ctx context.Context, repo git.Repo, name string) er
 	s.Branches = append(s.Branches, stack.Branch{Name: name})
 	return f.git.Switch(ctx, repo, name)
 }
-
-func (f *fakeBackend) Restack(_ context.Context, _ git.Repo, scope stack.Scope) error {
-	f.restacks = append(f.restacks, scope)
-	return f.restackErr
-}
-func (f *fakeBackend) Continue(context.Context, git.Repo) error { f.continued++; return nil }
-func (f *fakeBackend) Abort(context.Context, git.Repo) error    { f.aborted++; return nil }
 
 type fakeAI struct {
 	commit ai.Commit
@@ -112,7 +99,7 @@ func mutFixture(t *testing.T) (*app.App, *fakeBackend, git.Repo, string, app.Dep
 	fb := &fakeBackend{git: g, graph: stack.NewGraph([]stack.Stack{{Trunk: "main", Branches: []stack.Branch{{Name: "a"}}}})}
 	cfg := config.Defaults()
 	cfg.BranchPrefix = "dom/"
-	deps := app.Deps{Git: g, Meta: fb, Tracker: fb, Restack: fb, Config: cfg}
+	deps := app.Deps{Git: g, Meta: fb, Tracker: fb, Config: cfg}
 	return app.New(deps), fb, repo, dir, deps
 }
 
@@ -268,9 +255,12 @@ func TestCreateWithAIAndStagingPrompt(t *testing.T) {
 func TestModify(t *testing.T) {
 	a, fb, repo, dir, _ := mutFixture(t)
 	ctx := context.Background()
-	// Stack: main -> a -> b, HEAD on a.
-	fb.graph.Stacks[0].Branches = append(fb.graph.Stacks[0].Branches, stack.Branch{Name: "b"})
-	gittest.Run(t, dir, "branch", "b", "a")
+	// Stack: main -> a -> b, both with a commit of their own and b's base
+	// recorded, HEAD on a.
+	fb.graph.Stacks[0].Branches = append(fb.graph.Stacks[0].Branches, stack.Branch{Name: "b", Base: gittest.Run(t, dir, "rev-parse", "a")})
+	gittest.Run(t, dir, "switch", "-q", "-c", "b")
+	gittest.Commit(t, dir, "b.txt", "b", "feat: b")
+	gittest.Run(t, dir, "switch", "-q", "a")
 
 	if _, err := a.Modify(ctx, repo, app.ModifyOptions{}); !errors.Is(err, &stack.Error{Kind: stack.KindInvalidArgs}) {
 		t.Errorf("nothing staged: %v", err)
@@ -288,9 +278,8 @@ func TestModify(t *testing.T) {
 	if n := gittest.Run(t, dir, "rev-list", "--count", "main..HEAD"); n != "1" {
 		t.Errorf("amend should keep one commit, got %s", n)
 	}
-	if !slices.Equal(fb.restacks, []stack.Scope{stack.ScopeUpstack}) {
-		t.Errorf("restacks = %v", fb.restacks)
-	}
+	// gittest.Run fails the test when git exits non-zero.
+	gittest.Run(t, dir, "merge-base", "--is-ancestor", "a", "b")
 
 	res, err = a.Modify(ctx, repo, app.ModifyOptions{Message: []string{"feat: a renamed"}})
 	if err != nil || res.Commit.Subject != "feat: a renamed" || !res.Amended {
@@ -305,17 +294,16 @@ func TestModify(t *testing.T) {
 	if n := gittest.Run(t, dir, "rev-list", "--count", "main..HEAD"); n != "2" {
 		t.Errorf("-c should add a commit, got %s", n)
 	}
+	gittest.Run(t, dir, "merge-base", "--is-ancestor", "a", "b")
 
-	// Top of stack: no restack call.
-	fb.restacks = nil
+	// Top of stack: nothing to restack.
 	gittest.Run(t, dir, "switch", "-q", "b")
-	gittest.WriteFile(t, dir, "b.txt", "b")
+	gittest.WriteFile(t, dir, "b.txt", "b2")
 	res, err = a.Modify(ctx, repo, app.ModifyOptions{Staging: app.StageAll, Message: []string{"b1"}})
-	if err != nil || len(fb.restacks) != 0 || res.Restacked != nil {
-		t.Errorf("top: %+v %v restacks=%v", res, err, fb.restacks)
+	if err != nil || res.Restacked != nil {
+		t.Errorf("top: %+v %v", res, err)
 	}
-	// b had zero own commits (it was created at a's old tip... it now has the
-	// commit "b1"); create an empty branch c on top and modify it.
+	// An empty branch c on top: modify has to create its first commit.
 	gittest.Run(t, dir, "switch", "-q", "-c", "c")
 	fb.graph.Stacks[0].Branches = append(fb.graph.Stacks[0].Branches, stack.Branch{Name: "c"})
 	if _, err := a.Modify(ctx, repo, app.ModifyOptions{Message: []string{"x"}}); !errors.Is(err, &stack.Error{Kind: stack.KindInvalidArgs}) {
@@ -330,20 +318,12 @@ func TestModify(t *testing.T) {
 		t.Errorf("parent commit was rewritten: %s", subj)
 	}
 
-	// Conflict during restack gets actionable steps.
-	gittest.Run(t, dir, "switch", "-q", "a")
-	fb.restackErr = &stack.Error{Kind: stack.KindConflict, Msg: "conflict", Files: []string{"a.txt"}}
-	gittest.WriteFile(t, dir, "a.txt", "a4")
-	_, err = a.Modify(ctx, repo, app.ModifyOptions{Staging: app.StageAll})
-	se, ok := errors.AsType[*stack.Error](err)
-	if !ok || se.Kind != stack.KindConflict || !slices.ContainsFunc(se.NextSteps, func(s string) bool { return s == "git stack modify --continue" }) {
-		t.Errorf("conflict: %v", err)
+	// Nothing interrupted, so there is nothing to continue or abort.
+	if _, err := a.Modify(ctx, repo, app.ModifyOptions{Continue: true}); !errors.Is(err, &stack.Error{Kind: stack.KindInvalidArgs}) {
+		t.Errorf("continue: %v", err)
 	}
-	if _, err := a.Modify(ctx, repo, app.ModifyOptions{Continue: true}); err != nil || fb.continued != 1 {
-		t.Errorf("continue: %v %d", err, fb.continued)
-	}
-	if _, err := a.Modify(ctx, repo, app.ModifyOptions{Abort: true}); err != nil || fb.aborted != 1 {
-		t.Errorf("abort: %v %d", err, fb.aborted)
+	if _, err := a.Modify(ctx, repo, app.ModifyOptions{Abort: true}); !errors.Is(err, &stack.Error{Kind: stack.KindInvalidArgs}) {
+		t.Errorf("abort: %v", err)
 	}
 
 	gittest.Run(t, dir, "switch", "-q", "main")
@@ -353,45 +333,9 @@ func TestModify(t *testing.T) {
 }
 
 func TestRestack(t *testing.T) {
-	a, fb, repo, dir, _ := mutFixture(t)
-	ctx := context.Background()
-	fb.graph.Stacks[0].Branches = append(fb.graph.Stacks[0].Branches, stack.Branch{Name: "b"}, stack.Branch{Name: "c"})
-	gittest.Run(t, dir, "branch", "b", "a")
-	gittest.Run(t, dir, "branch", "c", "a")
-	gittest.Run(t, dir, "switch", "-q", "b")
-
-	res, err := a.Restack(ctx, repo, app.RestackOptions{Scope: stack.ScopeUpstack})
-	if err != nil || !slices.Equal(res.Branches, []string{"b", "c"}) || res.BottomBehindTrunk {
-		t.Errorf("upstack: %+v %v", res, err)
+	a, _, repo, _, _ := mutFixture(t)
+	res, err := a.Restack(context.Background(), repo, app.RestackOptions{})
+	if err != nil || !slices.Equal(res.InPlace, []string{"a"}) || len(res.Moved) != 0 {
+		t.Errorf("restack: %+v %v", res, err)
 	}
-	res, _ = a.Restack(ctx, repo, app.RestackOptions{Scope: stack.ScopeDownstack})
-	if !slices.Equal(res.Branches, []string{"a", "b"}) {
-		t.Errorf("downstack: %+v", res)
-	}
-	res, _ = a.Restack(ctx, repo, app.RestackOptions{})
-	if !slices.Equal(res.Branches, []string{"a", "b", "c"}) || res.Trunk != "main" || res.Bottom != "a" {
-		t.Errorf("all: %+v", res)
-	}
-	if !slices.Equal(fb.restacks, []stack.Scope{stack.ScopeUpstack, stack.ScopeDownstack, stack.ScopeAll}) {
-		t.Errorf("restacks = %v", fb.restacks)
-	}
-
-	// Trunk moves on: the bottom branch is reported as behind.
-	gittest.Run(t, dir, "switch", "-q", "main")
-	gittest.Commit(t, dir, "m.txt", "m", "main moves")
-	gittest.Run(t, dir, "switch", "-q", "b")
-	res, err = a.Restack(ctx, repo, app.RestackOptions{})
-	if err != nil || !res.BottomBehindTrunk {
-		t.Errorf("behind trunk: %+v %v", res, err)
-	}
-
-	if _, err := a.Restack(ctx, repo, app.RestackOptions{Continue: true}); err != nil || fb.continued != 1 {
-		t.Errorf("continue: %v", err)
-	}
-	gittest.Run(t, dir, "switch", "-q", "main")
-	if _, err := a.Restack(ctx, repo, app.RestackOptions{}); !errors.Is(err, &stack.Error{Kind: stack.KindNotInStack}) {
-		t.Errorf("trunk: %v", err)
-	}
-	_ = os.Getenv
-	_ = filepath.Join
 }

@@ -54,15 +54,6 @@ type Tracker interface {
 	AddTop(ctx context.Context, repo git.Repo, name string) error
 }
 
-// Restacker rebases branches onto their parents.
-type Restacker interface {
-	// Restack rebases the given scope of the current stack, locally, without
-	// fetching. ScopeOnly may return KindUnsupported.
-	Restack(ctx context.Context, repo git.Repo, scope Scope) error
-	Continue(ctx context.Context, repo git.Repo) error
-	Abort(ctx context.Context, repo git.Repo) error
-}
-
 // SubmitOptions controls Submitter.Submit.
 type SubmitOptions struct {
 	// Publish creates PRs ready for review instead of drafts.

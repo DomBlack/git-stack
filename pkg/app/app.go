@@ -20,7 +20,6 @@ type Deps struct {
 	Git      *git.Client
 	Meta     stack.Metadata
 	Tracker  stack.Tracker
-	Restack  stack.Restacker
 	Submit   stack.Submitter
 	Forge    forge.Forge
 	AI       ai.Drafter

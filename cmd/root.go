@@ -187,7 +187,6 @@ func (c *cli) app(ctx context.Context) (*app.App, git.Repo, error) {
 		Git:     rt.Git,
 		Meta:    backend,
 		Tracker: backend,
-		Restack: backend,
 		Submit:  backend,
 		Forge:   github.New(rt.Runner),
 		AI: claudecode.New(rt.Runner, claudecode.Config{

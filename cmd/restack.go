@@ -49,10 +49,11 @@ files, then run "git stack restack --continue" (or --abort).`,
 			case abort:
 				rep.Success("Restack aborted; branches restored")
 			default:
-				rep.Success("Restacked %s", strings.Join(res.Branches, ", "))
-			}
-			if res.BottomBehindTrunk {
-				rep.Warn("%s is behind %s; restack never rebases onto trunk locally, run git stack sync for that", res.Bottom, res.Trunk)
+				moved := make([]string, 0, len(res.Moved))
+				for _, m := range res.Moved {
+					moved = append(moved, m.Name)
+				}
+				rep.Success("Restacked %s", strings.Join(moved, ", "))
 			}
 			return nil
 		},

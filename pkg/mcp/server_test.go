@@ -116,7 +116,7 @@ func newHarness(t *testing.T, roots ...string) *harness {
 			cfg := config.Defaults()
 			cfg.CacheTTL = 0
 			return app.New(app.Deps{
-				Git: g, Meta: backend, Tracker: backend, Restack: backend, Submit: backend,
+				Git: g, Meta: backend, Tracker: backend, Submit: backend,
 				Forge: ff, Cache: cache.New(repo), Config: cfg,
 			}), nil
 		},
@@ -261,24 +261,26 @@ func TestViewCreateModifyNavigate(t *testing.T) {
 		t.Errorf("create = %+v (on %s)", cr, h.current())
 	}
 
-	// modify with a conflict yields structured next steps in tool terms.
-	h.backend.RestackErr = &stack.Error{Kind: stack.KindConflict, Msg: "rebase stopped", Files: []string{"x.go"}}
+	// modify with a conflict yields structured next steps in tool terms:
+	// feat-add-c edits b.txt, then b's amend edits it differently.
+	gittest.Commit(t, h.dir, "b.txt", "c side", "c edits b")
 	var nav navigateOutput
 	h.call("stack_navigate", map[string]any{"direction": "down"}, &nav)
 	if nav.To != "b" || h.current() != "b" {
 		t.Errorf("down = %+v", nav)
 	}
+	bBefore := gittest.Run(t, h.dir, "rev-parse", "b")
 	gittest.WriteFile(t, h.dir, "b.txt", "b2")
 	te := h.toolErr("stack_modify", map[string]any{"staging": "update"})
-	if te.Code != "conflict" || !slices.Equal(te.Files, []string{"x.go"}) || !slices.ContainsFunc(te.NextSteps, func(s string) bool { return s == "call stack_modify with continue: true" }) {
+	if te.Code != "conflict" || !slices.Equal(te.Files, []string{"b.txt"}) || !slices.ContainsFunc(te.NextSteps, func(s string) bool { return strings.Contains(s, "continue") }) {
 		t.Errorf("conflict error = %+v", te)
 	}
-	h.backend.RestackErr = nil
-	var mr app.ModifyResult
-	h.call("stack_modify", map[string]any{"continue": true}, &mr)
-	if h.backend.Continued != 1 {
-		t.Error("continue not forwarded")
+	if te := h.toolErr("stack_modify", map[string]any{"continue": true}); te.Code != "invalid_args" {
+		t.Errorf("continue with nothing interrupted = %+v", te)
 	}
+	// Put b back so feat-add-c restacks cleanly from here on.
+	gittest.Run(t, h.dir, "reset", "-q", "--hard", bBefore)
+	var mr app.ModifyResult
 	gittest.WriteFile(t, h.dir, "b2.txt", "b2")
 	h.call("stack_modify", map[string]any{"mode": "commit", "message": "second", "staging": "all"}, &mr)
 	if mr.Amended || mr.Commit.Subject != "second" || !slices.Equal(mr.Restacked, []string{"feat-add-c"}) {
