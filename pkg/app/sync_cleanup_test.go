@@ -385,3 +385,30 @@ func TestSyncDeletesBranchRestackedSinceItsPRWasPushed(t *testing.T) {
 		t.Errorf("b should sit on main with its own commit, got %q", got)
 	}
 }
+
+func TestSyncKeepsMergedBranchWithWhitespaceOnlyAmend(t *testing.T) {
+	f := newSyncFixture(t) // on b; origin has a as pushed
+	pushed := f.rev(t, "a")
+	gittest.Run(t, f.dir, "switch", "-q", "a")
+	gittest.WriteFile(t, f.dir, "a.txt", "  a")
+	gittest.Run(t, f.dir, "commit", "-q", "-a", "--amend", "--no-edit")
+	gittest.Run(t, f.dir, "switch", "-q", "b")
+	// The PR merges at the commit GitHub saw, without the amend.
+	gittest.Run(t, f.dir, "switch", "-q", "--detach", "refs/remotes/origin/main")
+	gittest.Run(t, f.dir, "merge", "-q", "--squash", pushed)
+	gittest.Run(t, f.dir, "commit", "-q", "-m", "merge a")
+	merge := f.rev(t, "HEAD")
+	gittest.Run(t, f.dir, "push", "-q", "origin", "HEAD:refs/heads/main")
+	gittest.Run(t, f.dir, "switch", "-q", "b")
+	f.forge.prs[0].State = forge.StateMerged
+	f.forge.prs[0].MergeCommit = merge
+	f.forge.prs[0].HeadSHA = pushed
+
+	res, err := f.sync(t, app.SyncOptions{Force: true, NoRestack: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if k, ok := kept(res, "a"); !ok || k.Reason != app.KeptUnpushed || !branchExists(t, f.dir, "a") {
+		t.Errorf("kept = %+v deleted = %+v", res.Kept, res.Deleted)
+	}
+}

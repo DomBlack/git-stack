@@ -272,3 +272,30 @@ func TestSyncRefusedRefTransactionFailsTheStack(t *testing.T) {
 		t.Errorf("the trunk still moves: %+v", res.Trunks)
 	}
 }
+
+func TestSyncUntrackedPathClashBlocksRestack(t *testing.T) {
+	for _, tc := range []struct{ name, added, untracked string }{
+		{"untracked file where a directory arrives", "docs/x.txt", "docs"},
+		{"untracked directory where a file arrives", "notes", "notes/n.md"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newSyncFixture(t) // on b
+			bBefore := f.rev(t, "b")
+			f.advanceRemote(t, "main", tc.added)
+			gittest.WriteFile(t, f.dir, tc.untracked, "mine")
+			res, err := f.sync(t, app.SyncOptions{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, ok := restacked(res, "b"); ok || f.rev(t, "b") != bBefore {
+				t.Error("b must stay put rather than delete the untracked path")
+			}
+			if b, _ := os.ReadFile(filepath.Join(f.dir, tc.untracked)); string(b) != "mine" {
+				t.Error("the untracked file must survive")
+			}
+			if !strings.Contains(strings.Join(res.Notices, "\n"), "would overwrite untracked "+tc.untracked) {
+				t.Errorf("notices = %v", res.Notices)
+			}
+		})
+	}
+}

@@ -283,7 +283,9 @@ func (a *App) moveBranch(ctx context.Context, st *syncState, name, from, to stri
 
 // untrackedInTheWay lists the untracked files in the worktree at path that
 // moving its checkout from one commit to another would overwrite: git reset
-// --hard deletes them without a word.
+// --hard deletes them without a word. A file is in the way when the move
+// adds the same path, a path under it (it would become a directory) or the
+// directory it sits in (as a file).
 func (a *App) untrackedInTheWay(ctx context.Context, st *syncState, path, from, to string) ([]string, error) {
 	added, err := a.d.Git.AddedPaths(ctx, st.repo, from, to)
 	if err != nil || len(added) == 0 {
@@ -294,9 +296,11 @@ func (a *App) untrackedInTheWay(ctx context.Context, st *syncState, path, from, 
 		return nil, err
 	}
 	var out []string
-	for _, f := range added {
-		if slices.Contains(untracked, f) {
-			out = append(out, f)
+	for _, u := range untracked {
+		if slices.ContainsFunc(added, func(f string) bool {
+			return f == u || strings.HasPrefix(f, u+"/") || strings.HasPrefix(u, f+"/")
+		}) {
+			out = append(out, u)
 		}
 	}
 	return out, nil

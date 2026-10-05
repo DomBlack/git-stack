@@ -93,9 +93,10 @@ func (c *Client) CommitTree(ctx context.Context, repo Repo, tree, parent string,
 	return res.Out(), nil
 }
 
-// PatchIDs maps the stable patch id of every non merge commit in from..to
-// to that commit, so two histories can be compared for the same changes
-// regardless of where they were rebased.
+// PatchIDs maps the patch id of every non merge commit in from..to to that
+// commit, so two histories can be compared for the same changes regardless
+// of where they were rebased. The ids are verbatim: unlike --stable they
+// count whitespace, so a whitespace only amend is a different change.
 func (c *Client) PatchIDs(ctx context.Context, repo Repo, from, to string) (map[string]string, error) {
 	return c.patchIDs(ctx, repo, from+".."+to)
 }
@@ -120,7 +121,7 @@ func (c *Client) patchIDs(ctx context.Context, repo Repo, revs ...string) (map[s
 	if len(bytes.TrimSpace(log.Stdout)) == 0 {
 		return out, nil
 	}
-	res, err := c.gitInput(ctx, repo, bytes.NewReader(log.Stdout), nil, "patch-id", "--stable")
+	res, err := c.gitInput(ctx, repo, bytes.NewReader(log.Stdout), nil, "patch-id", "--verbatim")
 	if err != nil {
 		return nil, err
 	}

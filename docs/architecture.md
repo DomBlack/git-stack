@@ -210,6 +210,8 @@ unpushed restacks don't nag); then restack. A tracked branch whose merged or clo
 head commit different from the local tip is kept with a notice, even under `-f`, when it
 holds a change (by patch id, ignoring what came from trunk) the PR never saw; a branch
 that sync restacked since its last push differs only by commit id and is deleted as usual.
+Patch ids are `--verbatim` rather than `--stable`, so a whitespace only amend counts as a
+change and keeps the branch.
 A branch recorded in two worktrees' metadata files is read from the first; once it is
 deleted the stale record in the other file shows up as gone on the next sync and is
 dropped then, so it heals over two syncs. A candidate checked out in the current worktree whose
@@ -229,8 +231,9 @@ tree and is dropped, as `git rebase` drops it, so that case costs nothing either
 Stacks are computed in parallel since that only creates objects, then each stack's branches
 move in one `git update-ref --stdin` transaction with expected old values, so a stack moves
 whole or not at all. A branch checked out in a clean worktree gets `reset --hard` there; a
-dirty one, or one whose move would add a path that is an untracked file in that worktree
-(which `reset --hard` would delete), is left and the branches above rebase onto its current
+dirty one, or one whose move would add a path that clashes with an untracked file in that
+worktree (the same path, or one is a directory the other sits in; `reset --hard` would
+delete it), is left and the branches above rebase onto its current
 tip. A diverged trunk reset with `-f` gets the same untracked file check. A conflict stops that
 stack at that branch with a notice pointing at `git stack restack`, which still goes through
 `gh stack rebase` and its interactive flow; the other stacks finish, and the command exits
