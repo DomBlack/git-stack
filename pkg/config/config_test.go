@@ -75,3 +75,19 @@ func TestLoadFromRepo(t *testing.T) {
 		t.Errorf("Load = %+v", c)
 	}
 }
+
+// TestBranchPrefixGetsASeparator: a prefix set as "dom" (the README shows
+// "dom/") would otherwise be glued onto the slug as "domfeature".
+func TestBranchPrefixGetsASeparator(t *testing.T) {
+	for _, tc := range []struct{ in, want string }{
+		{"dom", "dom/"}, {"dom/", "dom/"}, {"dom-", "dom-"}, {"", ""}, {" dom ", "dom/"},
+	} {
+		c, err := config.FromEntries([]git.ConfigEntry{{Key: "stack.branchprefix", Value: tc.in}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if c.BranchPrefix != tc.want {
+			t.Errorf("prefix %q: got %q, want %q", tc.in, c.BranchPrefix, tc.want)
+		}
+	}
+}

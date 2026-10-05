@@ -132,7 +132,7 @@ Everything is plain `git config`, so set it globally or per repo as you like.
 
 | `git config` key | Default | Meaning |
 |---|---|---|
-| `stack.branchPrefix` | (none) | prefix for generated branch names, e.g. `dom/` |
+| `stack.branchPrefix` | (none) | prefix for generated branch names, e.g. `dom/` (a bare `dom` gets the `/` added) |
 | `stack.ai.command` | `claude` | the Claude Code binary used for `--ai` |
 | `stack.ai.model` | `haiku` | model alias passed to `--model` |
 | `stack.ai.extraPrompt` | (none) | house style instructions appended to the prompts |

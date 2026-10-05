@@ -88,7 +88,7 @@ func FromEntries(entries []git.ConfigEntry) (*Config, error) {
 		v := e.Value
 		switch key {
 		case strings.ToLower(KeyBranchPrefix):
-			c.BranchPrefix = v
+			c.BranchPrefix = branchPrefix(v)
 		case strings.ToLower(KeyAICommand):
 			c.AICommand = v
 		case strings.ToLower(KeyAIModel):
@@ -145,4 +145,15 @@ func parseBool(v string) (bool, error) {
 		return false, nil
 	}
 	return false, fmt.Errorf("%q is not a boolean (true/false)", v)
+}
+
+// branchPrefix makes sure a prefix ends in a separator: "dom" is what people
+// type, "dom/" is what they mean, and without this the two glue together as
+// "domfeature". A prefix already ending in "/" or "-" is kept as it is.
+func branchPrefix(v string) string {
+	v = strings.TrimSpace(v)
+	if v == "" || strings.HasSuffix(v, "/") || strings.HasSuffix(v, "-") {
+		return v
+	}
+	return v + "/"
 }
