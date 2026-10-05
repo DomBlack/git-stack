@@ -14,20 +14,10 @@ import (
 // joinNames lists names for a message.
 func joinNames(names []string) string { return strings.Join(names, ", ") }
 
-// plannedMove is one branch's rebase, computed but not applied.
-type plannedMove struct {
-	name, from, to string
-	worktree       string // where it is checked out, if anywhere
-}
-
-// restackPlan is one stack's computed restack.
-type restackPlan struct {
-	stack    *stack.Stack
-	moves    []plannedMove
-	bases    map[string]string // branch -> parent tip, for every branch that ends up on its parent
-	conflict *Conflict
-	err      error // planning failed; none of the stack's moves are applied
-	notices  []string
+// stackPlan is one stack's computed restack.
+type stackPlan struct {
+	stack *stack.Stack
+	restackPlan
 }
 
 // syncRestack rebases every stack onto its updated parents. Each stack is
@@ -45,7 +35,7 @@ func (a *App) syncRestack(ctx context.Context, st *syncState, res *SyncResult) (
 		return nil, nil
 	}
 	err = a.progress(ctx, PhaseSync, fmt.Sprintf("Restacking %d %s", n, pluralise(n, "branch", "branches")), func(ctx context.Context) error {
-		plans := make([]restackPlan, len(st.graph.Stacks))
+		plans := make([]stackPlan, len(st.graph.Stacks))
 		sem := make(chan struct{}, max(1, runtime.NumCPU()))
 		var wg sync.WaitGroup
 		for i := range st.graph.Stacks {
@@ -123,77 +113,11 @@ func (a *App) syncRestack(ctx context.Context, st *syncState, res *SyncResult) (
 	return failed, err
 }
 
-// planRestack computes one stack's rebases, bottom to top, creating objects
-// only. A branch already on its parent is skipped; a dirty checked out
-// branch is left where it is and the branches above rebase onto its current
-// tip; a conflict ends the plan at that branch.
-func (a *App) planRestack(ctx context.Context, st *syncState, s *stack.Stack) restackPlan {
-	p := restackPlan{stack: s, bases: map[string]string{}}
-	parentName := s.Trunk
-	parent := st.local[s.Trunk].Head
-	oldParent := parent // the parent's tip before this restack, to find what the branch added
-	for _, b := range s.Branches {
-		lb, ok := st.local[b.Name]
-		if !ok {
-			continue
-		}
-		tip := lb.Head
-		if lb.Worktree != "" && st.isDirty(ctx, a.d.Git, lb.Worktree) {
-			p.notices = append(p.notices, fmt.Sprintf("%s is checked out in %s with uncommitted changes, so it was not restacked; commit or stash them and sync again",
-				b.Name, shortPath(lb.Worktree)))
-			parentName, parent, oldParent = b.Name, tip, tip
-			continue
-		}
-		if a.ancestor(ctx, st, parent, tip) {
-			// A branch sitting exactly on its parent keeps an older base: that
-			// is what tells cleanup it was fast forwarded into trunk rather
-			// than created empty, and it stays correct (the base is still
-			// behind the tip, there are just no commits of its own left).
-			if tip != parent || b.Base == "" {
-				p.bases[b.Name] = parent
-			}
-			parentName, parent, oldParent = b.Name, tip, tip
-			continue
-		}
-		from := b.Base
-		if from == "" || !a.ancestor(ctx, st, from, tip) {
-			mb, err := a.d.Git.MergeBase(ctx, st.repo, tip, oldParent)
-			if err != nil {
-				p.err = fmt.Errorf("%s: %w", b.Name, err)
-				return p
-			}
-			from = mb
-		}
-		commits, err := a.d.Git.RevList(ctx, st.repo, from, tip)
-		if err != nil {
-			p.err = fmt.Errorf("%s: %w", b.Name, err)
-			return p
-		}
-		r, err := a.d.Git.Replay(ctx, st.repo, commits, parent)
-		if err != nil {
-			p.err = fmt.Errorf("%s: %w", b.Name, err)
-			return p
-		}
-		if r.Conflict != nil {
-			p.conflict = &Conflict{Stack: s.Bottom(), Branch: b.Name, Onto: parentName, Files: r.Conflict.Files}
-			return p
-		}
-		if lb.Worktree != "" {
-			files, err := a.untrackedInTheWay(ctx, st, lb.Worktree, tip, r.Tip)
-			if err != nil {
-				p.err = fmt.Errorf("%s: %w", b.Name, err)
-				return p
-			}
-			if len(files) > 0 {
-				p.notices = append(p.notices, fmt.Sprintf("%s is checked out in %s and restacking it would overwrite untracked %s, so it was not restacked; move them aside and sync again",
-					b.Name, shortPath(lb.Worktree), joinNames(files)))
-				parentName, parent, oldParent = b.Name, tip, tip
-				continue
-			}
-		}
-		p.moves = append(p.moves, plannedMove{name: b.Name, from: tip, to: r.Tip, worktree: lb.Worktree})
-		p.bases[b.Name] = parent
-		parentName, parent, oldParent = b.Name, r.Tip, tip
-	}
-	return p
+// planRestack computes one stack's rebases onto its trunk.
+func (a *App) planRestack(ctx context.Context, st *syncState, s *stack.Stack) stackPlan {
+	return stackPlan{stack: s, restackPlan: a.planMoves(ctx, planInput{
+		repo: st.repo, stackName: s.Bottom(), branches: s.Branches,
+		parentName: s.Trunk, parentTip: st.local[s.Trunk].Head,
+		local: st.local, dirty: st.dirty,
+	})}
 }
