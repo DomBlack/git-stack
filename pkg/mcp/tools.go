@@ -315,6 +315,39 @@ func (s *Server) sync(ctx context.Context, req *mcp.CallToolRequest, in syncInpu
 	return nil, res, nil
 }
 
+// --- stack_merge --------------------------------------------------------
+
+type mergeInput struct {
+	repoArg
+	Branch string `json:"branch,omitempty" jsonschema:"the highest branch to merge; every branch below it in the stack goes too (default: the current branch)"`
+	Method string `json:"method,omitempty" jsonschema:"merge, squash or rebase; default: git config stack.merge.method, else the repository's default"`
+	NoSync bool   `json:"no_sync,omitempty" jsonschema:"skip the sync that normally follows (deleting merged branches, restacking the rest)"`
+}
+
+func (s *Server) merge(ctx context.Context, req *mcp.CallToolRequest, in mergeInput) (*mcp.CallToolResult, app.MergeResult, error) {
+	repo, a, err := s.appFor(ctx, req, in.RepoPath)
+	if err != nil {
+		return nil, app.MergeResult{}, wrapErr(err)
+	}
+	var method forge.MergeMethod
+	switch in.Method {
+	case "":
+	case "merge", "squash", "rebase":
+		method = forge.MergeMethod(in.Method)
+	default:
+		return nil, app.MergeResult{}, wrapErr(stack.Newf(stack.KindInvalidArgs, "method %q is not one of merge, squash, rebase", in.Method))
+	}
+	res, err := a.Merge(ctx, repo, app.MergeOptions{Branch: in.Branch, Method: method, NoSync: in.NoSync})
+	if err != nil && res.Status != "" {
+		// The merge landed and the sync afterwards hit a conflict: keep both.
+		return &mcp.CallToolResult{IsError: true, Content: []mcp.Content{&mcp.TextContent{Text: wrapErr(err).Error()}}}, res, nil
+	}
+	if err != nil {
+		return nil, app.MergeResult{}, wrapErr(err)
+	}
+	return nil, res, nil
+}
+
 // --- helpers ------------------------------------------------------------
 
 func (s *Server) appFor(ctx context.Context, req *mcp.CallToolRequest, repoPath string) (git.Repo, *app.App, error) {
@@ -380,11 +413,15 @@ func (s *Server) registerTools() {
 		Annotations: &mcp.ToolAnnotations{DestructiveHint: boolp(true), OpenWorldHint: boolp(true)},
 	}, s.submit)
 	mcp.AddTool(s.mcp, &mcp.Tool{
+		Name:        "stack_merge",
+		Title:       "Merge the stack",
+		Description: "Merge the pull requests of the current stack up to and including branch (default: the current branch) into trunk, all or nothing, then sync so merged branches are deleted and the rest restacked. Every PR in the way must be open and ready for review; publish drafts with stack_submit first. method is merge, squash or rebase.",
+		Annotations: &mcp.ToolAnnotations{DestructiveHint: boolp(true), OpenWorldHint: boolp(true)},
+	}, s.merge)
+	mcp.AddTool(s.mcp, &mcp.Tool{
 		Name:        "stack_sync",
 		Title:       "Sync the stack",
 		Description: "Fetch from the remote, fast forward trunk, delete branches whose pull requests merged or closed (per stack.sync.prune, always by default; prune forces it), fast forward branches that moved on the remote, and restack every stack without checking anything out. Nothing is pushed; stack_submit pushes.",
 		Annotations: &mcp.ToolAnnotations{DestructiveHint: boolp(true), OpenWorldHint: boolp(true)},
 	}, s.sync)
 }
-
-var _ = forge.StateOpen

@@ -49,6 +49,7 @@ const (
 	PhaseAI      Phase = "ai"
 	PhaseUpdate  Phase = "update"
 	PhaseInstall Phase = "install"
+	PhaseMerge   Phase = "merge"
 )
 
 // Prompter asks the user a question. It is nil under --no-interactive and in

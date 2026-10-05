@@ -41,6 +41,7 @@ If you know `gt` you already know most of this; the table is the mapping.
 | `gt log` | `git stack` or `git stack log` | every stack as a tree, trunk at the bottom, with PR state |
 | `gt submit` / `gt ss` | `git stack submit` (`git ss`) | `-d` `-p` `--no-edit` `--dry-run` `--ai` |
 | `gt sync` | `git stack sync` (`git sync`) | fetch, fast forward trunk, delete merged and closed branches (`stack.sync.prune`, `-d`, `-f`), fast forward branches the remote moved, restack every stack without a checkout; nothing is pushed |
+| `gt merge` | `git stack merge [branch]` | merge the stack's PRs up to a branch into trunk, all or nothing, then sync; `--squash` `--rebase` `--merge` `--no-sync` |
 | (none) | `git stack install` | aliases, completion, agent MCP registration |
 | (none) | `git stack completion <shell>` | bash, zsh, fish |
 | (none) | `git stack mcp` | stdio MCP server |
@@ -108,6 +109,29 @@ The rest of the output follows the same rules (one headline with a spinner while
 runs, `✔` `✖` `⚠` result lines, plain `ok:`/`note:`/`error:` when piped); that's all written
 down in [`docs/style.md`](docs/style.md).
 
+### Landing it
+
+`git stack merge` merges the stack's PRs up to and including the current branch (or the one
+you name) into trunk in one go, using GitHub's all or nothing stack merge; if any PR in the
+way can't be merged, none are. Plain `gh pr merge` refuses stacked PRs, which is the main
+reason this exists. Every PR below has to be ready for review first (`git stack submit
+--publish`), and GitHub's own rules still apply. Afterwards it syncs, so the merged branches
+go and anything left above is restacked onto the new trunk. `--squash`, `--rebase` and
+`--merge` pick how the commits land; `stack.merge.method` makes one the default.
+
+```
+❯ git stack merge
+🔀 Merging 3 pull requests into main…
+✔ Merged 3 pull requests into main at 99953c3
+  billing-webhook-schema  #412
+  billing-webhook-retries  #418
+  billing-webhook-docs  #419
+  main fast forwarded to 99953c3
+  deleted billing-webhook-schema (merged, was 2f1c0a9)
+  ...
+✔ Synced: 3 branches deleted
+```
+
 ## `git stack install`
 
 One command sets everything up. `--dry-run` prints every change before it happens, and
@@ -142,6 +166,7 @@ Everything is plain `git config`, so set it globally or per repo as you like.
 | `stack.cacheTTL` | `5m` | how long pull request state is cached for |
 | `stack.submit.default` | `ask` | `draft`, `publish` or `ask` for new PRs |
 | `stack.sync.prune` | `always` | what `sync` does with branches whose PRs merged or closed; `ask` on a terminal, or `never` |
+| `stack.merge.method` | (repo default) | `merge`, `squash` or `rebase` for `git stack merge` |
 
 ## Differences from Graphite
 

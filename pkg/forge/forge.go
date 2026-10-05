@@ -54,6 +54,37 @@ type UpdatePR struct {
 	Ready *bool
 }
 
+// MergeMethod says how a pull request lands on its base.
+type MergeMethod string
+
+const (
+	// MergeDefault leaves the choice to the repository's settings.
+	MergeDefault MergeMethod = ""
+	MergeMerge   MergeMethod = "merge"
+	MergeSquash  MergeMethod = "squash"
+	MergeRebase  MergeMethod = "rebase"
+)
+
+// MergeStatus is where a stack merge ended up.
+type MergeStatus string
+
+const (
+	// MergeMerged: the pull requests are on the base branch.
+	MergeMerged MergeStatus = "merged"
+	// MergeEnqueued: the base branch uses a merge queue and the pull
+	// requests are in it; they land when the queue gets to them.
+	MergeEnqueued MergeStatus = "enqueued"
+)
+
+// MergeOutcome reports a finished stack merge.
+type MergeOutcome struct {
+	Status MergeStatus
+	// SHA is the merge commit on the base branch; empty when enqueued.
+	SHA string
+	// Message is the forge's own description of the outcome, if any.
+	Message string
+}
+
 // Forge performs pull-request operations for the repository's remote.
 type Forge interface {
 	// ListPRs returns every pull request whose head is a branch of this
@@ -61,4 +92,9 @@ type Forge interface {
 	ListPRs(ctx context.Context, repo git.Repo) ([]PullRequest, error)
 	CreatePR(ctx context.Context, repo git.Repo, in CreatePR) (PullRequest, error)
 	UpdatePR(ctx context.Context, repo git.Repo, number int, in UpdatePR) error
+	// MergeStack merges pull request number together with every open pull
+	// request below it in its stack, all or nothing, and waits until the
+	// forge reports the result (or has queued it). A refusal, such as a
+	// draft in the way or a failed check, comes back as a *stack.Error.
+	MergeStack(ctx context.Context, repo git.Repo, number int, method MergeMethod) (MergeOutcome, error)
 }

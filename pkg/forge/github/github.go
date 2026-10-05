@@ -20,11 +20,13 @@ import (
 // Forge talks to GitHub through gh.
 type Forge struct {
 	run exec.Runner
+	// poll is the wait between status checks of an asynchronous merge.
+	poll time.Duration
 }
 
 // New returns a Forge using r to run gh.
 func New(r exec.Runner) *Forge {
-	return &Forge{run: r}
+	return &Forge{run: r, poll: time.Second}
 }
 
 var _ forge.Forge = (*Forge)(nil)

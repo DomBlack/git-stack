@@ -7,6 +7,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/DomBlack/git-stack/pkg/app"
+	"github.com/DomBlack/git-stack/pkg/ui"
 )
 
 func newSyncCmd(c *cli) *cobra.Command {
@@ -36,32 +37,7 @@ is only reset with -f or a yes at the prompt.`,
 			res, err := a.Sync(ctx, repo, app.SyncOptions{Force: force, DeleteAll: deleteAll, NoRestack: noRestack})
 			// A conflict in one stack doesn't stop the others, so there is
 			// always something to show before the error.
-			for _, t := range res.Trunks {
-				switch t.Status {
-				case app.TrunkFastForwarded:
-					rep.Info("%s fast forwarded to %s", rep.Branch(t.Name), rep.SHA(t.To))
-				case app.TrunkReset:
-					rep.Info("%s reset to %s/%s at %s", rep.Branch(t.Name), res.Remote, t.Name, rep.SHA(t.To))
-				case app.TrunkAhead:
-					rep.Info("%s is ahead of %s/%s; left alone", rep.Branch(t.Name), res.Remote, t.Name)
-				}
-			}
-			for _, d := range res.Deleted {
-				if d.Head == "" {
-					rep.Info("deleted %s (%s)", rep.Branch(d.Name), d.Reason)
-					continue
-				}
-				rep.Info("deleted %s (%s, was %s)", rep.Branch(d.Name), d.Reason, rep.SHA(d.Head))
-			}
-			for _, u := range res.Updated {
-				rep.Info("%s fast forwarded to %s from %s", rep.Branch(u.Name), rep.SHA(u.To), res.Remote)
-			}
-			for _, m := range res.Restacked {
-				rep.Info("restacked %s", rep.Branch(m.Name))
-			}
-			for _, n := range res.Notices {
-				rep.Warn("%s", n)
-			}
+			renderSync(rep, res)
 			if err != nil {
 				return err
 			}
@@ -73,6 +49,37 @@ is only reset with -f or a yes at the prompt.`,
 	cmd.Flags().BoolVarP(&deleteAll, "delete-all", "d", false, "delete merged or closed branches without asking")
 	cmd.Flags().BoolVar(&noRestack, "no-restack", false, "skip restacking")
 	return cmd
+}
+
+// renderSync prints what a sync did, line by line; merge shows the same
+// lines for the sync it runs afterwards.
+func renderSync(rep *ui.Reporter, res app.SyncResult) {
+	for _, t := range res.Trunks {
+		switch t.Status {
+		case app.TrunkFastForwarded:
+			rep.Info("%s fast forwarded to %s", rep.Branch(t.Name), rep.SHA(t.To))
+		case app.TrunkReset:
+			rep.Info("%s reset to %s/%s at %s", rep.Branch(t.Name), res.Remote, t.Name, rep.SHA(t.To))
+		case app.TrunkAhead:
+			rep.Info("%s is ahead of %s/%s; left alone", rep.Branch(t.Name), res.Remote, t.Name)
+		}
+	}
+	for _, d := range res.Deleted {
+		if d.Head == "" {
+			rep.Info("deleted %s (%s)", rep.Branch(d.Name), d.Reason)
+			continue
+		}
+		rep.Info("deleted %s (%s, was %s)", rep.Branch(d.Name), d.Reason, rep.SHA(d.Head))
+	}
+	for _, u := range res.Updated {
+		rep.Info("%s fast forwarded to %s from %s", rep.Branch(u.Name), rep.SHA(u.To), res.Remote)
+	}
+	for _, m := range res.Restacked {
+		rep.Info("restacked %s", rep.Branch(m.Name))
+	}
+	for _, n := range res.Notices {
+		rep.Warn("%s", n)
+	}
 }
 
 // syncSummary is the one line result: "Synced: 2 branches deleted, 3 restacked".

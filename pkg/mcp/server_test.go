@@ -28,6 +28,12 @@ import (
 type fakeForge struct {
 	prs     []forge.PullRequest
 	updates map[int]forge.UpdatePR
+	merged  []int
+}
+
+func (f *fakeForge) MergeStack(_ context.Context, _ git.Repo, n int, _ forge.MergeMethod) (forge.MergeOutcome, error) {
+	f.merged = append(f.merged, n)
+	return forge.MergeOutcome{Status: forge.MergeMerged, SHA: "feedface"}, nil
 }
 
 func (f *fakeForge) ListPRs(context.Context, git.Repo) ([]forge.PullRequest, error) {
@@ -338,6 +344,35 @@ func TestSubmitAndSync(t *testing.T) {
 	h.call("stack_sync", map[string]any{"prune": true, "no_restack": true}, &sy)
 	if sy.Remote != "origin" || len(sy.Trunks) != 1 || sy.Trunks[0].Status != app.TrunkUpToDate {
 		t.Errorf("sync = %+v", sy)
+	}
+}
+
+func TestMerge(t *testing.T) {
+	h := newHarness(t)
+	defer h.assertNoStdout()
+	// a has PR 7 (open). Give b one too, then merge up to it without syncing.
+	h.forge.prs = append(h.forge.prs, forge.PullRequest{Number: 8, Head: "b", Base: "a", State: forge.StateOpen, URL: "u/8"})
+	var mr app.MergeResult
+	h.call("stack_merge", map[string]any{"method": "rebase", "no_sync": true}, &mr)
+	if len(mr.PullRequests) != 2 || mr.PullRequests[0].Branch != "a" || mr.PullRequests[1].Number != 8 || mr.Status != forge.MergeMerged || mr.SHA != "feedface" || mr.Sync != nil {
+		t.Errorf("merge = %+v", mr)
+	}
+	if len(h.forge.merged) != 1 || h.forge.merged[0] != 8 {
+		t.Errorf("forge merged %v, want [8]", h.forge.merged)
+	}
+
+	// A draft in the way is refused before anything is merged.
+	h.forge.prs[1].State = forge.StateDraft
+	res, text := h.call("stack_merge", map[string]any{"branch": "b"}, nil)
+	var te toolError
+	if !res.IsError || json.Unmarshal([]byte(text), &te) != nil || te.Code != stack.KindInvalidArgs.Code() || !strings.Contains(te.Message, "draft") {
+		t.Errorf("draft: %v %q", res.IsError, text)
+	}
+	if res, text := h.call("stack_merge", map[string]any{"method": "fast-forward"}, nil); !res.IsError || !strings.Contains(text, "not one of") {
+		t.Errorf("bad method: %v %q", res.IsError, text)
+	}
+	if len(h.forge.merged) != 1 {
+		t.Errorf("refused merges must not reach the forge: %v", h.forge.merged)
 	}
 }
 

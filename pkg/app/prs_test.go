@@ -29,6 +29,9 @@ func (f *fakeForge) CreatePR(context.Context, git.Repo, forge.CreatePR) (forge.P
 	return forge.PullRequest{}, nil
 }
 func (f *fakeForge) UpdatePR(context.Context, git.Repo, int, forge.UpdatePR) error { return nil }
+func (f *fakeForge) MergeStack(context.Context, git.Repo, int, forge.MergeMethod) (forge.MergeOutcome, error) {
+	return forge.MergeOutcome{}, nil
+}
 
 func TestPRsForPrefersOpenThenMergedThenRecent(t *testing.T) {
 	t1 := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)

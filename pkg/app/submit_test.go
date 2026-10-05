@@ -61,6 +61,23 @@ type recordingForge struct {
 	prs     []forge.PullRequest
 	updates map[int]forge.UpdatePR
 	lists   int
+	// merges records every MergeStack call as (number, method).
+	merges []mergeCall
+	// mergeErr, when set, is what MergeStack returns.
+	mergeErr error
+}
+
+type mergeCall struct {
+	number int
+	method forge.MergeMethod
+}
+
+func (f *recordingForge) MergeStack(_ context.Context, _ git.Repo, n int, m forge.MergeMethod) (forge.MergeOutcome, error) {
+	f.merges = append(f.merges, mergeCall{n, m})
+	if f.mergeErr != nil {
+		return forge.MergeOutcome{}, f.mergeErr
+	}
+	return forge.MergeOutcome{Status: forge.MergeMerged, SHA: "feedface"}, nil
 }
 
 func (f *recordingForge) ListPRs(context.Context, git.Repo) ([]forge.PullRequest, error) {

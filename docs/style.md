@@ -61,6 +61,7 @@ read as section markers rather than confetti because they never show up anywhere
 | sync | 🔄 | Syncing with origin… |
 | Claude | 🤖 | Drafting pull request for feat-a… |
 | update | 📦 | Checking for updates… |
+| merge | 🔀 | Merging 3 pull requests into main… |
 | install | 🔧 | (install prints a report, no spinner) |
 
 ## Spinners
