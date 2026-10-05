@@ -60,13 +60,13 @@ type restackRun struct {
 	repo                                      git.Repo
 	command, trunk, stackName, originalBranch string
 	moved                                     []movedRef
-	state                                     *restackState //nolint:unused // set once a conflict is saved for continue and abort
+	state                                     *restackState
 }
 
 // restack is the shared body of Restack and modify's restack. command
 // names the CLI command for messages; headline overrides the progress line.
 func (a *App) restack(ctx context.Context, repo git.Repo, o RestackOptions, command, headline string) (RestackResult, error) {
-	if err := a.noRebaseActive(ctx, repo, command); err != nil {
+	if err := a.noRebaseActive(ctx, repo); err != nil {
 		return RestackResult{}, err
 	}
 	current, err := a.d.Git.CurrentBranch(ctx, repo)
@@ -117,34 +117,169 @@ func (a *App) restack(ctx context.Context, repo git.Repo, o RestackOptions, comm
 }
 
 // restackBranches plans and applies the moves for branches on top of
-// parentName. A conflict ends the run at that branch with an error.
+// parentName. A conflict starts a real git rebase of that branch and ends
+// the run with a conflict error; if that rebase happens to go through, the
+// run carries on above it.
 func (a *App) restackBranches(ctx context.Context, run *restackRun, branches []stack.Branch, parentName string, res *RestackResult) error {
-	local, err := a.localBranches(ctx, run.repo)
+	for {
+		local, err := a.localBranches(ctx, run.repo)
+		if err != nil {
+			return err
+		}
+		parentTip, ok := local[parentName]
+		if !ok {
+			return stack.Newf(stack.KindInvalidArgs, "%s no longer exists, so nothing above it can be restacked", parentName)
+		}
+		p := a.planMoves(ctx, planInput{
+			repo: run.repo, stackName: run.stackName, branches: branches,
+			parentName: parentName, parentTip: parentTip.Head,
+			local: local, dirty: newDirtyCache(), currentWorktree: run.repo.TopLevel,
+		})
+		if p.err != nil {
+			return p.err
+		}
+		if err := a.checkCurrentMove(ctx, run.repo, &p); err != nil {
+			return err
+		}
+		if p.conflict != nil {
+			if err := a.checkConflictStart(ctx, run, &p, local); err != nil {
+				return err
+			}
+		}
+		if err := a.applyMoves(ctx, run, &p, res); err != nil {
+			return err
+		}
+		if p.conflict == nil {
+			return a.finishRun(ctx, run)
+		}
+		idx := slices.IndexFunc(branches, func(b stack.Branch) bool { return b.Name == p.conflict.Branch })
+		branches = branches[idx+1:]
+		remaining := make([]string, len(branches))
+		for i, b := range branches {
+			remaining[i] = b.Name
+		}
+		if err := a.startConflictRebase(ctx, run, &p, remaining, local); err != nil {
+			return err
+		}
+		// git finished the rebase by itself (rerere, say): record it and go on.
+		if err := a.recordRebased(ctx, run, res); err != nil {
+			return err
+		}
+		parentName = p.conflict.Branch
+		if len(branches) == 0 {
+			return a.finishRun(ctx, run)
+		}
+	}
+}
+
+// checkConflictStart refuses to begin the conflicting branch's rebase when
+// it could not be resolved here: the branch is checked out in another
+// worktree, or this working tree has changes git rebase would reject.
+func (a *App) checkConflictStart(ctx context.Context, run *restackRun, p *restackPlan, local map[string]git.Branch) error {
+	c := p.conflict
+	if wt := local[c.Branch].Worktree; wt != "" && wt != run.repo.TopLevel {
+		e := conflictError(c.Branch, c.Onto, c.Files)
+		e.Msg += ", and it is checked out in " + shortPath(wt)
+		e.NextSteps = []string{"resolve it there: cd " + wt + " && " + restackCommand}
+		return e
+	}
+	changes, err := a.d.Git.LocalChanges(ctx, run.repo)
 	if err != nil {
 		return err
 	}
-	parentTip, ok := local[parentName]
-	if !ok {
-		return stack.Newf(stack.KindInvalidArgs, "%s no longer exists, so nothing above it can be restacked", parentName)
+	if len(changes) > 0 {
+		return stack.Newf(stack.KindInvalidArgs, "resolving the conflict on %s needs a clean working tree", c.Branch).
+			WithSteps("commit or stash your changes, then try again")
 	}
-	p := a.planMoves(ctx, planInput{
-		repo: run.repo, stackName: run.stackName, branches: branches,
-		parentName: parentName, parentTip: parentTip.Head,
-		local: local, dirty: newDirtyCache(), currentWorktree: run.repo.TopLevel,
-	})
-	if p.err != nil {
-		return p.err
-	}
-	if err := a.checkCurrentMove(ctx, run.repo, &p); err != nil {
+	files, err := a.untrackedInTheWay(ctx, run.repo, run.repo.TopLevel, "HEAD", c.Branch)
+	if err != nil {
 		return err
 	}
-	if err := a.applyMoves(ctx, run, &p, res); err != nil {
-		return err
-	}
-	if p.conflict != nil {
-		return conflictError(p.conflict.Branch, p.conflict.Onto, p.conflict.Files)
+	if len(files) > 0 {
+		return stack.Newf(stack.KindInvalidArgs, "resolving the conflict on %s would overwrite untracked %s", c.Branch, joinNames(files)).
+			WithSteps("move them aside, then try again")
 	}
 	return nil
+}
+
+// startConflictRebase saves the run and hands the conflicting branch to
+// git rebase --onto. It returns the conflict error when git stops, nil when
+// the rebase unexpectedly completes.
+func (a *App) startConflictRebase(ctx context.Context, run *restackRun, p *restackPlan, remaining []string, local map[string]git.Branch) error {
+	c := p.conflict
+	var oldBase string
+	if g, err := a.d.Meta.Load(ctx, run.repo); err == nil {
+		if s, i, ok := g.StackOf(c.Branch); ok {
+			oldBase = s.Branches[i].Base
+		}
+	}
+	run.state = &restackState{
+		Command: run.command, OriginalBranch: run.originalBranch, Trunk: run.trunk,
+		Conflict: c.Branch, Onto: c.Onto, NewBase: p.conflictNewBase,
+		ConflictTip: local[c.Branch].Head, ConflictOldBase: oldBase,
+		Remaining: remaining, Moved: run.moved,
+	}
+	if err := saveRestackState(run.repo, run.state); err != nil {
+		return err
+	}
+	stopped, err := a.d.Git.RebaseOnto(ctx, run.repo, p.conflictNewBase, p.conflictFrom, c.Branch)
+	if err != nil {
+		return err // the state stays so --abort can still put the moved branches back
+	}
+	if stopped {
+		files, ferr := a.d.Git.ConflictedFiles(ctx, run.repo)
+		if ferr != nil {
+			files = c.Files
+		}
+		return conflictError(c.Branch, c.Onto, files)
+	}
+	return nil
+}
+
+// recordRebased writes the conflicting branch's new tip and base once its
+// git rebase is done, and remembers the move for abort.
+func (a *App) recordRebased(ctx context.Context, run *restackRun, res *RestackResult) error {
+	st := run.state
+	tip, err := a.d.Git.RevParse(ctx, run.repo, st.Conflict)
+	if err != nil {
+		return err
+	}
+	m := movedRef{Name: st.Conflict, From: st.ConflictTip, To: tip, OldBase: st.ConflictOldBase}
+	run.moved = append(run.moved, m)
+	st.Moved = run.moved
+	res.Moved = append(res.Moved, BranchMove{Name: m.Name, Stack: run.stackName, From: m.From, To: m.To})
+	err = a.d.Meta.Update(ctx, run.repo, func(g *stack.Graph) error {
+		for i := range g.Stacks {
+			for j := range g.Stacks[i].Branches {
+				if b := &g.Stacks[i].Branches[j]; b.Name == st.Conflict {
+					b.Head, b.Base = tip, st.NewBase
+				}
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		return err
+	}
+	// Save the move so abort can still put it back if the run fails later.
+	return saveRestackState(run.repo, st)
+}
+
+// finishRun puts the user back on the branch they started from when a
+// git rebase moved them, and forgets the saved state.
+func (a *App) finishRun(ctx context.Context, run *restackRun) error {
+	if run.state == nil {
+		return nil
+	}
+	if run.originalBranch != "" {
+		cur, _ := a.d.Git.CurrentBranch(ctx, run.repo)
+		if exists, _ := a.d.Git.BranchExists(ctx, run.repo, run.originalBranch); exists && cur != run.originalBranch {
+			if err := a.d.Git.Switch(ctx, run.repo, run.originalBranch); err != nil {
+				return err
+			}
+		}
+	}
+	return clearRestackState(run.repo)
 }
 
 // checkCurrentMove refuses the run before anything moves when the branch
@@ -251,7 +386,7 @@ func (a *App) localBranches(ctx context.Context, repo git.Repo) (map[string]git.
 
 // noRebaseActive refuses to start when a restack is waiting on conflicts
 // or any other rebase is in progress, before anything reads HEAD.
-func (a *App) noRebaseActive(ctx context.Context, repo git.Repo, command string) error { //nolint:unparam // command names the caller in the messages the resumable restack adds
+func (a *App) noRebaseActive(ctx context.Context, repo git.Repo) error {
 	st, err := loadRestackState(repo)
 	if err != nil {
 		return err

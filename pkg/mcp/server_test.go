@@ -275,10 +275,18 @@ func TestViewCreateModifyNavigate(t *testing.T) {
 	if te.Code != "conflict" || !slices.Equal(te.Files, []string{"b.txt"}) || !slices.ContainsFunc(te.NextSteps, func(s string) bool { return strings.Contains(s, "continue") }) {
 		t.Errorf("conflict error = %+v", te)
 	}
-	if te := h.toolErr("stack_modify", map[string]any{"continue": true}); te.Code != "invalid_args" {
-		t.Errorf("continue with nothing interrupted = %+v", te)
+	// Task 7 replaces this: continue is still a placeholder.
+	if te := h.toolErr("stack_modify", map[string]any{"continue": true}); te.Code != "unsupported" {
+		t.Errorf("continue = %+v", te)
 	}
-	// Put b back so feat-add-c restacks cleanly from here on.
+	// Give up feat-add-c's rebase and put b back so feat-add-c restacks
+	// cleanly from here on.
+	gittest.Run(t, h.dir, "rebase", "--abort")
+	gitDir := gittest.Run(t, h.dir, "rev-parse", "--absolute-git-dir")
+	if err := os.Remove(filepath.Join(gitDir, "git-stack", "restack.json")); err != nil {
+		t.Fatal(err)
+	}
+	gittest.Run(t, h.dir, "switch", "-q", "b")
 	gittest.Run(t, h.dir, "reset", "-q", "--hard", bBefore)
 	var mr app.ModifyResult
 	gittest.WriteFile(t, h.dir, "b2.txt", "b2")

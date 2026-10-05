@@ -48,7 +48,7 @@ func (a *App) Modify(ctx context.Context, repo git.Repo, o ModifyOptions) (Modif
 		_, err := a.restackAbort(ctx, repo)
 		return ModifyResult{Branch: branchAfter(ctx, a, repo)}, err
 	}
-	if err := a.noRebaseActive(ctx, repo, "git stack modify"); err != nil {
+	if err := a.noRebaseActive(ctx, repo); err != nil {
 		return ModifyResult{}, err
 	}
 

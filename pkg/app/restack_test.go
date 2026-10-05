@@ -2,7 +2,10 @@ package app_test
 
 import (
 	"context"
+	"encoding/json/v2"
 	"errors"
+	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -309,4 +312,203 @@ func TestRestackUpdatesCleanOtherWorktreeAndSkipsDirtyOne(t *testing.T) {
 	}
 	// c still sits on b's current tip.
 	gittest.Run(t, f.dir, "merge-base", "--is-ancestor", "b", "c")
+}
+
+// conflictFixture: a and b both edit shared.txt, so b conflicts on a.
+func conflictFixture(t *testing.T) *restackFixture {
+	t.Helper()
+	f := newRestackFixture(t)
+	gittest.Run(t, f.dir, "switch", "-q", "a")
+	gittest.Commit(t, f.dir, "shared.txt", "a version", "a edits shared")
+	gittest.Run(t, f.dir, "switch", "-q", "b")
+	gittest.Commit(t, f.dir, "shared.txt", "b version", "b edits shared")
+	gittest.Run(t, f.dir, "switch", "-q", "c")
+	return f
+}
+
+func (f *restackFixture) rebaseActive(t *testing.T) bool {
+	t.Helper()
+	_, err := os.Stat(filepath.Join(f.repo.GitDir, "rebase-merge"))
+	return err == nil
+}
+
+func (f *restackFixture) stateExists() bool {
+	_, err := os.Stat(filepath.Join(f.repo.GitDir, "git-stack", "restack.json"))
+	return err == nil
+}
+
+func TestRestackConflictStartsARealRebase(t *testing.T) {
+	f := conflictFixture(t)
+	_, err := f.app.Restack(context.Background(), f.repo, app.RestackOptions{})
+	var se *stack.Error
+	if !errors.As(err, &se) || se.Kind != stack.KindConflict || se.Branch != "b" || !slices.Equal(se.Files, []string{"shared.txt"}) {
+		t.Fatalf("err = %+v", err)
+	}
+	if !f.rebaseActive(t) || !f.stateExists() {
+		t.Error("a git rebase of b should be in progress with our state saved")
+	}
+	if gittest.Run(t, f.dir, "status", "--short") != "UU shared.txt" {
+		t.Errorf("status = %q", gittest.Run(t, f.dir, "status", "--short"))
+	}
+	// A second restack says a restack is waiting, with our commands.
+	_, err = f.app.Restack(context.Background(), f.repo, app.RestackOptions{})
+	if !errors.As(err, &se) || se.Kind != stack.KindRebaseActive || !strings.Contains(strings.Join(se.NextSteps, "\n"), "git stack continue") {
+		t.Errorf("second restack = %v", err)
+	}
+}
+
+func TestRestackConflictNeedsCleanTree(t *testing.T) {
+	f := prefixFixture(t) // b would move cleanly before c's rebase starts
+	gittest.WriteFile(t, f.dir, "c.txt", "uncommitted")
+	before := f.rev(t, "b")
+	_, err := f.app.Restack(context.Background(), f.repo, app.RestackOptions{})
+	var se *stack.Error
+	if !errors.As(err, &se) || se.Kind != stack.KindInvalidArgs || !strings.Contains(se.Msg, "clean working tree") {
+		t.Fatalf("err = %v", err)
+	}
+	if f.rebaseActive(t) || f.stateExists() || f.rev(t, "b") != before {
+		t.Error("nothing may start or move when the tree is dirty")
+	}
+}
+
+func TestRestackConflictInOtherWorktreeIsNotStartedHere(t *testing.T) {
+	f := conflictFixture(t)
+	wt := f.dir + "-wt"
+	gittest.Run(t, f.dir, "worktree", "add", "-q", wt, "b")
+	_, err := f.app.Restack(context.Background(), f.repo, app.RestackOptions{})
+	var se *stack.Error
+	if !errors.As(err, &se) || se.Kind != stack.KindConflict || !strings.Contains(strings.Join(se.NextSteps, "\n"), wt) {
+		t.Fatalf("err = %v", err)
+	}
+	if !strings.Contains(strings.Join(se.NextSteps, "\n"), "git stack restack") {
+		t.Errorf("steps = %q", se.NextSteps)
+	}
+	if f.rebaseActive(t) || f.stateExists() {
+		t.Error("no rebase may start in this worktree")
+	}
+}
+
+func TestModifyConflictInOtherWorktreeSaysRestack(t *testing.T) {
+	f := conflictFixture(t)
+	wt := f.dir + "-wt"
+	gittest.Run(t, f.dir, "switch", "-q", "a")
+	gittest.Run(t, f.dir, "worktree", "add", "-q", wt, "b")
+	gittest.WriteFile(t, f.dir, "a2.txt", "a2")
+	gittest.Run(t, f.dir, "add", "a2.txt")
+	_, err := f.app.Modify(context.Background(), f.repo, app.ModifyOptions{})
+	var se *stack.Error
+	steps := ""
+	if errors.As(err, &se) {
+		steps = strings.Join(se.NextSteps, "\n")
+	}
+	if se == nil || se.Kind != stack.KindConflict || !strings.Contains(steps, filepath.Base(wt)+" && git stack restack") {
+		t.Fatalf("err = %v, steps = %q", err, steps)
+	}
+	if f.rebaseActive(t) || f.stateExists() {
+		t.Error("no rebase may start in this worktree")
+	}
+}
+
+func TestRestackBottomBranchConflictWithTrunk(t *testing.T) {
+	f := newRestackFixture(t)
+	gittest.Run(t, f.dir, "switch", "-q", "main")
+	gittest.Commit(t, f.dir, "shared.txt", "main version", "main edits shared")
+	gittest.Run(t, f.dir, "switch", "-q", "a")
+	gittest.Commit(t, f.dir, "shared.txt", "a version", "a edits shared")
+	_, err := f.app.Restack(context.Background(), f.repo, app.RestackOptions{})
+	var se *stack.Error
+	if !errors.As(err, &se) || se.Kind != stack.KindConflict || se.Branch != "a" || !slices.Equal(se.Files, []string{"shared.txt"}) {
+		t.Fatalf("err = %+v", err)
+	}
+	if !f.rebaseActive(t) {
+		t.Error("the bottom branch's rebase onto trunk should be in progress")
+	}
+}
+
+// prefixFixture: a is amended, b edits shared.txt after c branched and c
+// edits it too, so b moves cleanly and c then conflicts on the new b.
+func prefixFixture(t *testing.T) *restackFixture {
+	t.Helper()
+	f := newRestackFixture(t)
+	gittest.Commit(t, f.dir, "shared.txt", "c version", "c edits shared")
+	gittest.Run(t, f.dir, "switch", "-q", "b")
+	gittest.Commit(t, f.dir, "shared.txt", "b version", "b edits shared")
+	gittest.Run(t, f.dir, "switch", "-q", "c")
+	f.amend(t, "a", "a2.txt")
+	return f
+}
+
+func TestRestackConflictAfterCleanPrefix(t *testing.T) {
+	f := prefixFixture(t)
+	bBefore := f.rev(t, "b")
+	_, err := f.app.Restack(context.Background(), f.repo, app.RestackOptions{})
+	var se *stack.Error
+	if !errors.As(err, &se) || se.Kind != stack.KindConflict || se.Branch != "c" || !slices.Equal(se.Files, []string{"shared.txt"}) {
+		t.Fatalf("err = %+v", err)
+	}
+	bAfter := f.rev(t, "b")
+	if bAfter == bBefore || f.rev(t, "b~2") != f.rev(t, "a") || f.base("b") != f.rev(t, "a") {
+		t.Errorf("b should sit on the amended a with its base recorded: b~2 = %s, a = %s, base = %s", f.rev(t, "b~2"), f.rev(t, "a"), f.base("b"))
+	}
+	if !f.rebaseActive(t) {
+		t.Error("c's rebase should be in progress")
+	}
+	data, err := os.ReadFile(filepath.Join(f.repo.GitDir, "git-stack", "restack.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var st struct {
+		OriginalBranch string   `json:"original_branch"`
+		Conflict       string   `json:"conflict"`
+		Onto           string   `json:"onto"`
+		Remaining      []string `json:"remaining"`
+		Moved          []struct {
+			Name string `json:"name"`
+			From string `json:"from"`
+			To   string `json:"to"`
+		} `json:"moved"`
+	}
+	if err := json.Unmarshal(data, &st); err != nil {
+		t.Fatal(err)
+	}
+	if st.OriginalBranch != "c" || st.Conflict != "c" || st.Onto != "b" || len(st.Remaining) != 0 {
+		t.Errorf("state = %s", data)
+	}
+	if len(st.Moved) != 1 || st.Moved[0].Name != "b" || st.Moved[0].From != bBefore || st.Moved[0].To != bAfter {
+		t.Errorf("moved = %+v, want b %s -> %s", st.Moved, bBefore, bAfter)
+	}
+}
+
+// TestRestackConflictGitResolvesCarriesOn: the planner's merge-tree reads
+// attributes from this worktree (c, no .gitattributes) and sees a conflict,
+// but git rebase checks out a, whose .gitattributes makes shared.txt a union
+// merge, so the rebase of b goes through and the run carries on to c.
+func TestRestackConflictGitResolvesCarriesOn(t *testing.T) {
+	f := newRestackFixture(t)
+	gittest.Run(t, f.dir, "switch", "-q", "a")
+	gittest.WriteFile(t, f.dir, ".gitattributes", "shared.txt merge=union\n")
+	gittest.Commit(t, f.dir, "shared.txt", "a version\n", "a edits shared")
+	gittest.Run(t, f.dir, "switch", "-q", "b")
+	gittest.Commit(t, f.dir, "shared.txt", "b version\n", "b edits shared")
+	gittest.Run(t, f.dir, "switch", "-q", "c")
+
+	res, err := f.app.Restack(context.Background(), f.repo, app.RestackOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(moved(res), []string{"b", "c"}) {
+		t.Errorf("moved = %v", moved(res))
+	}
+	if f.rebaseActive(t) || f.stateExists() {
+		t.Error("the run should leave no rebase and no state behind")
+	}
+	if cur := gittest.Run(t, f.dir, "branch", "--show-current"); cur != "c" {
+		t.Errorf("HEAD on %q, want c", cur)
+	}
+	if got := gittest.Run(t, f.dir, "show", "b:shared.txt"); got != "a version\nb version" {
+		t.Errorf("b:shared.txt = %q", got)
+	}
+	if f.base("b") != f.rev(t, "a") || f.base("c") != f.rev(t, "b") {
+		t.Errorf("bases b = %s (a %s), c = %s (b %s)", f.base("b"), f.rev(t, "a"), f.base("c"), f.rev(t, "b"))
+	}
 }
