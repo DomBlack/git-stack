@@ -1,6 +1,7 @@
-// Package cache stores small JSON documents per repository under
-// <git-common-dir>/git-stack/ so that commands (and completion) can render
-// instantly from the last known state.
+// Package cache stores small JSON documents, per repository under
+// <git-common-dir>/git-stack/ or in a directory of the caller's choosing, so
+// that commands (and completion) can render instantly from the last known
+// state.
 package cache
 
 import (
@@ -48,7 +49,13 @@ type Store struct {
 
 // New returns the store for repo. Nothing is created until Write.
 func New(repo git.Repo) *Store {
-	return &Store{dir: filepath.Join(repo.CommonDir, "git-stack"), now: time.Now}
+	return At(filepath.Join(repo.CommonDir, "git-stack"))
+}
+
+// At returns a store rooted at dir, for documents that belong to the user
+// rather than to one repository. Nothing is created until Write.
+func At(dir string) *Store {
+	return &Store{dir: dir, now: time.Now}
 }
 
 // Dir returns the cache directory.
