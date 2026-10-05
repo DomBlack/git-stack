@@ -135,11 +135,44 @@ func (a *App) restackBranches(ctx context.Context, run *restackRun, branches []s
 	if p.err != nil {
 		return p.err
 	}
+	if err := a.checkCurrentMove(ctx, run.repo, &p); err != nil {
+		return err
+	}
 	if err := a.applyMoves(ctx, run, &p, res); err != nil {
 		return err
 	}
 	if p.conflict != nil {
 		return conflictError(p.conflict.Branch, p.conflict.Onto, p.conflict.Files)
+	}
+	return nil
+}
+
+// checkCurrentMove refuses the run before anything moves when the branch
+// checked out here has local changes to files its move would rewrite:
+// reset --keep would refuse, but only after the branches below had moved.
+func (a *App) checkCurrentMove(ctx context.Context, repo git.Repo, p *restackPlan) error {
+	for _, m := range p.moves {
+		if m.worktree != repo.TopLevel {
+			continue
+		}
+		local, err := a.d.Git.LocalChanges(ctx, repo)
+		if err != nil || len(local) == 0 {
+			return err
+		}
+		changed, err := a.d.Git.ChangedPaths(ctx, repo, m.from, m.to)
+		if err != nil {
+			return err
+		}
+		var clash []string
+		for _, f := range local {
+			if slices.Contains(changed, f) {
+				clash = append(clash, f)
+			}
+		}
+		if len(clash) > 0 {
+			return stack.Newf(stack.KindInvalidArgs, "%s has local changes to %s that restacking it would overwrite", m.name, joinNames(clash)).
+				WithSteps("commit or stash them, then try again")
+		}
 	}
 	return nil
 }

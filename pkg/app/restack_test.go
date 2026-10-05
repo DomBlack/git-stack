@@ -245,3 +245,68 @@ func TestRestackContinueAndAbortWithNothingPending(t *testing.T) {
 		t.Errorf("foreign rebase continue = %v", err)
 	}
 }
+
+func TestRestackKeepsUnrelatedLocalChanges(t *testing.T) {
+	f := newRestackFixture(t)
+	f.amend(t, "a", "a2.txt")
+	gittest.WriteFile(t, f.dir, "c.txt", "edited but not committed")
+	gittest.WriteFile(t, f.dir, "notes.txt", "untracked")
+	res, err := f.app.Restack(context.Background(), f.repo, app.RestackOptions{})
+	if err != nil || !slices.Equal(moved(res), []string{"b", "c"}) {
+		t.Fatalf("res = %+v %v", res, err)
+	}
+	status := gittest.Run(t, f.dir, "status", "--short")
+	if !strings.Contains(status, "M c.txt") || !strings.Contains(status, "?? notes.txt") {
+		t.Errorf("local changes lost: %q", status)
+	}
+	if gittest.Run(t, f.dir, "branch", "--show-current") != "c" {
+		t.Error("still on c")
+	}
+}
+
+func TestRestackRefusesOverlappingLocalChanges(t *testing.T) {
+	f := newRestackFixture(t)
+	// a's amend changes shared.txt; c has an uncommitted edit to the same file.
+	gittest.Run(t, f.dir, "switch", "-q", "a")
+	gittest.Commit(t, f.dir, "shared.txt", "a version", "a edits shared")
+	gittest.Run(t, f.dir, "switch", "-q", "c")
+	gittest.WriteFile(t, f.dir, "shared.txt", "my edit")
+	before := map[string]string{"b": f.rev(t, "b"), "c": f.rev(t, "c")}
+	_, err := f.app.Restack(context.Background(), f.repo, app.RestackOptions{})
+	var se *stack.Error
+	if !errors.As(err, &se) || se.Kind != stack.KindInvalidArgs || !strings.Contains(se.Msg, "shared.txt") {
+		t.Fatalf("err = %v", err)
+	}
+	if f.rev(t, "b") != before["b"] || f.rev(t, "c") != before["c"] {
+		t.Error("nothing may move when the checked out branch cannot")
+	}
+}
+
+func TestRestackUpdatesCleanOtherWorktreeAndSkipsDirtyOne(t *testing.T) {
+	f := newRestackFixture(t)
+	ctx := context.Background()
+	f.amend(t, "a", "a2.txt")
+	wt := f.dir + "-wt"
+	gittest.Run(t, f.dir, "worktree", "add", "-q", wt, "b")
+	res, err := f.app.Restack(ctx, f.repo, app.RestackOptions{})
+	if err != nil || !slices.Equal(moved(res), []string{"b", "c"}) {
+		t.Fatalf("clean worktree: %+v %v", res, err)
+	}
+	if gittest.Run(t, wt, "rev-parse", "HEAD") != f.rev(t, "b") {
+		t.Error("the other worktree's checkout should follow b")
+	}
+
+	f.amend(t, "a", "a3.txt")
+	gittest.WriteFile(t, wt, "b.txt", "dirty")
+	bBefore := f.rev(t, "b")
+	res, err = f.app.Restack(ctx, f.repo, app.RestackOptions{})
+	// b is skipped, so c has nothing new to sit on and stays where it is.
+	if err != nil || len(res.Moved) != 0 || f.rev(t, "b") != bBefore {
+		t.Fatalf("dirty worktree: %+v %v", res, err)
+	}
+	if !strings.Contains(strings.Join(res.Notices, "\n"), "uncommitted changes") {
+		t.Errorf("notices = %v", res.Notices)
+	}
+	// c still sits on b's current tip.
+	gittest.Run(t, f.dir, "merge-base", "--is-ancestor", "b", "c")
+}
