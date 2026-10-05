@@ -1,7 +1,8 @@
 // Package ghstack implements the stack ports on top of GitHub's gh-stack
 // extension. Stack metadata is read directly from the extension's
-// <git-dir>/gh-stack file (documented, schema version 1); every mutation goes
-// through `gh stack` commands so the file is never written by us.
+// <git-dir>/gh-stack file (documented, schema version 1). The file is written
+// only by Update, under gh stack's lock; every other mutation still goes
+// through `gh stack` commands.
 package ghstack
 
 import (

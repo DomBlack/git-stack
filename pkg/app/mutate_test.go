@@ -31,6 +31,14 @@ type fakeBackend struct {
 
 func (f *fakeBackend) Load(context.Context, git.Repo) (*stack.Graph, error) { return f.graph, nil }
 
+func (f *fakeBackend) Update(_ context.Context, _ git.Repo, fn func(*stack.Graph) error) error {
+	if err := fn(f.graph); err != nil {
+		return err
+	}
+	f.graph.Stacks = slices.DeleteFunc(f.graph.Stacks, func(s stack.Stack) bool { return len(s.Branches) == 0 })
+	return nil
+}
+
 func (f *fakeBackend) InitStack(ctx context.Context, repo git.Repo, trunk string, branches []string) error {
 	s := stack.Stack{Trunk: trunk}
 	prev := trunk

@@ -57,6 +57,16 @@ func (b *Backend) Load(context.Context, git.Repo) (*stack.Graph, error) {
 	return b.Graph(), nil
 }
 
+func (b *Backend) Update(_ context.Context, _ git.Repo, fn func(*stack.Graph) error) error {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if err := fn(b.graph); err != nil {
+		return err
+	}
+	b.graph = stack.NewGraph(slices.DeleteFunc(slices.Clone(b.graph.Stacks), func(s stack.Stack) bool { return len(s.Branches) == 0 }))
+	return nil
+}
+
 func (b *Backend) InitStack(ctx context.Context, repo git.Repo, trunk string, branches []string) error {
 	s := stack.Stack{Trunk: trunk}
 	prev := trunk

@@ -21,6 +21,14 @@ type memMeta struct{ g *stack.Graph }
 
 func (m memMeta) Load(context.Context, git.Repo) (*stack.Graph, error) { return m.g, nil }
 
+func (m memMeta) Update(_ context.Context, _ git.Repo, fn func(*stack.Graph) error) error {
+	if err := fn(m.g); err != nil {
+		return err
+	}
+	m.g.Stacks = slices.DeleteFunc(m.g.Stacks, func(s stack.Stack) bool { return len(s.Branches) == 0 })
+	return nil
+}
+
 // fixture builds main -> a -> b -> c plus an untracked branch "loose" where
 // b has been amended so c needs a restack.
 func fixture(t *testing.T) (*app.App, git.Repo, string) {
