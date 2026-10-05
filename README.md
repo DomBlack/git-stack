@@ -168,6 +168,13 @@ place. `--check` just tells you whether there's something newer.
 If you built from source, `git stack version` says `dev` along with the commit, and `update`
 leaves you alone unless you pass `--force`; i.e. we assume you built it that way on purpose.
 
+Every command also checks for a newer release in the background, at most once a day, and
+remembers the answer in the OS cache directory (`~/Library/Caches/git-stack` on macOS,
+`~/.cache/git-stack` on Linux). When you're behind, a one line note after the command's own
+output says which version is out. Nothing waits for the check; a slow network just means you
+hear about it on the next run. It only happens on a terminal (never for scripts, agents or the
+MCP server) and `GIT_STACK_NO_UPDATE_CHECK=1` turns it off.
+
 ## Releasing
 
 Tag and push, that's it;

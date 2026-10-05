@@ -108,8 +108,13 @@ type cli struct {
 	// binary that `update` replaces; tests inject these.
 	updateClient *update.Client
 	updateTarget string
-	rtOnce       sync.Once
-	rt           *Runtime
+	// updateChecker and current override the background release check and
+	// the version it compares against; tests inject these.
+	updateChecker *update.Checker
+	current       version.Info
+	check         *update.Check
+	rtOnce        sync.Once
+	rt            *Runtime
 }
 
 // runtime builds the full Runtime (TTY-aware runner, prompts allowed when
@@ -293,6 +298,7 @@ func newRootCmd(c *cli) *cobra.Command {
 			if c.globals.Cwd != "" {
 				c.globals.Cwd = filepath.Clean(c.globals.Cwd)
 			}
+			c.startUpdateCheck(cmd)
 		},
 	}
 	root.SetIn(streams.In)
@@ -335,14 +341,65 @@ func Execute() int {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	root := NewRootCmd(Streams{In: os.Stdin, Out: os.Stdout, Err: os.Stderr})
-	if err := root.ExecuteContext(ctx); err != nil {
+	c := &cli{streams: Streams{In: os.Stdin, Out: os.Stdout, Err: os.Stderr}}
+	root := newRootCmd(c)
+	err := root.ExecuteContext(ctx)
+	if err != nil {
 		ui.NewReporter(os.Stdin, os.Stdout, os.Stderr, ui.ReporterOptions{
 			OutTTY: isTerminal(os.Stdout), ErrTTY: isTerminal(os.Stderr),
 		}).Error(err)
+	}
+	c.updateNotice()
+	if err != nil {
 		return exitCode(err)
 	}
 	return 0
+}
+
+// noUpdateCheckEnv switches the background release check off.
+const noUpdateCheckEnv = "GIT_STACK_NO_UPDATE_CHECK"
+
+// startUpdateCheck kicks off the background release check for a command run
+// by a person at a terminal. It returns at once; the answer, if any, is
+// printed by updateNotice when the command is done. Machine facing commands
+// (the MCP server, completion), the version and update commands themselves
+// and --quiet runs skip it, as does GIT_STACK_NO_UPDATE_CHECK.
+func (c *cli) startUpdateCheck(cmd *cobra.Command) {
+	switch cmd.Name() {
+	case "mcp", "completion", "__complete", "__completeNoDesc", "help", "version", "update":
+		return
+	}
+	if c.globals.Quiet || os.Getenv(noUpdateCheckEnv) != "" {
+		return
+	}
+	checker := c.updateChecker
+	if checker == nil {
+		// The notice is for a person; piped output (scripts, agents) never sees it.
+		if !isTerminal(c.streams.Err) {
+			return
+		}
+		dir, err := update.DefaultCacheDir()
+		if err != nil {
+			return
+		}
+		checker = &update.Checker{Client: update.New(version.Current()), Store: cache.At(dir)}
+	}
+	current := c.current
+	if current.Version == "" {
+		current = version.Current()
+	}
+	c.check = checker.Start(cmd.Context(), current)
+}
+
+// updateNotice tells the user a newer release is out, after the command's
+// own output. It never waits for the background check: it reports what this
+// run learnt if the answer is already in, otherwise what the last run knew.
+func (c *cli) updateNotice() {
+	latest, ok := c.check.Available()
+	if !ok {
+		return
+	}
+	c.report().Warn("git-stack %s is out (you have %s); run git stack update", latest, c.check.Current.Version)
 }
 
 // printError renders an error in the plain (non terminal) style; the CLI

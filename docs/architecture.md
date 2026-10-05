@@ -294,7 +294,12 @@ releases API and the asset URLs rather than going through `gh`, so updating does
 login. It verifies the archive against goreleaser's `checksums.txt`, writes the new binary
 next to the old one and renames it into place. Dev builds aren't replaced without `--force`.
 Releases are cut by tagging; the workflow runs goreleaser for linux and darwin on amd64 and
-arm64.
+arm64. Every interactive command also starts `update.Checker` from the root command's
+PersistentPreRun: it answers at once from a user wide cache (`os.UserCacheDir()/git-stack`),
+refreshes GitHub in a goroutine when that answer is older than a day, and the notice is
+printed by `Execute` after the command has finished. The command never waits for the
+goroutine; the cache slot is claimed before the request so a short command that exits first
+doesn't make the next one ask again, and GitHub is hit at most once a day either way.
 
 **How the CLI talks is one thing, in one place.** Every command prints through `ui.Reporter` (marks, emoji headlines, spinners on a terminal; `ok:`/`note:`/`error:` when piped) and the rules are written down in [`style.md`](style.md). `pkg/app` decides where a phase starts and ends through the `Progress` hook and only names the phase; the reporter owns the look.
 

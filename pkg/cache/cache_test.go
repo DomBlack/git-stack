@@ -13,6 +13,20 @@ type doc struct {
 	Names []string `json:"names"`
 }
 
+func TestAt(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "user-cache")
+	s := At(dir)
+	if s.Dir() != dir {
+		t.Errorf("Dir = %q, want %q", s.Dir(), dir)
+	}
+	if err := Write(s, "latest", doc{Names: []string{"v1"}}); err != nil {
+		t.Fatal(err)
+	}
+	if got, st, _, err := Read[doc](s, "latest", time.Minute); err != nil || st != Fresh || len(got.Names) != 1 {
+		t.Errorf("read back: %+v %v %v", got, st, err)
+	}
+}
+
 func TestReadWriteTTL(t *testing.T) {
 	common := t.TempDir()
 	s := New(git.Repo{CommonDir: common})
