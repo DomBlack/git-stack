@@ -22,6 +22,8 @@ path is resolved with `git rev-parse`; anything outside a repository returns `no
 | `stack_view` | Tree of every stack: branches, parents, PR number/state/URL, `needs_restack`, current branch, untracked branches | `include_untracked`, `fresh` (default true) | read-only, open-world |
 | `stack_create` | New branch on top of the current one (from trunk: new stack), commit staged changes | `message` (required), `branch`, `staging` = `all`/`update`/`none`, `use_ai` | non-destructive |
 | `stack_modify` | Amend the current branch (or `mode: commit`) and restack everything above | `mode`, `staging`, `message`, `continue`, `abort` | destructive |
+| `stack_continue` | Finish an interrupted restack after conflicts are resolved | `stage_all` | destructive |
+| `stack_abort` | Give up an interrupted restack and put every moved branch back | none | destructive |
 | `stack_restack` | Local rebase of the stack | `scope` = `all`/`upstack`/`downstack`, `continue`, `abort` | destructive |
 | `stack_navigate` | `up`/`down`/`top`/`bottom` with `steps`, or `branch` | `direction`, `steps`, `branch` | idempotent |
 | `stack_submit` | Push and create/update chained PRs; ready for review by default | `draft`, `publish`, `dry_run`, `pull_requests` `{branch: {title, body}}`, `use_ai` | destructive, open-world |

@@ -219,9 +219,20 @@ func TestCreateModifyRestackCommands(t *testing.T) {
 		!slices.Contains(se.NextSteps, "git add b.txt") || !slices.Contains(se.NextSteps, "git stack continue") {
 		t.Errorf("conflict: %v", err)
 	}
-	out, _, err = runWith(t, f, "--cwd", dir, "restack", "--abort")
-	if err != nil || out != "ok: Restack aborted\n" {
-		t.Errorf("abort: %q %v", out, err)
+	// The top level commands do the same as the flags.
+	gittest.WriteFile(t, dir, "b.txt", "resolved")
+	out, _, err = runWith(t, f, "--cwd", dir, "continue", "--all")
+	if err != nil || out != "ok: Restacked feat/b\n" {
+		t.Errorf("continue: %q %v", out, err)
+	}
+	gittest.Run(t, dir, "merge-base", "--is-ancestor", "add-feature-a", "feat/b")
+	_, _, err = runWith(t, f, "--cwd", dir, "abort")
+	if err == nil || !strings.Contains(err.Error(), "nothing to abort") {
+		t.Errorf("abort with nothing pending: %v", err)
+	}
+	_, _, err = runWith(t, f, "--cwd", dir, "cont")
+	if err == nil || !strings.Contains(err.Error(), "nothing to continue") {
+		t.Errorf("cont alias: %v", err)
 	}
 }
 

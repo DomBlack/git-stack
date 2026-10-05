@@ -172,6 +172,39 @@ func (s *Server) modify(ctx context.Context, req *mcp.CallToolRequest, in modify
 	return nil, res, nil
 }
 
+// --- stack_continue / stack_abort ---------------------------------------
+
+type continueInput struct {
+	repoArg
+	StageAll bool `json:"stage_all,omitempty" jsonschema:"git add -A before continuing"`
+}
+
+func (s *Server) cont(ctx context.Context, req *mcp.CallToolRequest, in continueInput) (*mcp.CallToolResult, app.RestackResult, error) {
+	repo, a, err := s.appFor(ctx, req, in.RepoPath)
+	if err != nil {
+		return nil, app.RestackResult{}, wrapErr(err)
+	}
+	res, err := a.Restack(ctx, repo, app.RestackOptions{Continue: true, StageAll: in.StageAll})
+	if err != nil {
+		return nil, app.RestackResult{}, wrapErr(err)
+	}
+	return nil, res, nil
+}
+
+type abortInput struct{ repoArg }
+
+func (s *Server) abort(ctx context.Context, req *mcp.CallToolRequest, in abortInput) (*mcp.CallToolResult, app.RestackResult, error) {
+	repo, a, err := s.appFor(ctx, req, in.RepoPath)
+	if err != nil {
+		return nil, app.RestackResult{}, wrapErr(err)
+	}
+	res, err := a.Restack(ctx, repo, app.RestackOptions{Abort: true})
+	if err != nil {
+		return nil, app.RestackResult{}, wrapErr(err)
+	}
+	return nil, res, nil
+}
+
 // --- stack_restack ------------------------------------------------------
 
 type restackInput struct {
@@ -403,6 +436,18 @@ func (s *Server) registerTools() {
 		Description: "Rebase the current stack's branches onto their parents locally (no fetch). Scopes: all, upstack, downstack. On conflicts returns code conflict; resolve, git add, then call again with continue: true or abort: true.",
 		Annotations: &mcp.ToolAnnotations{DestructiveHint: boolp(true), OpenWorldHint: boolp(false)},
 	}, s.restack)
+	mcp.AddTool(s.mcp, &mcp.Tool{
+		Name:        "stack_continue",
+		Title:       "Continue an interrupted restack",
+		Description: "After a conflict from stack_restack or stack_modify: once the files are resolved and git added (or with stage_all), finish that branch's rebase and restack whatever was left above it. Returns the branches moved.",
+		Annotations: &mcp.ToolAnnotations{DestructiveHint: boolp(true), OpenWorldHint: boolp(false)},
+	}, s.cont)
+	mcp.AddTool(s.mcp, &mcp.Tool{
+		Name:        "stack_abort",
+		Title:       "Abort an interrupted restack",
+		Description: "Give up the rebase a restack or modify stopped on and put back every branch the operation had already moved.",
+		Annotations: &mcp.ToolAnnotations{DestructiveHint: boolp(true), OpenWorldHint: boolp(false)},
+	}, s.abort)
 	mcp.AddTool(s.mcp, &mcp.Tool{
 		Name:        "stack_navigate",
 		Title:       "Navigate the stack",

@@ -318,6 +318,8 @@ func newRootCmd(c *cli) *cobra.Command {
 		newCreateCmd(c),
 		newModifyCmd(c),
 		newRestackCmd(c),
+		newContinueCmd(c),
+		newAbortCmd(c),
 		newSubmitCmd(c),
 		newSyncCmd(c),
 		newMergeCmd(c),

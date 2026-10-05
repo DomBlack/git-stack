@@ -207,6 +207,9 @@ func TestBashGitIntegration(t *testing.T) {
 	if out := complete("git", "ss", "--dry"); !hasLine(out, "--dry-run") || hasLine(out, "--publish") {
 		t.Errorf("git ss --dry<TAB>:\n%s", out)
 	}
+	if out := complete("git", "continue", "--"); !hasLine(out, "--all") {
+		t.Errorf("git continue --<TAB>:\n%s", out)
+	}
 	if out := complete("git", "u", "''"); !hasLine(out, "1") {
 		t.Errorf("git u <TAB>:\n%s", out)
 	}

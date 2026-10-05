@@ -36,6 +36,8 @@ If you know `gt` you already know most of this; the table is the mapping.
 | `gt create [name]` | `git stack create [name]` (`git c`) | `-a` `-u` `-p` `-m` `--ai` |
 | `gt modify` | `git stack modify` (`git m`) | amend (or `-c` for a new commit), then restack everything above |
 | `gt restack` | `git stack restack` (`git rs`) | `--upstack` `--downstack` `--continue` `--abort` |
+| `gt continue` | `git stack continue` (`git continue`, `cont`) | finish an interrupted restack once conflicts are resolved; `-a` stages everything first |
+| `gt abort` | `git stack abort` (`git abort`) | give up an interrupted restack and put every moved branch back |
 | `gt up/down/top/bottom` | `git stack up/down/top/bottom` (`git u/d/t/b`) | `down` from the bottom branch takes you to trunk |
 | `gt checkout` | `git stack checkout` (`git co`) | interactive tree picker |
 | `gt log` | `git stack` or `git stack log` | every stack as a tree, trunk at the bottom, with PR state |
@@ -138,7 +140,7 @@ One command sets everything up. `--dry-run` prints every change before it happen
 `--uninstall` removes exactly what was installed and nothing else (we record what we touched in
 `git config --global stack.managed*`, so we never guess).
 
-- **Aliases** (`--aliases`, on by default): `git create|modify|restack|submit|sync|up|down|top|bottom`
+- **Aliases** (`--aliases`, on by default): `git create|modify|restack|continue|abort|submit|sync|up|down|top|bottom`
   and the short ones `git c|m|rs|ss|u|d|t|b|co`, written with `git config --global`. Anything
   that clashes with a git builtin or an installed command is skipped, and an alias you already
   have is only replaced if you pass `--force` or say yes when asked.

@@ -25,7 +25,7 @@ func newInstallCmd(c *cli) *cobra.Command {
 		Short: "Set up git aliases, shell completion and agent MCP registration",
 		Long: `Install everything git-stack needs to feel native:
 
-  aliases      git create/modify/restack/submit/sync/up/down/top/bottom and the
+  aliases      git create/modify/restack/continue/abort/submit/sync/up/down/top/bottom and the
                short forms c, m, rs, ss, u, d, t, b, co (checkout is a git builtin
                and cannot be aliased). Existing aliases are never replaced without
                --force or your confirmation.

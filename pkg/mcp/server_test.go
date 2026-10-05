@@ -284,18 +284,22 @@ func TestViewCreateModifyNavigate(t *testing.T) {
 	}
 	gittest.WriteFile(t, h.dir, "b.txt", "b2")
 	te := h.toolErr("stack_modify", map[string]any{"staging": "update"})
-	if te.Code != "conflict" || !slices.Equal(te.Files, []string{"b.txt"}) || !slices.ContainsFunc(te.NextSteps, func(s string) bool { return strings.Contains(s, "continue") }) {
+	if te.Code != "conflict" || !slices.Equal(te.Files, []string{"b.txt"}) || !slices.ContainsFunc(te.NextSteps, func(s string) bool { return s == "call stack_continue" }) {
 		t.Errorf("conflict error = %+v", te)
 	}
 	// Resolve it and carry on: feat-add-c lands on the amended b and the
 	// run ends back on b.
 	gittest.WriteFile(t, h.dir, "b.txt", "resolved")
 	gittest.Run(t, h.dir, "add", "b.txt")
-	var mr app.ModifyResult
-	h.call("stack_modify", map[string]any{"continue": true}, &mr)
-	if !slices.Equal(mr.Restacked, []string{"feat-add-c"}) || mr.Branch != "b" || h.current() != "b" {
-		t.Errorf("modify continue = %+v (on %s)", mr, h.current())
+	var rr app.RestackResult
+	h.call("stack_continue", map[string]any{}, &rr)
+	if len(rr.Moved) == 0 || h.current() != "b" {
+		t.Errorf("stack_continue = %+v (on %s)", rr, h.current())
 	}
+	if te := h.toolErr("stack_abort", map[string]any{}); te.Code != "invalid_args" {
+		t.Errorf("stack_abort with nothing pending = %+v", te)
+	}
+	var mr app.ModifyResult
 	gittest.Run(t, h.dir, "merge-base", "--is-ancestor", "b", "feat-add-c")
 	if te := h.toolErr("stack_restack", map[string]any{"continue": true}); te.Code != "invalid_args" {
 		t.Errorf("continue with nothing pending = %+v", te)
@@ -309,7 +313,6 @@ func TestViewCreateModifyNavigate(t *testing.T) {
 		t.Errorf("bad mode: %+v", te)
 	}
 
-	var rr app.RestackResult
 	h.call("stack_restack", map[string]any{"scope": "upstack"}, &rr)
 	if !slices.Equal(rr.Branches, []string{"b", "feat-add-c"}) {
 		t.Errorf("restack = %+v", rr)
