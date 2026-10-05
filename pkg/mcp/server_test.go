@@ -326,11 +326,11 @@ func TestSubmitAndSync(t *testing.T) {
 	}
 
 	h.call("stack_submit", map[string]any{"pull_requests": map[string]any{"b": map[string]any{"title": "B!", "body": "because"}}}, &sr)
-	if len(h.backend.Submits) != 1 || h.backend.Submits[0].Interactive || h.backend.Submits[0].Publish {
+	if len(h.backend.Submits) != 1 || h.backend.Submits[0].Interactive || !h.backend.Submits[0].Publish {
 		t.Errorf("submit opts = %+v", h.backend.Submits)
 	}
 	b := sr.PullRequests[1]
-	if !b.Created || !b.TextUpdated || b.State != forge.StateDraft || b.Number == 0 {
+	if !b.Created || !b.TextUpdated || b.State != forge.StateOpen || b.Number == 0 {
 		t.Errorf("b = %+v", b)
 	}
 	if up := h.forge.updates[b.Number]; up.Title == nil || *up.Title != "B!" {

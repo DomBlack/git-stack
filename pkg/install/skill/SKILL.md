@@ -21,7 +21,7 @@ that touches a stack:
 | Change the current branch's commit and rebase everything above | `stack_modify` |
 | Rebase the stack after edits lower down | `stack_restack` |
 | Move around | `stack_navigate` (`up`/`down`/`top`/`bottom` or `branch`) |
-| Push and open/update PRs | `stack_submit` — you write `pull_requests` `{branch: {title, body}}`; drafts unless `publish: true` |
+| Push and open/update PRs | `stack_submit` — you write `pull_requests` `{branch: {title, body}}`; ready for review unless `draft: true` |
 | Pull trunk, restack, prune merged branches | `stack_sync` |
 
 Write commit messages and PR text yourself; `use_ai` exists but is not needed when you are

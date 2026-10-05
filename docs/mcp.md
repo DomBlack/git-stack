@@ -24,7 +24,7 @@ path is resolved with `git rev-parse`; anything outside a repository returns `no
 | `stack_modify` | Amend the current branch (or `mode: commit`) and restack everything above | `mode`, `staging`, `message`, `continue`, `abort` | destructive |
 | `stack_restack` | Local rebase of the stack | `scope` = `all`/`upstack`/`downstack`, `continue`, `abort` | destructive |
 | `stack_navigate` | `up`/`down`/`top`/`bottom` with `steps`, or `branch` | `direction`, `steps`, `branch` | idempotent |
-| `stack_submit` | Push and create/update chained PRs; drafts by default | `publish`, `dry_run`, `pull_requests` `{branch: {title, body}}`, `use_ai` | destructive, open-world |
+| `stack_submit` | Push and create/update chained PRs; ready for review by default | `draft`, `publish`, `dry_run`, `pull_requests` `{branch: {title, body}}`, `use_ai` | destructive, open-world |
 | `stack_sync` | Fetch, update trunk, restack and push every stack (checked out or not, all worktrees); merged branches deleted per `stack.sync.prune` | `prune` (force deletion) | destructive, open-world |
 | `stack_merge` | Merge the stack's PRs up to a branch into trunk, all or nothing, then sync | `branch` (default current), `method` = `merge`/`squash`/`rebase`, `no_sync` | destructive, open-world |
 

@@ -58,7 +58,7 @@ git co main                 # start from trunk
 git create -a --ai          # stage everything, Claude names the branch and writes the commit
 # ...hack on the next change, which depends on the first...
 git create -a --ai          # second branch, stacked on the first
-git ss                      # push the whole stack; new PRs are drafts (or it asks)
+git ss                      # push the whole stack; new PRs are ready for review
 ```
 
 Review comes back on the first PR;
@@ -164,7 +164,7 @@ Everything is plain `git config`, so set it globally or per repo as you like.
 | `stack.ai.timeout` | `60s` | timeout per AI call |
 | `stack.ai.auto` | `false` | `true` makes `create` and `submit` behave as if `--ai` was passed; `--no-ai` still wins |
 | `stack.cacheTTL` | `5m` | how long pull request state is cached for |
-| `stack.submit.default` | `ask` | `draft`, `publish` or `ask` for new PRs |
+| `stack.submit.default` | `publish` | `publish`, `draft` or `ask` (prompt on a terminal) for new PRs |
 | `stack.sync.prune` | `always` | what `sync` does with branches whose PRs merged or closed; `ask` on a terminal, or `never` |
 | `stack.merge.method` | (repo default) | `merge`, `squash` or `rebase` for `git stack merge` |
 

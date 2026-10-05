@@ -51,7 +51,7 @@ type Config struct {
 	// --no-ai is given.
 	AIAuto   bool
 	CacheTTL time.Duration
-	// SubmitDefault is ask, draft or publish.
+	// SubmitDefault is publish (default), draft or ask.
 	SubmitDefault string
 	// SyncPrune is always (default), ask or never.
 	SyncPrune string
@@ -69,7 +69,7 @@ func Defaults() *Config {
 		AIModel:       "haiku",
 		AITimeout:     60 * time.Second,
 		CacheTTL:      5 * time.Minute,
-		SubmitDefault: SubmitAsk,
+		SubmitDefault: SubmitPublish,
 		SyncPrune:     SyncPruneAlways,
 	}
 }

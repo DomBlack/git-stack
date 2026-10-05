@@ -262,7 +262,8 @@ func (s *Server) navigate(ctx context.Context, req *mcp.CallToolRequest, in navi
 
 type submitInput struct {
 	repoArg
-	Publish      bool                  `json:"publish,omitempty" jsonschema:"create new pull requests ready for review instead of drafts"`
+	Publish      bool                  `json:"publish,omitempty" jsonschema:"create new pull requests ready for review (the default unless git config stack.submit.default says draft)"`
+	Draft        bool                  `json:"draft,omitempty" jsonschema:"create new pull requests as drafts"`
 	DryRun       bool                  `json:"dry_run,omitempty" jsonschema:"report what would be submitted without pushing"`
 	PullRequests map[string]app.PRText `json:"pull_requests,omitempty" jsonschema:"title and body per branch name; write these yourself for every branch that has no PR yet (see stack_view)"`
 	UseAI        bool                  `json:"use_ai,omitempty" jsonschema:"let git-stack's own AI draft missing titles and bodies (opt-in)"`
@@ -274,7 +275,7 @@ func (s *Server) submit(ctx context.Context, req *mcp.CallToolRequest, in submit
 		return nil, app.SubmitResult{}, wrapErr(err)
 	}
 	res, err := a.Submit(ctx, repo, app.SubmitOptions{
-		Publish: in.Publish, Draft: !in.Publish, NoEdit: true, DryRun: in.DryRun, UseAI: in.UseAI, Texts: in.PullRequests,
+		Publish: in.Publish, Draft: in.Draft, NoEdit: true, DryRun: in.DryRun, UseAI: in.UseAI, Texts: in.PullRequests,
 	})
 	if err != nil {
 		return nil, app.SubmitResult{}, wrapErr(err)
@@ -409,7 +410,7 @@ func (s *Server) registerTools() {
 	mcp.AddTool(s.mcp, &mcp.Tool{
 		Name:        "stack_submit",
 		Title:       "Submit the stack",
-		Description: "Push every branch of the current stack and create or update chained pull requests on GitHub. New PRs are drafts unless publish is true. Supply pull_requests {branch: {title, body}} for branches without a PR; use dry_run to see the plan first.",
+		Description: "Push every branch of the current stack and create or update chained pull requests on GitHub. New PRs are ready for review unless draft is true (or git config stack.submit.default says draft). Supply pull_requests {branch: {title, body}} for branches without a PR; use dry_run to see the plan first.",
 		Annotations: &mcp.ToolAnnotations{DestructiveHint: boolp(true), OpenWorldHint: boolp(true)},
 	}, s.submit)
 	mcp.AddTool(s.mcp, &mcp.Tool{

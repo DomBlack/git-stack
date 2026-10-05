@@ -183,9 +183,10 @@ PR shows gh stack's auto generated title before we overwrite it; drafting *befor
 submit keeps that window as small as possible. The MCP `stack_submit` tool goes down the
 same path with the agent's own titles and bodies instead of the Drafter.
 
-**New PRs: ask, and default to drafts.** On a terminal `submit` asks draft or publish
-unless `-d`/`-p` is passed; non-interactively it drafts. `stack.submit.default` skips the
-question.
+**New PRs are ready for review.** `submit` publishes unless `-d` is passed or
+`stack.submit.default` says `draft`; `ask` brings back a prompt on a terminal (and publishes
+without one). Drafts used to be the default, but in practice they were one more step before
+anyone could review, and the MCP tool hard coding them meant it ignored the config.
 
 **What we deliberately don't mirror from `gt` (yet).** `create --insert`, `restack --only`,
 `submit --update-only`, `submit --edit-title/--edit-description` and

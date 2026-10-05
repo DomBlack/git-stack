@@ -71,7 +71,7 @@ func TestLoadFromRepo(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if c.BranchPrefix != "dom/" || c.AIModel != "opus" || c.SubmitDefault != config.SubmitAsk {
+	if c.BranchPrefix != "dom/" || c.AIModel != "opus" || c.SubmitDefault != config.SubmitPublish {
 		t.Errorf("Load = %+v", c)
 	}
 }
