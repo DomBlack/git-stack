@@ -131,3 +131,24 @@ func splitNUL(s string) []string {
 	}
 	return out
 }
+
+// LocalChanges lists the paths whose index or working tree content differs
+// from HEAD, relative to the top level. Untracked files are not included;
+// Untracked lists those.
+func (c *Client) LocalChanges(ctx context.Context, repo Repo) ([]string, error) {
+	res, err := c.gitIn(ctx, repo, "diff", "--name-only", "-z", "--no-renames", "HEAD", "--")
+	if err != nil {
+		return nil, err
+	}
+	return splitNUL(string(res.Stdout)), nil
+}
+
+// ChangedPaths lists the paths whose content differs between the trees of
+// from and to.
+func (c *Client) ChangedPaths(ctx context.Context, repo Repo, from, to string) ([]string, error) {
+	res, err := c.gitIn(ctx, repo, "diff", "--name-only", "-z", "--no-renames", from, to, "--")
+	if err != nil {
+		return nil, err
+	}
+	return splitNUL(string(res.Stdout)), nil
+}

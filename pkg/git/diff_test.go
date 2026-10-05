@@ -82,3 +82,27 @@ func TestAddedPathsAndUntracked(t *testing.T) {
 		t.Errorf("Untracked = %q %v", untracked, err)
 	}
 }
+
+func TestLocalChangesAndChangedPaths(t *testing.T) {
+	c, repo, dir := objectsFixture(t)
+	ctx := context.Background()
+	gittest.Commit(t, dir, "a.txt", "a", "a")
+	base := gittest.Run(t, dir, "rev-parse", "HEAD")
+	tip := gittest.Commit(t, dir, "b.txt", "b", "b")
+
+	if got, err := c.LocalChanges(ctx, repo); err != nil || len(got) != 0 {
+		t.Fatalf("clean LocalChanges = %v %v", got, err)
+	}
+	gittest.WriteFile(t, dir, "a.txt", "a2") // unstaged
+	gittest.WriteFile(t, dir, "c.txt", "c")  // untracked: not a local change to HEAD
+	gittest.WriteFile(t, dir, "b.txt", "b2")
+	gittest.Run(t, dir, "add", "b.txt") // staged
+	got, err := c.LocalChanges(ctx, repo)
+	if err != nil || !slices.Equal(got, []string{"a.txt", "b.txt"}) {
+		t.Errorf("LocalChanges = %v %v", got, err)
+	}
+	changed, err := c.ChangedPaths(ctx, repo, base, tip)
+	if err != nil || !slices.Equal(changed, []string{"b.txt"}) {
+		t.Errorf("ChangedPaths = %v %v", changed, err)
+	}
+}

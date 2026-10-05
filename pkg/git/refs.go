@@ -114,3 +114,12 @@ func (c *Client) ResetHard(ctx context.Context, repo Repo, rev string) error {
 	}
 	return nil
 }
+
+// ResetKeep moves HEAD and the checked out branch to rev and updates the
+// working tree, keeping local changes to files rev and HEAD agree on. git
+// refuses, and nothing moves, when a locally changed file differs between
+// the two.
+func (c *Client) ResetKeep(ctx context.Context, repo Repo, rev string) error {
+	_, err := c.gitIn(ctx, repo, "reset", "--keep", "-q", rev)
+	return err
+}
