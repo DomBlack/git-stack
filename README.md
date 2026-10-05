@@ -88,7 +88,8 @@ run.
 `git stack` on its own (or `git stack log`) shows every stack the way `gt log` does; trunk at
 the bottom, newest branch at the top, `●` on the branch you're on, and under each branch its
 PR (clickable in terminals that support it), how old it is and whether it needs a restack.
-Two stacks on the same trunk sit side by side and join above it.
+Two stacks on the same trunk sit side by side and join above it. A repo with no stacks yet
+just shows its trunk.
 
 ```
 ● billing-webhook-retries

@@ -30,7 +30,9 @@ type LogOptions struct {
 //	├─┘
 //	■ main
 //
-// Untracked branches are not shown. It returns "" when there are no stacks.
+// A trunk with no stacks is still drawn, so an empty repository shows where a
+// stack would start. Untracked branches are not shown. It returns "" when
+// there is no trunk at all.
 func RenderLog(v *app.View, o LogOptions) string {
 	if v == nil {
 		return ""
@@ -59,13 +61,8 @@ func RenderLog(v *app.View, o LogOptions) string {
 
 	st := o.Styles
 	var b strings.Builder
-	hasStacks := false
 	for gi, g := range groups {
-		if len(g.stacks) == 0 {
-			continue
-		}
-		hasStacks = true
-		if gi > 0 && b.Len() > 0 {
+		if gi > 0 {
 			b.WriteString("\n")
 		}
 		for k, s := range g.stacks {
@@ -86,9 +83,6 @@ func RenderLog(v *app.View, o LogOptions) string {
 			b.WriteString("  " + st.Muted.Render(age))
 		}
 		b.WriteString("\n")
-	}
-	if !hasStacks {
-		return ""
 	}
 	return b.String()
 }

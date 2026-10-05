@@ -7,6 +7,7 @@ import (
 
 	"github.com/DomBlack/git-stack/pkg/exec"
 	"github.com/DomBlack/git-stack/pkg/exec/exectest"
+	"github.com/DomBlack/git-stack/pkg/git/gittest"
 )
 
 // TestBareGitStackShowsTheLog checks that running the binary with no
@@ -39,5 +40,27 @@ func TestBareGitStackShowsTheLog(t *testing.T) {
 	logOut, _, err := runWith(t, f, "--cwd", dir, "log")
 	if err != nil || logOut != out {
 		t.Errorf("git stack log should match bare git stack:\n%s\nvs\n%s (%v)", logOut, out, err)
+	}
+}
+
+// TestLogWithNoStacksShowsTrunk checks that a repository with no stacks yet
+// still renders its trunk, so there is somewhere to start from.
+func TestLogWithNoStacksShowsTrunk(t *testing.T) {
+	gittest.Isolate(t)
+	dir := gittest.InitRepo(t)
+	f := fakeGh(t, dir)
+
+	out, errOut, err := runWith(t, f, "--cwd", dir)
+	if err != nil {
+		t.Fatalf("bare git stack: %v\n%s", err, errOut)
+	}
+	if want := "● main"; !strings.HasPrefix(out, want) {
+		t.Errorf("log should show the trunk, got %q", out)
+	}
+	if strings.Count(out, "\n") != 1 || strings.Contains(out, "○") {
+		t.Errorf("only the trunk line should be shown:\n%s", out)
+	}
+	if strings.Contains(errOut, "No stacks") {
+		t.Errorf("no warning when the trunk is shown:\n%s", errOut)
 	}
 }
