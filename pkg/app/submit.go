@@ -21,7 +21,8 @@ type PRText struct {
 // SubmitOptions mirrors `gt submit`.
 type SubmitOptions struct {
 	// Draft / Publish force the state of new PRs. With neither, the
-	// configured default applies (ask interactively, else draft).
+	// configured default applies: ready for review unless stack.submit.default
+	// says draft, or ask (which prompts on a terminal and publishes otherwise).
 	Draft   bool
 	Publish bool
 	// NoEdit skips the backend's interactive PR editor.
@@ -260,8 +261,8 @@ func (a *App) fixBases(ctx context.Context, repo git.Repo, s *stack.Stack, after
 }
 
 // submitDraftChoice resolves draft vs publish from flags, config and, when
-// ask is true and a prompter exists, a prompt. With nothing to ask about
-// (no new PRs) the configured default is used silently.
+// the config says ask, ask is true and a prompter exists, a prompt. With
+// nothing to ask about (no new PRs) or no terminal, ask means publish.
 func (a *App) submitDraftChoice(o SubmitOptions, ask bool) (bool, error) {
 	switch {
 	case o.Draft && o.Publish:
@@ -278,13 +279,13 @@ func (a *App) submitDraftChoice(o SubmitOptions, ask bool) (bool, error) {
 		return false, nil
 	}
 	if a.d.Prompter == nil || !ask {
-		return true, nil
+		return false, nil
 	}
-	i, err := a.d.Prompter.Select("Create new pull requests as", []string{"draft", "ready for review"})
+	i, err := a.d.Prompter.Select("Create new pull requests as", []string{"ready for review", "draft"})
 	if err != nil {
 		return false, err
 	}
-	return i == 0, nil
+	return i == 1, nil
 }
 
 // draftPR builds the AI context for one branch and drafts its PR text.

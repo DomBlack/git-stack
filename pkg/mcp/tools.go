@@ -262,7 +262,8 @@ func (s *Server) navigate(ctx context.Context, req *mcp.CallToolRequest, in navi
 
 type submitInput struct {
 	repoArg
-	Publish      bool                  `json:"publish,omitempty" jsonschema:"create new pull requests ready for review instead of drafts"`
+	Publish      bool                  `json:"publish,omitempty" jsonschema:"create new pull requests ready for review (the default unless git config stack.submit.default says draft)"`
+	Draft        bool                  `json:"draft,omitempty" jsonschema:"create new pull requests as drafts"`
 	DryRun       bool                  `json:"dry_run,omitempty" jsonschema:"report what would be submitted without pushing"`
 	PullRequests map[string]app.PRText `json:"pull_requests,omitempty" jsonschema:"title and body per branch name; write these yourself for every branch that has no PR yet (see stack_view)"`
 	UseAI        bool                  `json:"use_ai,omitempty" jsonschema:"let git-stack's own AI draft missing titles and bodies (opt-in)"`
@@ -274,7 +275,7 @@ func (s *Server) submit(ctx context.Context, req *mcp.CallToolRequest, in submit
 		return nil, app.SubmitResult{}, wrapErr(err)
 	}
 	res, err := a.Submit(ctx, repo, app.SubmitOptions{
-		Publish: in.Publish, Draft: !in.Publish, NoEdit: true, DryRun: in.DryRun, UseAI: in.UseAI, Texts: in.PullRequests,
+		Publish: in.Publish, Draft: in.Draft, NoEdit: true, DryRun: in.DryRun, UseAI: in.UseAI, Texts: in.PullRequests,
 	})
 	if err != nil {
 		return nil, app.SubmitResult{}, wrapErr(err)
@@ -311,6 +312,39 @@ func (s *Server) sync(ctx context.Context, req *mcp.CallToolRequest, in syncInpu
 	}
 	if err != nil {
 		return nil, res, wrapErr(err)
+	}
+	return nil, res, nil
+}
+
+// --- stack_merge --------------------------------------------------------
+
+type mergeInput struct {
+	repoArg
+	Branch string `json:"branch,omitempty" jsonschema:"the highest branch to merge; every branch below it in the stack goes too (default: the current branch)"`
+	Method string `json:"method,omitempty" jsonschema:"merge, squash or rebase; default: git config stack.merge.method, else the repository's default"`
+	NoSync bool   `json:"no_sync,omitempty" jsonschema:"skip the sync that normally follows (deleting merged branches, restacking the rest)"`
+}
+
+func (s *Server) merge(ctx context.Context, req *mcp.CallToolRequest, in mergeInput) (*mcp.CallToolResult, app.MergeResult, error) {
+	repo, a, err := s.appFor(ctx, req, in.RepoPath)
+	if err != nil {
+		return nil, app.MergeResult{}, wrapErr(err)
+	}
+	var method forge.MergeMethod
+	switch in.Method {
+	case "":
+	case "merge", "squash", "rebase":
+		method = forge.MergeMethod(in.Method)
+	default:
+		return nil, app.MergeResult{}, wrapErr(stack.Newf(stack.KindInvalidArgs, "method %q is not one of merge, squash, rebase", in.Method))
+	}
+	res, err := a.Merge(ctx, repo, app.MergeOptions{Branch: in.Branch, Method: method, NoSync: in.NoSync})
+	if err != nil && res.Status != "" {
+		// The merge landed and the sync afterwards hit a conflict: keep both.
+		return &mcp.CallToolResult{IsError: true, Content: []mcp.Content{&mcp.TextContent{Text: wrapErr(err).Error()}}}, res, nil
+	}
+	if err != nil {
+		return nil, app.MergeResult{}, wrapErr(err)
 	}
 	return nil, res, nil
 }
@@ -376,9 +410,15 @@ func (s *Server) registerTools() {
 	mcp.AddTool(s.mcp, &mcp.Tool{
 		Name:        "stack_submit",
 		Title:       "Submit the stack",
-		Description: "Push every branch of the current stack and create or update chained pull requests on GitHub. New PRs are drafts unless publish is true. Supply pull_requests {branch: {title, body}} for branches without a PR; use dry_run to see the plan first.",
+		Description: "Push every branch of the current stack and create or update chained pull requests on GitHub. New PRs are ready for review unless draft is true (or git config stack.submit.default says draft). Supply pull_requests {branch: {title, body}} for branches without a PR; use dry_run to see the plan first.",
 		Annotations: &mcp.ToolAnnotations{DestructiveHint: boolp(true), OpenWorldHint: boolp(true)},
 	}, s.submit)
+	mcp.AddTool(s.mcp, &mcp.Tool{
+		Name:        "stack_merge",
+		Title:       "Merge the stack",
+		Description: "Merge the pull requests of the current stack up to and including branch (default: the current branch) into trunk, all or nothing, then sync so merged branches are deleted and the rest restacked. Every PR in the way must be open and ready for review; publish drafts with stack_submit first. method is merge, squash or rebase.",
+		Annotations: &mcp.ToolAnnotations{DestructiveHint: boolp(true), OpenWorldHint: boolp(true)},
+	}, s.merge)
 	mcp.AddTool(s.mcp, &mcp.Tool{
 		Name:        "stack_sync",
 		Title:       "Sync the stack",
@@ -386,5 +426,3 @@ func (s *Server) registerTools() {
 		Annotations: &mcp.ToolAnnotations{DestructiveHint: boolp(true), OpenWorldHint: boolp(true)},
 	}, s.sync)
 }
-
-var _ = forge.StateOpen

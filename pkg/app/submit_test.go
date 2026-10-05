@@ -61,6 +61,23 @@ type recordingForge struct {
 	prs     []forge.PullRequest
 	updates map[int]forge.UpdatePR
 	lists   int
+	// merges records every MergeStack call as (number, method).
+	merges []mergeCall
+	// mergeErr, when set, is what MergeStack returns.
+	mergeErr error
+}
+
+type mergeCall struct {
+	number int
+	method forge.MergeMethod
+}
+
+func (f *recordingForge) MergeStack(_ context.Context, _ git.Repo, n int, m forge.MergeMethod) (forge.MergeOutcome, error) {
+	f.merges = append(f.merges, mergeCall{n, m})
+	if f.mergeErr != nil {
+		return forge.MergeOutcome{}, f.mergeErr
+	}
+	return forge.MergeOutcome{Status: forge.MergeMerged, SHA: "feedface"}, nil
 }
 
 func (f *recordingForge) ListPRs(context.Context, git.Repo) ([]forge.PullRequest, error) {
@@ -140,8 +157,8 @@ func TestSubmitDryRunAndDefaults(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !res.DryRun || len(sf.opts) != 0 || !res.Draft {
-		t.Errorf("dry run must not submit; non-interactive default is draft: %+v %v", res, sf.opts)
+	if !res.DryRun || len(sf.opts) != 0 || res.Draft {
+		t.Errorf("dry run must not submit; the default is ready for review: %+v %v", res, sf.opts)
 	}
 	if len(res.PullRequests) != 2 || res.PullRequests[0].Number != 7 || res.PullRequests[0].WouldCreate || !res.PullRequests[1].WouldCreate {
 		t.Errorf("plan = %+v", res.PullRequests)
@@ -151,19 +168,30 @@ func TestSubmitDryRunAndDefaults(t *testing.T) {
 	}
 }
 
-func TestSubmitNoEditCreatesDraftsAndReportsNumbers(t *testing.T) {
+func TestSubmitNoEditCreatesReadyPRsAndReportsNumbers(t *testing.T) {
 	deps, sf, fg, repo, _ := submitFixture(t)
 	a := app.New(deps)
 	res, err := a.Submit(context.Background(), repo, app.SubmitOptions{NoEdit: true})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(sf.opts) != 1 || sf.opts[0].Interactive || sf.opts[0].Publish {
+	if len(sf.opts) != 1 || sf.opts[0].Interactive || !sf.opts[0].Publish {
 		t.Errorf("submit opts = %+v", sf.opts)
 	}
 	b := res.PullRequests[1]
-	if !b.Created || b.Number == 0 || b.State != forge.StateDraft || b.TextUpdated {
+	if !b.Created || b.Number == 0 || b.State != forge.StateOpen || b.TextUpdated {
 		t.Errorf("b = %+v", b)
+	}
+
+	// stack.submit.default draft brings drafts back.
+	deps, sf, _, repo, _ = submitFixture(t)
+	deps.Config.SubmitDefault = config.SubmitDraft
+	res, err = app.New(deps).Submit(context.Background(), repo, app.SubmitOptions{NoEdit: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !res.Draft || sf.opts[0].Publish || res.PullRequests[1].State != forge.StateDraft {
+		t.Errorf("config draft ignored: %+v %+v", res, sf.opts)
 	}
 	if res.PullRequests[0].Created || res.Output != "✓ pushed" {
 		t.Errorf("a should be an update: %+v", res)
@@ -207,7 +235,8 @@ func TestSubmitWithAITextsAndPublish(t *testing.T) {
 
 func TestSubmitSuppliedTextsAndDraftChoice(t *testing.T) {
 	deps, sf, fg, repo, _ := submitFixture(t)
-	deps.Prompter = selectPrompter{choice: 1}
+	deps.Config.SubmitDefault = config.SubmitAsk
+	deps.Prompter = selectPrompter{choice: 0} // ready for review
 	a := app.New(deps)
 	res, err := a.Submit(context.Background(), repo, app.SubmitOptions{Texts: map[string]app.PRText{"b": {Title: "T", Body: "B"}}})
 	if err != nil {
@@ -223,9 +252,11 @@ func TestSubmitSuppliedTextsAndDraftChoice(t *testing.T) {
 		t.Errorf("text not applied: %+v", fg.updates)
 	}
 
-	// Interactive editor path: prompter present, no texts, no --no-edit.
+	// Interactive editor path: prompter present, no texts, no --no-edit;
+	// the prompt picks draft this time.
 	deps2, sf2, _, repo2, _ := submitFixture(t)
-	deps2.Prompter = selectPrompter{choice: 0}
+	deps2.Config.SubmitDefault = config.SubmitAsk
+	deps2.Prompter = selectPrompter{choice: 1}
 	if _, err := app.New(deps2).Submit(context.Background(), repo2, app.SubmitOptions{}); err != nil {
 		t.Fatal(err)
 	}
@@ -233,15 +264,14 @@ func TestSubmitSuppliedTextsAndDraftChoice(t *testing.T) {
 		t.Errorf("editor path: %+v", sf2.opts)
 	}
 
-	// Config default skips the prompt.
+	// The default (publish) never asks, even with a prompter around.
 	deps3, sf3, _, repo3, _ := submitFixture(t)
-	deps3.Config.SubmitDefault = config.SubmitPublish
-	deps3.Prompter = selectPrompter{choice: 0}
+	deps3.Prompter = neverPrompter{t: t}
 	if _, err := app.New(deps3).Submit(context.Background(), repo3, app.SubmitOptions{NoEdit: true}); err != nil {
 		t.Fatal(err)
 	}
 	if !sf3.opts[0].Publish {
-		t.Errorf("config default publish ignored: %+v", sf3.opts)
+		t.Errorf("default publish ignored: %+v", sf3.opts)
 	}
 }
 

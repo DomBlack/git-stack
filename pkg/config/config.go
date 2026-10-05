@@ -21,6 +21,7 @@ const (
 	KeyCacheTTL       = "stack.cacheTTL"
 	KeySubmitDefault  = "stack.submit.default"
 	KeySyncPrune      = "stack.sync.prune"
+	KeyMergeMethod    = "stack.merge.method"
 	KeyManagedAliases = "stack.managedAliases"
 	KeyManagedFiles   = "stack.managedFiles"
 )
@@ -50,10 +51,13 @@ type Config struct {
 	// --no-ai is given.
 	AIAuto   bool
 	CacheTTL time.Duration
-	// SubmitDefault is ask, draft or publish.
+	// SubmitDefault is publish (default), draft or ask.
 	SubmitDefault string
 	// SyncPrune is always (default), ask or never.
-	SyncPrune      string
+	SyncPrune string
+	// MergeMethod is merge, squash or rebase; empty leaves it to the
+	// repository's settings.
+	MergeMethod    string
 	ManagedAliases []string
 	ManagedFiles   []string
 }
@@ -65,7 +69,7 @@ func Defaults() *Config {
 		AIModel:       "haiku",
 		AITimeout:     60 * time.Second,
 		CacheTTL:      5 * time.Minute,
-		SubmitDefault: SubmitAsk,
+		SubmitDefault: SubmitPublish,
 		SyncPrune:     SyncPruneAlways,
 	}
 }
@@ -126,6 +130,13 @@ func FromEntries(entries []git.ConfigEntry) (*Config, error) {
 				c.SyncPrune = strings.ToLower(v)
 			default:
 				return nil, fmt.Errorf("%s: %q is not one of always, ask, never", KeySyncPrune, v)
+			}
+		case strings.ToLower(KeyMergeMethod):
+			switch strings.ToLower(v) {
+			case "merge", "squash", "rebase":
+				c.MergeMethod = strings.ToLower(v)
+			default:
+				return nil, fmt.Errorf("%s: %q is not one of merge, squash, rebase", KeyMergeMethod, v)
 			}
 		case strings.ToLower(KeyManagedAliases):
 			c.ManagedAliases = append(c.ManagedAliases, v)

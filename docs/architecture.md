@@ -183,9 +183,10 @@ PR shows gh stack's auto generated title before we overwrite it; drafting *befor
 submit keeps that window as small as possible. The MCP `stack_submit` tool goes down the
 same path with the agent's own titles and bodies instead of the Drafter.
 
-**New PRs: ask, and default to drafts.** On a terminal `submit` asks draft or publish
-unless `-d`/`-p` is passed; non-interactively it drafts. `stack.submit.default` skips the
-question.
+**New PRs are ready for review.** `submit` publishes unless `-d` is passed or
+`stack.submit.default` says `draft`; `ask` brings back a prompt on a terminal (and publishes
+without one). Drafts used to be the default, but in practice they were one more step before
+anyone could review, and the MCP tool hard coding them meant it ignored the config.
 
 **What we deliberately don't mirror from `gt` (yet).** `create --insert`, `restack --only`,
 `submit --update-only`, `submit --edit-title/--edit-description` and
@@ -303,6 +304,17 @@ refreshes GitHub in a goroutine when that answer is older than a day, and the no
 printed by `Execute` after the command has finished. The command never waits for the
 goroutine; the cache slot is claimed before the request so a short command that exits first
 doesn't make the next one ask again, and GitHub is hit at most once a day either way.
+
+**Merging goes through GitHub's asynchronous merge endpoint.** Plain `gh pr merge` refuses a
+PR that is part of a stack; GitHub wants `PUT .../pulls/{n}/merge-async`, which merges that PR
+and every open PR below it as one all or nothing operation and hands back a UUID to poll.
+`gh stack merge` wraps the same thing but takes a bare number that it reads as a stack number
+first and a PR number second, which is an accident waiting to happen from a tool, so
+`pkg/forge/github` calls the endpoint itself through `gh api` and polls until the status is
+`merged`, `enqueued` (a merge queue; we stop there with a notice) or `failed`. The use case
+checks every PR in the way is open and ready first, since GitHub reports those one at a time
+and with less context, then runs the normal sync so the merged branches go and the rest is
+restacked.
 
 **How the CLI talks is one thing, in one place.** Every command prints through `ui.Reporter` (marks, emoji headlines, spinners on a terminal; `ok:`/`note:`/`error:` when piped) and the rules are written down in [`style.md`](style.md). `pkg/app` decides where a phase starts and ends through the `Progress` hook and only names the phase; the reporter owns the look.
 

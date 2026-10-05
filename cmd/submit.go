@@ -25,9 +25,10 @@ func newSubmitCmd(c *cli) *cobra.Command {
 		Aliases: []string{"ss"},
 		Short:   "Push the stack and create or update its pull requests",
 		Long: `Push every branch of the current stack and create or update a pull request for
-each, chained onto its parent. New PRs are drafts unless --publish is given (or
-git config stack.submit.default says otherwise). Without --no-edit, --ai or
---no-interactive, gh stack's editor opens for new PRs.
+each, chained onto its parent. New PRs are ready for review unless --draft is
+given (or git config stack.submit.default says draft, or ask to be asked on a
+terminal). Without --no-edit, --ai or --no-interactive, gh stack's editor opens
+for new PRs.
 
 gh stack always submits the whole stack; Graphite's default is downstack only, so
 pass --stack to acknowledge the difference and silence the notice.`,
@@ -97,7 +98,7 @@ pass --stack to acknowledge the difference and silence the notice.`,
 	}
 	cmd.Flags().BoolVarP(&wholeStack, "stack", "s", false, "submit the whole stack (always the case with gh stack; silences the notice)")
 	cmd.Flags().BoolVarP(&draft, "draft", "d", false, "create new PRs as drafts")
-	cmd.Flags().BoolVarP(&publish, "publish", "p", false, "create new PRs ready for review")
+	cmd.Flags().BoolVarP(&publish, "publish", "p", false, "create new PRs ready for review (the default)")
 	cmd.MarkFlagsMutuallyExclusive("draft", "publish")
 	cmd.Flags().BoolVarP(&edit, "edit", "e", false, "open gh stack's editor for new PRs (default on a terminal)")
 	cmd.Flags().BoolVarP(&noEdit, "no-edit", "n", false, "never open the editor; gh stack fills in titles from commits")
