@@ -198,6 +198,18 @@ the previous branch (or detached HEAD) restored afterwards; that needs a clean w
 dirty one gets a notice instead, as does a stack whose every branch is checked out somewhere
 else. `--all` is accepted for gt muscle memory and changes nothing.
 
+Two gh stack facts shape the planning. `sync --prune` deletes a merged branch but keeps it in
+the metadata, so after the first prune there are always stacks listing branches that no
+longer exist (and a stack whose every PR merged lingers forever; gh stack can only forget it
+with `unstack --local` from one of its branches, which are gone). So only branches that
+still exist are candidates for the checkout, a stack with none left is skipped (silently when
+every PR merged, with a notice when they haven't, because then someone deleted the branches
+by hand), and an open branch is preferred over a merged one so prune doesn't delete the
+branch we're standing on. And a linked worktree's metadata dies with the worktree, so
+branches created there are untracked once it's removed. Finally, one stack failing doesn't
+stop the rest: like gt, the others are synced, the failures are reported per stack and the
+command exits non-zero at the end.
+
 **gh stack treats queued PRs as gone; we put the bases back.** When a branch's PR is sitting
 in a merge queue, `gh stack submit` skips it like a merged one and bases the next PR on the
 first branch below that is neither merged nor queued, usually trunk. Until the queue drains

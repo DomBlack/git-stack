@@ -34,6 +34,8 @@ type SyncedStack struct {
 	// Aborted is true when gh stack refused to sync (the remote stack
 	// diverged) without changing anything.
 	Aborted bool `json:"aborted"`
+	// Error is set when this stack's sync failed; the others still ran.
+	Error string `json:"error,omitempty"`
 }
 
 // SyncResult reports the outcome.
@@ -93,13 +95,20 @@ func (a *App) Sync(ctx context.Context, repo git.Repo, o SyncOptions) (SyncResul
 		return SyncResult{}, err
 	}
 
-	var outputs []string
+	var outputs, failed []string
 	for _, job := range jobs {
 		out, err := a.runSyncJob(ctx, repo, job, prune)
-		if err != nil {
-			return SyncResult{}, err
-		}
 		synced := SyncedStack{Branch: job.branch, Worktree: job.dir, CheckedOut: job.switchBack != "" || job.detached != ""}
+		if err != nil {
+			// Like gt, sync what can be synced and report the rest.
+			if ctx.Err() != nil {
+				return SyncResult{}, err
+			}
+			synced.Error = err.Error()
+			failed = append(failed, job.branch)
+			res.Stacks = append(res.Stacks, synced)
+			continue
+		}
 		if strings.Contains(out.Output, "Sync aborted") {
 			synced.Aborted = true
 			res.Aborted = true
@@ -117,6 +126,19 @@ func (a *App) Sync(ctx context.Context, repo git.Repo, o SyncOptions) (SyncResul
 		if _, err := a.RefreshPRs(ctx, repo); err != nil {
 			a.d.Log.Debug("refresh after sync", "err", err)
 		}
+	}
+	if len(failed) > 0 {
+		// The result is still returned so callers can show what did sync.
+		var detail []string
+		for _, s := range res.Stacks {
+			if s.Error != "" {
+				detail = append(detail, s.Branch+": "+s.Error)
+			}
+		}
+		return res, stack.Newf(stack.KindUnknown, "%d of %d %s failed to sync (%s)",
+			len(failed), len(jobs), pluralise(len(jobs), "stack", "stacks"), strings.Join(failed, ", ")).
+			WithDetail(strings.Join(detail, "\n")).
+			WithSteps("fix the cause and run git stack sync again; the other stacks are already in sync")
 	}
 	return res, nil
 }
@@ -171,6 +193,16 @@ func (a *App) planSync(ctx context.Context, repo git.Repo, graph *stack.Graph, r
 	if err != nil {
 		return nil, err
 	}
+	// gh stack keeps a branch in its metadata after --prune has deleted it,
+	// so only branches that still exist can be checked out and synced from.
+	locals, err := a.d.Git.Branches(ctx, repo)
+	if err != nil {
+		return nil, err
+	}
+	exists := make(map[string]bool, len(locals))
+	for _, b := range locals {
+		exists[b.Name] = true
+	}
 	byPath := map[string]git.Worktree{}
 	checkedOut := map[string]string{} // branch -> worktree path
 	for _, wt := range wts {
@@ -209,16 +241,32 @@ func (a *App) planSync(ctx context.Context, repo git.Repo, graph *stack.Graph, r
 			res.Notices = append(res.Notices, fmt.Sprintf("stack %s lives in %s, which is not a worktree any more; it was not synced", s.Bottom(), shortPath(home)))
 			continue
 		}
+		var alive []stack.Branch
+		for _, b := range s.Branches {
+			if exists[b.Name] {
+				alive = append(alive, b)
+			}
+		}
+		if len(alive) == 0 {
+			if slices.ContainsFunc(s.Branches, func(b stack.Branch) bool { return !b.Merged() }) {
+				res.Notices = append(res.Notices, fmt.Sprintf("stack %s: its branches no longer exist locally but their pull requests have not merged; it was not synced", s.Bottom()))
+			} else {
+				// Every PR merged and every branch pruned: the stack is
+				// finished and gh stack just hasn't forgotten it.
+				a.d.Log.Debug("skipping finished stack", "stack", s.Bottom())
+			}
+			continue
+		}
 		job := syncJob{stack: s, dir: home}
 		if s.Index(wt.Branch) >= 0 {
 			job.branch = wt.Branch
 		} else {
-			// Pick a branch of the stack nobody has checked out, top first.
-			for j := len(s.Branches) - 1; j >= 0; j-- {
-				if _, taken := checkedOut[s.Branches[j].Name]; !taken {
-					job.branch = s.Branches[j].Name
-					break
-				}
+			// Pick a branch of the stack nobody has checked out, top first,
+			// preferring one whose PR is still open: prune would delete a
+			// merged one from under us mid-sync.
+			job.branch = pickSyncBranch(alive, checkedOut, false)
+			if job.branch == "" {
+				job.branch = pickSyncBranch(alive, checkedOut, true)
 			}
 			switch {
 			case job.branch == "":
@@ -246,6 +294,19 @@ func (a *App) planSync(ctx context.Context, repo git.Repo, graph *stack.Graph, r
 		}
 	}
 	return slices.Concat(first, mine, others, othersSwitch), nil
+}
+
+// pickSyncBranch returns the topmost branch of alive that is not checked
+// out in any worktree, skipping merged ones unless allowMerged; "" if none.
+func pickSyncBranch(alive []stack.Branch, checkedOut map[string]string, allowMerged bool) string {
+	for j := len(alive) - 1; j >= 0; j-- {
+		b := alive[j]
+		if _, taken := checkedOut[b.Name]; taken || (b.Merged() && !allowMerged) {
+			continue
+		}
+		return b.Name
+	}
+	return ""
 }
 
 // syncPrune decides whether merged branches get deleted: the -f flag or the

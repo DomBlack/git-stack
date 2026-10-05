@@ -37,19 +37,24 @@ to keep them. -f deletes them whatever the config says.`,
 			}
 			rep := c.report()
 			res, err := a.Sync(ctx, repo, app.SyncOptions{Prune: force, All: all})
-			if err != nil {
-				return err
-			}
+			// A stack failing does not stop the others, so there is output
+			// and there are notices to show even when err is set.
 			if res.Output != "" {
 				_, _ = io.WriteString(rep.Stream(), res.Output+"\n")
 			}
 			for _, n := range res.Notices {
 				rep.Warn("%s", n)
 			}
+			if err != nil {
+				return err
+			}
 			if !res.Aborted {
-				if n := len(res.Stacks); n > 1 {
+				switch n := len(res.Stacks); {
+				case n == 0:
+					rep.Success("Nothing to sync")
+				case n > 1:
 					rep.Success("Synced %d stacks", n)
-				} else {
+				default:
 					rep.Success("Synced")
 				}
 			}

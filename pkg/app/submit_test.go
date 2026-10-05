@@ -31,6 +31,8 @@ type submitFake struct {
 	// onSync, when set, observes each Sync call (tests check which branch
 	// was checked out at the time).
 	onSync func(stack.SyncOptions)
+	// syncErr, when set, decides whether a Sync call fails.
+	syncErr func(stack.SyncOptions) error
 	// baseOnTrunk makes new PRs target trunk instead of their parent, the
 	// way gh stack does when the branches below are queued for merge.
 	baseOnTrunk bool
@@ -66,6 +68,11 @@ func (s *submitFake) Sync(_ context.Context, _ git.Repo, o stack.SyncOptions) (s
 	s.syncs = append(s.syncs, o)
 	if s.onSync != nil {
 		s.onSync(o)
+	}
+	if s.syncErr != nil {
+		if err := s.syncErr(o); err != nil {
+			return stack.SyncResult{}, err
+		}
 	}
 	return stack.SyncResult{Output: s.syncOut, Streamed: s.streamed}, nil
 }
