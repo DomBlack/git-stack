@@ -426,7 +426,8 @@ func (a *App) nothingToResume(ctx context.Context, repo git.Repo, verb string) e
 	}
 }
 
-// restackContinue resumes an interrupted restack.
+// restackContinue resumes an interrupted restack: finish the conflicting
+// branch's git rebase, record it, then restack what was left above it.
 func (a *App) restackContinue(ctx context.Context, repo git.Repo, stageAll bool) (RestackResult, error) {
 	st, err := loadRestackState(repo)
 	if err != nil {
@@ -435,8 +436,63 @@ func (a *App) restackContinue(ctx context.Context, repo git.Repo, stageAll bool)
 	if st == nil {
 		return RestackResult{}, a.nothingToResume(ctx, repo, "continue")
 	}
-	_ = stageAll
-	return RestackResult{}, stack.New(stack.KindUnsupported, "continue is not implemented yet")
+	res := RestackResult{Branches: append([]string{st.Conflict}, st.Remaining...)}
+	if stageAll {
+		if err := a.d.Git.Add(ctx, repo, git.AddAll); err != nil {
+			return res, err
+		}
+	}
+	active, err := a.d.Git.RebaseInProgress(ctx, repo)
+	if err != nil {
+		return res, err
+	}
+	if active {
+		stopped, err := a.d.Git.RebaseContinue(ctx, repo)
+		if err != nil {
+			return res, err
+		}
+		if stopped {
+			files, _ := a.d.Git.ConflictedFiles(ctx, repo)
+			return res, conflictError(st.Conflict, st.Onto, files)
+		}
+	} else if !a.isAncestor(ctx, repo, st.NewBase, st.Conflict) {
+		// Finished by hand would have put the new base under the branch;
+		// this rebase was abandoned instead.
+		return res, stack.Newf(stack.KindInvalidArgs, "the rebase of %s was abandoned outside git-stack", st.Conflict).
+			WithSteps(st.Command+" to try again", "or git stack abort to put the moved branches back")
+	}
+	run := &restackRun{repo: repo, command: st.Command, trunk: st.Trunk, originalBranch: st.OriginalBranch, moved: st.Moved, state: st}
+	if g, err := a.d.Meta.Load(ctx, repo); err == nil {
+		if s, _, ok := g.StackOf(st.Conflict); ok {
+			run.stackName = s.Bottom()
+		}
+	}
+	err = a.progress(ctx, PhaseRestack, "Continuing the restack", func(ctx context.Context) error {
+		if err := a.recordRebased(ctx, run, &res); err != nil {
+			return err
+		}
+		if len(st.Remaining) == 0 {
+			return a.finishRun(ctx, run)
+		}
+		graph, err := a.d.Meta.Load(ctx, repo)
+		if err != nil {
+			return err
+		}
+		return a.restackBranches(ctx, run, branchesNamed(graph, st.Remaining), st.Conflict, &res)
+	})
+	return res, err
+}
+
+// branchesNamed looks the named branches up in the graph, keeping order
+// and dropping any that are no longer tracked.
+func branchesNamed(g *stack.Graph, names []string) []stack.Branch {
+	out := make([]stack.Branch, 0, len(names))
+	for _, n := range names {
+		if s, i, ok := g.StackOf(n); ok {
+			out = append(out, s.Branches[i])
+		}
+	}
+	return out
 }
 
 // restackAbort gives up an interrupted restack.

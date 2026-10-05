@@ -512,3 +512,108 @@ func TestRestackConflictGitResolvesCarriesOn(t *testing.T) {
 		t.Errorf("bases b = %s (a %s), c = %s (b %s)", f.base("b"), f.rev(t, "a"), f.base("c"), f.rev(t, "b"))
 	}
 }
+
+func TestRestackContinueFinishesTheStack(t *testing.T) {
+	f := conflictFixture(t)
+	ctx := context.Background()
+	if _, err := f.app.Restack(ctx, f.repo, app.RestackOptions{}); !errors.Is(err, &stack.Error{Kind: stack.KindConflict}) {
+		t.Fatalf("want a conflict, got %v", err)
+	}
+	// Premature continue: still conflicted, same error, state kept.
+	_, err := f.app.Restack(ctx, f.repo, app.RestackOptions{Continue: true})
+	var se *stack.Error
+	if !errors.As(err, &se) || se.Kind != stack.KindConflict || !slices.Equal(se.Files, []string{"shared.txt"}) || !f.stateExists() {
+		t.Fatalf("premature continue = %+v", err)
+	}
+	gittest.WriteFile(t, f.dir, "shared.txt", "resolved")
+	res, err := f.app.Restack(ctx, f.repo, app.RestackOptions{Continue: true, StageAll: true})
+	if err != nil || !slices.Equal(moved(res), []string{"b", "c"}) {
+		t.Fatalf("continue = %+v %v", res, err)
+	}
+	if f.rebaseActive(t) || f.stateExists() {
+		t.Error("nothing should be left in progress")
+	}
+	if gittest.Run(t, f.dir, "branch", "--show-current") != "c" {
+		t.Error("back on the original branch")
+	}
+	gittest.Run(t, f.dir, "merge-base", "--is-ancestor", "a", "b")
+	gittest.Run(t, f.dir, "merge-base", "--is-ancestor", "b", "c")
+	if f.base("b") != f.rev(t, "a") || f.base("c") != f.rev(t, "b") {
+		t.Errorf("bases: b=%s c=%s", f.base("b"), f.base("c"))
+	}
+	if log := gittest.Run(t, f.dir, "log", "--format=%s", "a..c"); log != "feat: c\nb edits shared\nfeat: b" {
+		t.Errorf("history = %q", log)
+	}
+}
+
+func TestRestackContinueAfterHandFinishedRebase(t *testing.T) {
+	f := conflictFixture(t)
+	ctx := context.Background()
+	_, _ = f.app.Restack(ctx, f.repo, app.RestackOptions{})
+	gittest.WriteFile(t, f.dir, "shared.txt", "resolved")
+	gittest.Run(t, f.dir, "add", "shared.txt")
+	t.Setenv("GIT_EDITOR", "true")
+	gittest.Run(t, f.dir, "rebase", "--continue")
+	res, err := f.app.Restack(ctx, f.repo, app.RestackOptions{Continue: true})
+	if err != nil || !slices.Equal(moved(res), []string{"b", "c"}) || f.stateExists() {
+		t.Fatalf("continue = %+v %v", res, err)
+	}
+	gittest.Run(t, f.dir, "merge-base", "--is-ancestor", "b", "c")
+}
+
+func TestRestackContinueAfterHandAbortedRebase(t *testing.T) {
+	f := conflictFixture(t)
+	ctx := context.Background()
+	_, _ = f.app.Restack(ctx, f.repo, app.RestackOptions{})
+	gittest.Run(t, f.dir, "rebase", "--abort")
+	_, err := f.app.Restack(ctx, f.repo, app.RestackOptions{Continue: true})
+	var se *stack.Error
+	if !errors.As(err, &se) || se.Kind != stack.KindInvalidArgs || !strings.Contains(strings.Join(se.NextSteps, "\n"), "git stack abort") || !f.stateExists() {
+		t.Fatalf("err = %+v, state kept = %v", err, f.stateExists())
+	}
+}
+
+func TestRestackContinueThroughASecondConflict(t *testing.T) {
+	f := conflictFixture(t)
+	ctx := context.Background()
+	// c also edits shared.txt, so it conflicts on the resolved b.
+	gittest.Commit(t, f.dir, "shared.txt", "c version", "c edits shared")
+	_, _ = f.app.Restack(ctx, f.repo, app.RestackOptions{})
+	gittest.WriteFile(t, f.dir, "shared.txt", "resolved b")
+	gittest.Run(t, f.dir, "add", "shared.txt")
+	_, err := f.app.Restack(ctx, f.repo, app.RestackOptions{Continue: true})
+	var se *stack.Error
+	if !errors.As(err, &se) || se.Kind != stack.KindConflict || se.Branch != "c" {
+		t.Fatalf("second conflict = %+v", err)
+	}
+	gittest.WriteFile(t, f.dir, "shared.txt", "resolved c")
+	gittest.Run(t, f.dir, "add", "shared.txt")
+	res, err := f.app.Restack(ctx, f.repo, app.RestackOptions{Continue: true})
+	if err != nil || !slices.Equal(moved(res), []string{"c"}) || f.stateExists() {
+		t.Fatalf("final continue = %+v %v", res, err)
+	}
+	if gittest.Run(t, f.dir, "branch", "--show-current") != "c" {
+		t.Error("back on c")
+	}
+}
+
+func TestModifyConflictAndContinue(t *testing.T) {
+	f := newRestackFixture(t)
+	ctx := context.Background()
+	gittest.Run(t, f.dir, "switch", "-q", "b")
+	gittest.Commit(t, f.dir, "shared.txt", "b version", "b edits shared")
+	gittest.Run(t, f.dir, "switch", "-q", "a")
+	gittest.WriteFile(t, f.dir, "shared.txt", "a version")
+	gittest.Run(t, f.dir, "add", "shared.txt")
+	_, err := f.app.Modify(ctx, f.repo, app.ModifyOptions{Message: []string{"a edits shared"}})
+	var se *stack.Error
+	if !errors.As(err, &se) || se.Kind != stack.KindConflict || !strings.Contains(strings.Join(se.NextSteps, "\n"), "git stack continue") {
+		t.Fatalf("modify = %+v", err)
+	}
+	gittest.WriteFile(t, f.dir, "shared.txt", "resolved")
+	gittest.Run(t, f.dir, "add", "shared.txt")
+	res, err := f.app.Modify(ctx, f.repo, app.ModifyOptions{Continue: true})
+	if err != nil || !slices.Equal(res.Restacked, []string{"b", "c"}) || res.Branch != "a" {
+		t.Fatalf("modify --continue = %+v %v", res, err)
+	}
+}

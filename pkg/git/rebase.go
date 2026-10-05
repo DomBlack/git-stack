@@ -98,8 +98,10 @@ func (c *Client) RebaseAbort(ctx context.Context, repo Repo) error {
 }
 
 // rebaseOutcome classifies a rebase failure. A rebase still in progress
-// with unmerged paths is a conflict stop; anything else is an error carrying
-// git's stderr.
+// after git exited non-zero is a stop for the caller to resolve, whether
+// paths are left unmerged or rerere already staged a remembered resolution;
+// anything else is an error carrying git's stderr. Callers refuse to start
+// while another rebase is in progress, so one found here is always theirs.
 func (c *Client) rebaseOutcome(ctx context.Context, repo Repo, err error) (bool, error) {
 	if err == nil {
 		return false, nil
@@ -113,13 +115,7 @@ func (c *Client) rebaseOutcome(ctx context.Context, repo Repo, err error) (bool,
 		return false, aerr
 	}
 	if active {
-		files, ferr := c.ConflictedFiles(ctx, repo)
-		if ferr != nil {
-			return false, ferr
-		}
-		if len(files) > 0 {
-			return true, nil
-		}
+		return true, nil
 	}
 	return false, fmt.Errorf("git rebase: %s", ee.Result.Err())
 }

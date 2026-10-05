@@ -207,3 +207,35 @@ func TestRebaseContinueDropsEmptyResolution(t *testing.T) {
 		t.Errorf("log = %q, want the emptied commit dropped", log)
 	}
 }
+
+func TestRebaseOntoStopsWithRerereResolutionStaged(t *testing.T) {
+	c, repo, dir := rebaseFixture(t)
+	ctx := context.Background()
+	gittest.Run(t, dir, "config", "rerere.enabled", "true")
+	// Without autoupdate rerere only rewrites the file and leaves it unmerged.
+	gittest.Run(t, dir, "config", "rerere.autoupdate", "true")
+	from := gittest.Run(t, dir, "merge-base", "main", "feat")
+	featTip := gittest.Run(t, dir, "rev-parse", "feat")
+	// Teach rerere the resolution once.
+	if stopped, _ := c.RebaseOnto(ctx, repo, "main", from, "feat"); !stopped {
+		t.Fatal("expected the first conflict")
+	}
+	gittest.WriteFile(t, dir, "shared.txt", "resolved")
+	gittest.Run(t, dir, "add", "shared.txt")
+	if stopped, err := c.RebaseContinue(ctx, repo); err != nil || stopped {
+		t.Fatalf("continue = %v %v", stopped, err)
+	}
+	// The rebase left feat checked out; put it back where it started.
+	gittest.Run(t, dir, "reset", "-q", "--hard", featTip)
+	// Second time round git stages the remembered resolution and stops with nothing unmerged.
+	stopped, err := c.RebaseOnto(ctx, repo, "main", from, "feat")
+	if err != nil || !stopped {
+		t.Fatalf("RebaseOnto with rerere = %v %v, want stopped", stopped, err)
+	}
+	if files, _ := c.ConflictedFiles(ctx, repo); len(files) != 0 {
+		t.Errorf("rerere should have staged the resolution, got unmerged %v", files)
+	}
+	if stopped, err := c.RebaseContinue(ctx, repo); err != nil || stopped {
+		t.Fatalf("continue after rerere = %v %v", stopped, err)
+	}
+}

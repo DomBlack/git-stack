@@ -262,33 +262,44 @@ func TestViewCreateModifyNavigate(t *testing.T) {
 	}
 
 	// modify with a conflict yields structured next steps in tool terms:
-	// feat-add-c edits b.txt, then b's amend edits it differently.
+	// feat-add-c edits b.txt, then b's amend edits it differently. Record
+	// feat-add-c's base the way gh stack does, so only its own commits
+	// are replayed.
+	bTip := gittest.Run(t, h.dir, "rev-parse", "b")
+	_ = h.backend.Update(context.Background(), h.repo, func(g *stack.Graph) error {
+		for i := range g.Stacks {
+			for j := range g.Stacks[i].Branches {
+				if b := &g.Stacks[i].Branches[j]; b.Name == "feat-add-c" {
+					b.Base = bTip
+				}
+			}
+		}
+		return nil
+	})
 	gittest.Commit(t, h.dir, "b.txt", "c side", "c edits b")
 	var nav navigateOutput
 	h.call("stack_navigate", map[string]any{"direction": "down"}, &nav)
 	if nav.To != "b" || h.current() != "b" {
 		t.Errorf("down = %+v", nav)
 	}
-	bBefore := gittest.Run(t, h.dir, "rev-parse", "b")
 	gittest.WriteFile(t, h.dir, "b.txt", "b2")
 	te := h.toolErr("stack_modify", map[string]any{"staging": "update"})
 	if te.Code != "conflict" || !slices.Equal(te.Files, []string{"b.txt"}) || !slices.ContainsFunc(te.NextSteps, func(s string) bool { return strings.Contains(s, "continue") }) {
 		t.Errorf("conflict error = %+v", te)
 	}
-	// Task 7 replaces this: continue is still a placeholder.
-	if te := h.toolErr("stack_modify", map[string]any{"continue": true}); te.Code != "unsupported" {
-		t.Errorf("continue = %+v", te)
-	}
-	// Give up feat-add-c's rebase and put b back so feat-add-c restacks
-	// cleanly from here on.
-	gittest.Run(t, h.dir, "rebase", "--abort")
-	gitDir := gittest.Run(t, h.dir, "rev-parse", "--absolute-git-dir")
-	if err := os.Remove(filepath.Join(gitDir, "git-stack", "restack.json")); err != nil {
-		t.Fatal(err)
-	}
-	gittest.Run(t, h.dir, "switch", "-q", "b")
-	gittest.Run(t, h.dir, "reset", "-q", "--hard", bBefore)
+	// Resolve it and carry on: feat-add-c lands on the amended b and the
+	// run ends back on b.
+	gittest.WriteFile(t, h.dir, "b.txt", "resolved")
+	gittest.Run(t, h.dir, "add", "b.txt")
 	var mr app.ModifyResult
+	h.call("stack_modify", map[string]any{"continue": true}, &mr)
+	if !slices.Equal(mr.Restacked, []string{"feat-add-c"}) || mr.Branch != "b" || h.current() != "b" {
+		t.Errorf("modify continue = %+v (on %s)", mr, h.current())
+	}
+	gittest.Run(t, h.dir, "merge-base", "--is-ancestor", "b", "feat-add-c")
+	if te := h.toolErr("stack_restack", map[string]any{"continue": true}); te.Code != "invalid_args" {
+		t.Errorf("continue with nothing pending = %+v", te)
+	}
 	gittest.WriteFile(t, h.dir, "b2.txt", "b2")
 	h.call("stack_modify", map[string]any{"mode": "commit", "message": "second", "staging": "all"}, &mr)
 	if mr.Amended || mr.Commit.Subject != "second" || !slices.Equal(mr.Restacked, []string{"feat-add-c"}) {
