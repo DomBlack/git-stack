@@ -97,7 +97,22 @@ func (c *Client) CommitTree(ctx context.Context, repo Repo, tree, parent string,
 // to that commit, so two histories can be compared for the same changes
 // regardless of where they were rebased.
 func (c *Client) PatchIDs(ctx context.Context, repo Repo, from, to string) (map[string]string, error) {
-	log, err := c.gitIn(ctx, repo, "log", "-p", "--no-color", "--no-merges", "--format=commit %H", from+".."+to)
+	return c.patchIDs(ctx, repo, from+".."+to)
+}
+
+// PatchIDsExcluding is PatchIDs for the commits reachable from to but from
+// none of exclude.
+func (c *Client) PatchIDsExcluding(ctx context.Context, repo Repo, to string, exclude ...string) (map[string]string, error) {
+	revs := []string{to}
+	for _, x := range exclude {
+		revs = append(revs, "^"+x)
+	}
+	return c.patchIDs(ctx, repo, revs...)
+}
+
+func (c *Client) patchIDs(ctx context.Context, repo Repo, revs ...string) (map[string]string, error) {
+	args := append([]string{"log", "-p", "--no-color", "--no-merges", "--format=commit %H"}, revs...)
+	log, err := c.gitIn(ctx, repo, append(args, "--")...)
 	if err != nil {
 		return nil, err
 	}

@@ -150,7 +150,8 @@ func (a *App) cleanupCandidates(ctx context.Context, st *syncState, res *SyncRes
 				continue
 			}
 			pr, hasPR := st.prs[b.Name]
-			if hasPR && (pr.State == forge.StateMerged || pr.State == forge.StateClosed) && pr.HeadSHA != "" && pr.HeadSHA != lb.Head {
+			if hasPR && (pr.State == forge.StateMerged || pr.State == forge.StateClosed) && pr.HeadSHA != "" && pr.HeadSHA != lb.Head &&
+				!a.prSawAll(ctx, st, lb.Head, pr.HeadSHA, trunkTip) {
 				res.Kept = append(res.Kept, KeptBranch{Name: b.Name, Reason: KeptUnpushed})
 				res.notice("%s is not at the commit its PR was %s at (local %s, PR %s); kept in case there is work on it, delete it by hand with git branch -D %s",
 					b.Name, pr.State, short(lb.Head), short(pr.HeadSHA), b.Name)
@@ -192,6 +193,38 @@ func (a *App) cleanupCandidates(ctx context.Context, st *syncState, res *SyncRes
 	}
 	slices.SortFunc(cands, func(x, y candidate) int { return strings.Compare(x.name, y.name) })
 	return cands, gone
+}
+
+// prSawAll reports whether every change on a branch's local tip, other than
+// what came from trunk, is in its PR's head: a branch restacked locally
+// since its last push differs from the PR by commit id but not by patch id.
+// Anything it can't tell, such as a PR head we don't have locally, is "no".
+func (a *App) prSawAll(ctx context.Context, st *syncState, local, prHead, trunkTip string) bool {
+	if _, ok, err := a.d.Git.Tip(ctx, st.repo, prHead); err != nil || !ok {
+		return false
+	}
+	base, err := a.d.Git.MergeBase(ctx, st.repo, local, prHead)
+	if err != nil {
+		return false
+	}
+	exclude := []string{prHead}
+	if trunkTip != "" {
+		exclude = append(exclude, trunkTip)
+	}
+	localIDs, err := a.d.Git.PatchIDsExcluding(ctx, st.repo, local, exclude...)
+	if err != nil {
+		return false
+	}
+	prIDs, err := a.d.Git.PatchIDs(ctx, st.repo, base, prHead)
+	if err != nil {
+		return false
+	}
+	for id := range localIDs {
+		if _, ok := prIDs[id]; !ok {
+			return false
+		}
+	}
+	return true
 }
 
 // cleanupConsent decides whether the candidates may go: -f or -d say yes,

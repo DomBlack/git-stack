@@ -343,3 +343,36 @@ func TestSyncDetachesLinkedWorktreeWhenTrunkIsElsewhere(t *testing.T) {
 		t.Errorf("notices = %v", res.Notices)
 	}
 }
+
+func TestSyncDeletesBranchRestackedSinceItsPRWasPushed(t *testing.T) {
+	f := newSyncFixture(t) // on b; origin has a as pushed
+	pushed := f.rev(t, "a")
+	f.forge.prs[0].HeadSHA = pushed
+	f.advanceRemote(t, "main", "r.txt")
+	if _, err := f.sync(t, app.SyncOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	if f.rev(t, "a") == pushed {
+		t.Fatal("a should have been restacked locally")
+	}
+	// The PR merges at the commit GitHub saw, not the local restack.
+	gittest.Run(t, f.dir, "switch", "-q", "--detach", "refs/remotes/origin/main")
+	gittest.Run(t, f.dir, "merge", "-q", "--squash", pushed)
+	gittest.Run(t, f.dir, "commit", "-q", "-m", "merge a")
+	merge := f.rev(t, "HEAD")
+	gittest.Run(t, f.dir, "push", "-q", "origin", "HEAD:refs/heads/main")
+	gittest.Run(t, f.dir, "switch", "-q", "b")
+	f.forge.prs[0].State = forge.StateMerged
+	f.forge.prs[0].MergeCommit = merge
+
+	res, err := f.sync(t, app.SyncOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if d, ok := deleted(res, "a"); !ok || d.Reason != app.ReasonMerged || branchExists(t, f.dir, "a") {
+		t.Errorf("deleted = %+v kept = %+v notices = %v", res.Deleted, res.Kept, res.Notices)
+	}
+	if got := gittest.Run(t, f.dir, "log", "--format=%s", "main..b"); got != "feat: b" {
+		t.Errorf("b should sit on main with its own commit, got %q", got)
+	}
+}
