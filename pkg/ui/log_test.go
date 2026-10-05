@@ -3,6 +3,7 @@ package ui
 import (
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/DomBlack/git-stack/pkg/app"
 	"github.com/DomBlack/git-stack/pkg/forge"
@@ -54,9 +55,24 @@ func TestRenderLogThreeStacksJoin(t *testing.T) {
 	}
 }
 
+func TestRenderLogTrunkOnly(t *testing.T) {
+	rows := []app.Row{{Name: "main", IsTrunk: true, Tracked: true, IsCurrent: true, LastCommit: now.Add(-2 * time.Hour)}}
+	if got, want := RenderLog(&app.View{Rows: rows}, LogOptions{Now: now}), "● main  2h ago\n"; got != want {
+		t.Errorf("a trunk with no stacks renders just the trunk:\n%q\nwant\n%q", got, want)
+	}
+	rows = []app.Row{
+		{Name: "main", IsTrunk: true, Tracked: true},
+		{Name: "release", IsTrunk: true, Tracked: true},
+		{Name: "a", Depth: 1, Tracked: true},
+	}
+	if got, want := RenderLog(&app.View{Rows: rows}, LogOptions{}), "■ main\n\n○ a\n│  no PR\n│\n■ release\n"; got != want {
+		t.Errorf("an empty trunk next to a stacked one:\n%q\nwant\n%q", got, want)
+	}
+}
+
 func TestRenderLogEmptyAndLinks(t *testing.T) {
-	if RenderLog(&app.View{Rows: []app.Row{{Name: "main", IsTrunk: true, Tracked: true}}}, LogOptions{}) != "" {
-		t.Error("a trunk with no stacks renders nothing")
+	if RenderLog(&app.View{}, LogOptions{}) != "" {
+		t.Error("a view with no rows renders nothing")
 	}
 	if RenderLog(nil, LogOptions{}) != "" {
 		t.Error("nil view renders nothing")

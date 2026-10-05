@@ -16,8 +16,8 @@ func newLogCmd(c *cli) *cobra.Command {
 		Short: "Show every stack as a tree, with pull request state (also what bare `git stack` does)",
 		Long: `Show the stacks in this repository the way gt log does: trunk at the bottom, each
 stack rising from it, the current branch marked, and each branch's pull request,
-age and whether it needs a restack. Pull request state comes from the local cache
-and is refreshed when stale.`,
+age and whether it needs a restack. A repository with no stacks yet shows just its
+trunk. Pull request state comes from the local cache and is refreshed when stale.`,
 		Args:              cobra.NoArgs,
 		ValidArgsFunction: completeNothing,
 		RunE: func(cmd *cobra.Command, _ []string) error {
@@ -40,11 +40,8 @@ func showLog(ctx context.Context, c *cli) error {
 	rep := c.report()
 	out := ui.RenderLog(v, ui.LogOptions{Styles: rep.Styles(), Now: time.Now(), Links: rep.Links()})
 	if out == "" {
-		trunk := "your trunk"
-		if len(v.Graph.Trunks) > 0 {
-			trunk = v.Graph.Trunks[0]
-		}
-		rep.Warn("No stacks yet; check out %s and run git stack create to start one", trunk)
+		// Not even a trunk: no stacks and no default branch to show.
+		rep.Warn("No stacks yet; check out your trunk and run git stack create to start one")
 		return nil
 	}
 	rep.Print(out)
