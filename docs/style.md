@@ -82,7 +82,7 @@ scrolls up as it comes in.
   bare "Done." or "Synced.".
 - Errors say what's wrong in one line, then the detail (faint), then `↳` next steps that
   are things you can actually run.
-- Notices are for "it worked but"; the bottom branch being behind trunk, a dry run.
+- Notices are for "it worked but"; a branch left alone because its checkout in another worktree is dirty, a dry run.
 - Branch names are bold cyan, PR refs green and clickable (OSC 8 hyperlinks), shas faint,
   subjects plain. Semantic colour only; nothing is coloured for decoration.
 

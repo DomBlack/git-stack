@@ -35,7 +35,7 @@ If you know `gt` you already know most of this; the table is the mapping.
 |---|---|---|
 | `gt create [name]` | `git stack create [name]` (`git c`) | `-a` `-u` `-p` `-m` `--ai` |
 | `gt modify` | `git stack modify` (`git m`) | amend (or `-c` for a new commit), then restack everything above |
-| `gt restack` | `git stack restack` (`git rs`) | `--upstack` `--downstack` `--continue` `--abort` |
+| `gt restack` | `git stack restack` (`git rs`) | `--upstack` `--downstack` `--only` `--branch`; never checks anything out, bottom branch onto the local trunk included |
 | `gt continue` | `git stack continue` (`git continue`, `cont`) | finish an interrupted restack once conflicts are resolved; `-a` stages everything first |
 | `gt abort` | `git stack abort` (`git abort`) | give up an interrupted restack and put every moved branch back |
 | `gt up/down/top/bottom` | `git stack up/down/top/bottom` (`git u/d/t/b`) | `down` from the bottom branch takes you to trunk |
@@ -173,7 +173,7 @@ Everything is plain `git config`, so set it globally or per repo as you like.
 ## Differences from Graphite
 
 It's worth being upfront about this; gh stack is linear and only lets you add branches at the
-top, so a handful of `gt` behaviours aren't possible yet: `create --insert`, `restack --only`,
+top, so a handful of `gt` behaviours aren't possible yet: `create --insert`,
 `submit --update-only` and `modify --into`. Each one prints a single line saying
 why rather than silently doing something else.
 
