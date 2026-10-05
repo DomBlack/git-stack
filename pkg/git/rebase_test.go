@@ -2,6 +2,7 @@ package git_test
 
 import (
 	"context"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -115,6 +116,57 @@ func rebaseFixture(t *testing.T) (*git.Client, git.Repo, string) {
 	gittest.Commit(t, dir, "shared.txt", "main version", "main edits shared")
 	gittest.Run(t, dir, "switch", "-q", "feat")
 	return c, repo, dir
+}
+
+func TestRebaseMatches(t *testing.T) {
+	for _, backend := range []string{"merge", "apply"} {
+		for _, worktree := range []string{"main", "linked"} {
+			t.Run(backend+"/"+worktree, func(t *testing.T) {
+				c, repo, dir := rebaseFixture(t)
+				ctx := context.Background()
+				onto := gittest.Run(t, dir, "rev-parse", "main")
+				tip := gittest.Run(t, dir, "rev-parse", "feat")
+				from := gittest.Run(t, dir, "merge-base", "main", "feat")
+				if worktree == "linked" {
+					gittest.Run(t, dir, "switch", "-q", "main")
+					linked := filepath.Join(t.TempDir(), "checkout")
+					gittest.Run(t, dir, "worktree", "add", "-q", linked, "feat")
+					dir = linked
+					var err error
+					repo, err = c.Discover(ctx, dir)
+					if err != nil {
+						t.Fatal(err)
+					}
+				}
+				if matches, err := c.RebaseMatches(ctx, repo, "feat", onto, tip); err != nil || matches {
+					t.Fatalf("no rebase: matches = %v, %v", matches, err)
+				}
+				if _, err := c.Runner().Run(ctx, gitCmd(dir, "rebase", "--"+backend, "--onto", onto, from, "feat")); err == nil {
+					t.Fatal("expected a conflict")
+				}
+				for _, tc := range []struct {
+					name, branch, base, tip string
+					want                    bool
+				}{
+					{"ours", "feat", onto, tip, true},
+					{"other branch", "other", onto, tip, false},
+					{"other base", "feat", from, tip, false},
+					{"other tip", "feat", onto, from, false},
+				} {
+					matches, err := c.RebaseMatches(ctx, repo, tc.branch, tc.base, tc.tip)
+					if err != nil || matches != tc.want {
+						t.Errorf("%s: matches = %v, %v, want %v", tc.name, matches, err, tc.want)
+					}
+				}
+				if err := c.RebaseAbort(ctx, repo); err != nil {
+					t.Fatal(err)
+				}
+				if matches, err := c.RebaseMatches(ctx, repo, "feat", onto, tip); err != nil || matches {
+					t.Fatalf("after abort: matches = %v, %v", matches, err)
+				}
+			})
+		}
+	}
 }
 
 func TestRebaseOntoStopsOnConflictAndContinues(t *testing.T) {

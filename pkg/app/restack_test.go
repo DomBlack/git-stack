@@ -573,6 +573,75 @@ func TestRestackContinueAfterHandAbortedRebase(t *testing.T) {
 	if !errors.As(err, &se) || se.Kind != stack.KindInvalidArgs || !strings.Contains(strings.Join(se.NextSteps, "\n"), "git stack abort") || !f.stateExists() {
 		t.Fatalf("err = %+v, state kept = %v", err, f.stateExists())
 	}
+	if !slices.Equal(se.NextSteps, []string{"git stack abort to put the moved branches back, then git stack restack again"}) {
+		t.Fatalf("recovery must clear the saved state before retrying: %v", se.NextSteps)
+	}
+	if _, err := f.app.Restack(ctx, f.repo, app.RestackOptions{Abort: true}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.app.Restack(ctx, f.repo, app.RestackOptions{}); !errors.Is(err, &stack.Error{Kind: stack.KindConflict}) {
+		t.Fatalf("retry after abort = %v, want a new conflict", err)
+	}
+}
+
+func TestRestackRefusesForeignRebase(t *testing.T) {
+	for _, foreign := range []string{"branch", "base", "tip"} {
+		t.Run(foreign, func(t *testing.T) {
+			f := conflictFixture(t)
+			ctx := context.Background()
+			if _, err := f.app.Restack(ctx, f.repo, app.RestackOptions{}); !errors.Is(err, &stack.Error{Kind: stack.KindConflict}) {
+				t.Fatalf("restack = %v, want a conflict", err)
+			}
+			gittest.Run(t, f.dir, "rebase", "--abort")
+			branch, onto, from := "b", "a", f.base("b")
+			switch foreign {
+			case "branch":
+				gittest.Run(t, f.dir, "switch", "-q", "-c", "foreign", "b")
+				branch = "foreign"
+			case "base":
+				gittest.Run(t, f.dir, "switch", "-q", "-c", "foreign", "main")
+				gittest.Commit(t, f.dir, "shared.txt", "foreign version", "foreign edits shared")
+				onto = "foreign"
+			case "tip":
+				gittest.Commit(t, f.dir, "extra.txt", "extra", "extra commit on b")
+			}
+			if _, err := f.fb.git.Runner().Run(ctx, exec.Cmd{Name: "git", Dir: f.dir, Args: []string{"rebase", "--onto", onto, from, branch}}); err == nil {
+				t.Fatal("want the foreign rebase to stop")
+			}
+			gittest.WriteFile(t, f.dir, "shared.txt", "resolved but unstaged")
+			statePath := filepath.Join(f.repo.GitDir, "git-stack", "restack.json")
+			state, err := os.ReadFile(statePath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			head, tip := f.rev(t, "HEAD"), f.rev(t, branch)
+			status := gittest.Run(t, f.dir, "status", "--short")
+			graph, err := json.Marshal(f.fb.graph)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, o := range []app.RestackOptions{{Continue: true, StageAll: true}, {Abort: true}} {
+				_, err := f.app.Restack(ctx, f.repo, o)
+				var se *stack.Error
+				if !errors.As(err, &se) || se.Kind != stack.KindInvalidArgs || !strings.Contains(se.Msg, "did not start") ||
+					!slices.Equal(se.NextSteps, []string{"finish it with git rebase --continue or git rebase --abort, then git stack abort"}) {
+					t.Fatalf("foreign rebase = %+v", err)
+				}
+				afterState, err := os.ReadFile(statePath)
+				if err != nil {
+					t.Fatal(err)
+				}
+				afterGraph, err := json.Marshal(f.fb.graph)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if !f.rebaseActive(t) || f.rev(t, "HEAD") != head || f.rev(t, branch) != tip ||
+					gittest.Run(t, f.dir, "status", "--short") != status || string(afterState) != string(state) || string(afterGraph) != string(graph) {
+					t.Fatal("the foreign rebase, index, refs and metadata must be left alone")
+				}
+			}
+		})
+	}
 }
 
 func TestRestackContinueThroughASecondConflict(t *testing.T) {
@@ -696,6 +765,73 @@ func TestRestackAbortAfterHandAbortedRebase(t *testing.T) {
 	res, err := f.app.Restack(context.Background(), f.repo, app.RestackOptions{Abort: true})
 	if err != nil || !slices.Equal(res.Restored, []string{"b"}) || f.rev(t, "b") != before["b"] {
 		t.Fatalf("abort = %+v %v", res, err)
+	}
+}
+
+func TestRestackAbortAfterHandFinishedRebase(t *testing.T) {
+	f, before := abortFixture(t)
+	gittest.WriteFile(t, f.dir, "shared.txt", "resolved")
+	gittest.Run(t, f.dir, "add", "shared.txt")
+	t.Setenv("GIT_EDITOR", "true")
+	gittest.Run(t, f.dir, "rebase", "--continue")
+	if f.rev(t, "c") == before["c"] {
+		t.Fatal("the hand finished rebase should have moved c")
+	}
+	res, err := f.app.Restack(context.Background(), f.repo, app.RestackOptions{Abort: true})
+	if err != nil || !slices.Equal(res.Restored, []string{"b", "c"}) {
+		t.Fatalf("abort = %+v %v", res, err)
+	}
+	for _, b := range f.fb.graph.Stacks[0].Branches {
+		if f.rev(t, b.Name) != before[b.Name] || (b.Name != "a" && b.Head != before[b.Name]) {
+			t.Errorf("%s was not put back: head %s, metadata %s", b.Name, f.rev(t, b.Name), b.Head)
+		}
+	}
+	if f.base("b") != before["base:b"] || f.base("c") != before["base:c"] || f.rebaseActive(t) || f.stateExists() {
+		t.Fatal("abort must restore the bases and clear the saved state")
+	}
+	if gittest.Run(t, f.dir, "branch", "--show-current") != "c" || gittest.Run(t, f.dir, "status", "--short") != "" {
+		t.Fatal("abort should finish on the original branch with a clean tree")
+	}
+}
+
+type failNextMetadataUpdate struct {
+	stack.Metadata
+	err error
+}
+
+func (m *failNextMetadataUpdate) Update(ctx context.Context, repo git.Repo, fn func(*stack.Graph) error) error {
+	if m.err != nil {
+		err := m.err
+		m.err = nil
+		return err
+	}
+	return m.Metadata.Update(ctx, repo, fn)
+}
+
+func TestRestackAbortRetriesAfterHandFinishedRebase(t *testing.T) {
+	f, before := abortFixture(t)
+	gittest.WriteFile(t, f.dir, "shared.txt", "resolved")
+	gittest.Run(t, f.dir, "add", "shared.txt")
+	t.Setenv("GIT_EDITOR", "true")
+	gittest.Run(t, f.dir, "rebase", "--continue")
+	failed := errors.New("metadata unavailable")
+	meta := &failNextMetadataUpdate{Metadata: f.fb, err: failed}
+	f.app = app.New(app.Deps{Git: f.fb.git, Meta: meta, Tracker: f.fb})
+	ctx := context.Background()
+	if _, err := f.app.Restack(ctx, f.repo, app.RestackOptions{Abort: true}); !errors.Is(err, failed) || !f.stateExists() {
+		t.Fatalf("abort = %v, want failed metadata update with state kept", err)
+	}
+	res, err := f.app.Restack(ctx, f.repo, app.RestackOptions{Abort: true})
+	if err != nil || !slices.Equal(res.Restored, []string{"b", "c"}) || len(res.Notices) != 0 {
+		t.Fatalf("retried abort = %+v %v", res, err)
+	}
+	for _, n := range []string{"b", "c"} {
+		if f.rev(t, n) != before[n] || f.base(n) != before["base:"+n] {
+			t.Errorf("%s: head %s, base %s were not restored", n, f.rev(t, n), f.base(n))
+		}
+	}
+	if f.stateExists() {
+		t.Fatal("successful retry should clear the state")
 	}
 }
 

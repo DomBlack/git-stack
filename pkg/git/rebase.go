@@ -4,6 +4,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io/fs"
+	"os"
+	"path/filepath"
+	"strings"
 
 	"github.com/DomBlack/git-stack/pkg/exec"
 )
@@ -71,6 +75,44 @@ func (c *Client) Replay(ctx context.Context, repo Repo, commits []string, onto s
 
 // rebaseEnv keeps a rebase from opening an editor or a todo list.
 var rebaseEnv = []string{"GIT_EDITOR=true", "GIT_SEQUENCE_EDITOR=true"}
+
+// RebaseMatches reports whether the active rebase is for branch, from tip
+// onto onto. Both git rebase backends record these values in the worktree's
+// git dir; a rebase started after an earlier one was aborted can differ in
+// any of them. It only reads the state, leaving the rebase and index alone.
+func (c *Client) RebaseMatches(ctx context.Context, repo Repo, branch, onto, tip string) (bool, error) {
+	for _, dir := range []string{"rebase-merge", "rebase-apply"} {
+		res, err := c.gitIn(ctx, repo, "rev-parse", "--git-path", dir)
+		if err != nil {
+			return false, err
+		}
+		path := res.Out()
+		if !filepath.IsAbs(path) {
+			path = filepath.Join(repo.TopLevel, path)
+		}
+		head, err := os.ReadFile(filepath.Join(path, "head-name"))
+		if errors.Is(err, fs.ErrNotExist) {
+			continue
+		}
+		if err != nil {
+			return false, err
+		}
+		if strings.TrimSpace(string(head)) != "refs/heads/"+branch {
+			return false, nil
+		}
+		for _, field := range []struct{ name, want string }{{"onto", onto}, {"orig-head", tip}} {
+			data, err := os.ReadFile(filepath.Join(path, field.name))
+			if err != nil {
+				return false, err
+			}
+			if strings.TrimSpace(string(data)) != field.want {
+				return false, nil
+			}
+		}
+		return true, nil
+	}
+	return false, nil
+}
 
 // RebaseOnto runs `git rebase --onto onto upstream branch` without an
 // editor. It checks branch out, so the working tree must be clean enough

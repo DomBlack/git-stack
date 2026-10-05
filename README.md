@@ -35,8 +35,8 @@ If you know `gt` you already know most of this; the table is the mapping.
 |---|---|---|
 | `gt create [name]` | `git stack create [name]` (`git c`) | `-a` `-u` `-p` `-m` `--ai` |
 | `gt modify` | `git stack modify` (`git m`) | amend (or `-c` for a new commit), then restack everything above |
-| `gt restack` | `git stack restack` (`git rs`) | `--upstack` `--downstack` `--only` `--branch`; never checks anything out, bottom branch onto the local trunk included |
-| `gt continue` | `git stack continue` (`git continue`, `cont`) | finish an interrupted restack once conflicts are resolved; `-a` stages everything first |
+| `gt restack` | `git stack restack` (`git rs`) | `--upstack` `--downstack` `--only` `--branch`; bottom branch onto the local trunk included; only checks out a branch to resolve a conflict |
+| `gt continue` | `git stack continue` (`git continue`, `cont`) | finish an interrupted restack or modify once conflicts are resolved; `-a` stages everything first |
 | `gt abort` | `git stack abort` (`git abort`) | give up an interrupted restack and put every moved branch back |
 | `gt up/down/top/bottom` | `git stack up/down/top/bottom` (`git u/d/t/b`) | `down` from the bottom branch takes you to trunk |
 | `gt checkout` | `git stack checkout` (`git co`) | interactive tree picker |

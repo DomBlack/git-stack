@@ -24,7 +24,7 @@ path is resolved with `git rev-parse`; anything outside a repository returns `no
 | `stack_modify` | Amend the current branch (or `mode: commit`) and restack everything above | `mode`, `staging`, `message`, `continue`, `abort` | destructive |
 | `stack_continue` | Finish an interrupted restack or modify once the conflicts are resolved and git added | `stage_all` | destructive |
 | `stack_abort` | Give up an interrupted restack and put every moved branch back | | destructive |
-| `stack_restack` | Local rebase of the stack onto its parents, bottom branch onto the local trunk included, without a checkout; a conflict leaves one git rebase in progress | `scope` = `all`/`upstack`/`downstack`/`only`, `branch`, `continue`, `abort`, `stage_all` | destructive |
+| `stack_restack` | Local rebase of the stack onto its parents, bottom branch onto the local trunk included; only checks out a branch to resolve a conflict through one git rebase | `scope` = `all`/`upstack`/`downstack`/`only`, `branch`, `continue`, `abort`, `stage_all` | destructive |
 | `stack_navigate` | `up`/`down`/`top`/`bottom` with `steps`, or `branch` | `direction`, `steps`, `branch` | idempotent |
 | `stack_submit` | Push and create/update chained PRs; ready for review by default | `draft`, `publish`, `dry_run`, `pull_requests` `{branch: {title, body}}`, `use_ai` | destructive, open-world |
 | `stack_sync` | Fetch, update trunk, restack and push every stack (checked out or not, all worktrees); merged branches deleted per `stack.sync.prune` | `prune` (force deletion) | destructive, open-world |

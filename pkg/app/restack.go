@@ -449,16 +449,19 @@ func (a *App) restackContinue(ctx context.Context, repo git.Repo, stageAll bool)
 		return RestackResult{}, a.nothingToResume(ctx, repo, "continue")
 	}
 	res := RestackResult{Branches: append([]string{st.Conflict}, st.Remaining...)}
-	if stageAll {
-		if err := a.d.Git.Add(ctx, repo, git.AddAll); err != nil {
-			return res, err
-		}
-	}
 	active, err := a.d.Git.RebaseInProgress(ctx, repo)
 	if err != nil {
 		return res, err
 	}
 	if active {
+		if err := a.checkRestackRebase(ctx, repo, st); err != nil {
+			return res, err
+		}
+		if stageAll {
+			if err := a.d.Git.Add(ctx, repo, git.AddAll); err != nil {
+				return res, err
+			}
+		}
 		stopped, err := a.d.Git.RebaseContinue(ctx, repo)
 		if err != nil {
 			return res, err
@@ -467,11 +470,12 @@ func (a *App) restackContinue(ctx context.Context, repo git.Repo, stageAll bool)
 			files, _ := a.d.Git.ConflictedFiles(ctx, repo)
 			return res, conflictError(st.Conflict, st.Onto, files)
 		}
-	} else if !a.isAncestor(ctx, repo, st.NewBase, st.Conflict) {
+	}
+	if !a.isAncestor(ctx, repo, st.NewBase, st.Conflict) {
 		// Finished by hand would have put the new base under the branch;
 		// this rebase was abandoned instead.
 		return res, stack.Newf(stack.KindInvalidArgs, "the rebase of %s was abandoned outside git-stack", st.Conflict).
-			WithSteps(st.Command+" to try again", "or git stack abort to put the moved branches back")
+			WithSteps("git stack abort to put the moved branches back, then " + st.Command + " again")
 	}
 	earlier := slices.Clone(st.Moved)
 	run := &restackRun{repo: repo, command: st.Command, trunk: st.Trunk, originalBranch: st.OriginalBranch, moved: st.Moved, state: st}
@@ -497,6 +501,20 @@ func (a *App) restackContinue(ctx context.Context, repo git.Repo, stageAll bool)
 		res.Moved = withEarlierMoves(earlier, res.Moved, run.stackName)
 	}
 	return res, err
+}
+
+// checkRestackRebase refuses a foreign rebase before either recovery
+// command can stage files, advance it or abort it.
+func (a *App) checkRestackRebase(ctx context.Context, repo git.Repo, st *restackState) error {
+	ours, err := a.d.Git.RebaseMatches(ctx, repo, st.Conflict, st.NewBase, st.ConflictTip)
+	if err != nil {
+		return err
+	}
+	if !ours {
+		return stack.New(stack.KindInvalidArgs, "a git rebase git-stack did not start is in progress").
+			WithSteps("finish it with git rebase --continue or git rebase --abort, then git stack abort")
+	}
+	return nil
 }
 
 // withEarlierMoves puts the moves an operation made before this continue
@@ -540,6 +558,9 @@ func (a *App) restackAbort(ctx context.Context, repo git.Repo) (RestackResult, e
 		if active, err := a.d.Git.RebaseInProgress(ctx, repo); err != nil {
 			return err
 		} else if active {
+			if err := a.checkRestackRebase(ctx, repo, st); err != nil {
+				return err
+			}
 			if err := a.d.Git.RebaseAbort(ctx, repo); err != nil {
 				return err
 			}
@@ -547,6 +568,20 @@ func (a *App) restackAbort(ctx context.Context, repo git.Repo) (RestackResult, e
 		local, err := a.localBranches(ctx, repo)
 		if err != nil {
 			return err
+		}
+		if lb, ok := local[st.Conflict]; ok && lb.Head != st.ConflictTip &&
+			!slices.ContainsFunc(st.Moved, func(m movedRef) bool { return m.Name == st.Conflict }) &&
+			a.isAncestor(ctx, repo, st.NewBase, lb.Head) {
+			// A rebase finished by hand was never recorded by continue.
+			// Save its move before undoing it so a retried abort can still
+			// restore the metadata after a later failure.
+			st.Moved = append(st.Moved, movedRef{
+				Name: st.Conflict, From: st.ConflictTip, To: lb.Head,
+				OldBase: st.ConflictOldBase, Worktree: lb.Worktree,
+			})
+			if err := saveRestackState(repo, st); err != nil {
+				return err
+			}
 		}
 		dirty := newDirtyCache()
 		var updates []git.RefUpdate

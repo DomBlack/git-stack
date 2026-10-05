@@ -433,7 +433,7 @@ func (s *Server) registerTools() {
 	mcp.AddTool(s.mcp, &mcp.Tool{
 		Name:        "stack_restack",
 		Title:       "Restack",
-		Description: "Rebase the current stack's branches onto their parents locally (no fetch). Scopes: all, upstack, downstack. On conflicts returns code conflict; resolve, git add, then call again with continue: true or abort: true.",
+		Description: "Rebase the stack's branches onto their parents locally (no fetch), including the bottom branch onto the local trunk. Scopes: all, upstack, downstack, only; branch selects where the scope starts. Only checks out a branch when a conflict needs a git rebase. On conflicts returns code conflict with the files; resolve, git add (or stage_all), then call stack_continue, or stack_abort to put the moved branches back. continue and abort also work on this tool.",
 		Annotations: &mcp.ToolAnnotations{DestructiveHint: boolp(true), OpenWorldHint: boolp(false)},
 	}, s.restack)
 	mcp.AddTool(s.mcp, &mcp.Tool{
