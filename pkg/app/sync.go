@@ -149,7 +149,10 @@ func (a *App) Sync(ctx context.Context, repo git.Repo, o SyncOptions) (SyncResul
 	if err := a.syncTrunks(ctx, st, o, &res); err != nil {
 		return res, err
 	}
-	// Later tasks: cleanup, remote fast forward, restack.
+	if err := a.syncCleanup(ctx, st, o, &res); err != nil {
+		return res, err
+	}
+	// Later tasks: remote fast forward, restack.
 
 	if a.d.Forge != nil {
 		if _, err := a.RefreshPRs(ctx, repo); err != nil {
