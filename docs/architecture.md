@@ -201,7 +201,10 @@ itself: one `git fetch --prune` of the first trunk's remote (`branch.<trunk>.rem
 `origin`; a second trunk that tracks another remote is still compared with the first
 remote's copy, and gets a `no-remote` notice when there is none); fast forward every trunk (a diverged trunk is only reset
 with `-f` or a yes at the prompt, a dirty checkout gets a notice); delete branches whose PR
-merged or closed, whose tip is already in trunk, or, for untracked branches, whose merged PR
+merged or closed, whose tip is already in trunk (a branch sitting exactly on the trunk tip
+only counts when its recorded base is an older commit it has moved past, i.e. trunk was fast
+forwarded onto it; an empty branch has base and tip the same and stays, and restack leaves
+that older base alone so the next sync still sees it), or, for untracked branches, whose merged PR
 was for exactly the commit they're on (that last one is how branches orphaned by a dead
 worktree get cleaned up), guarded by the PR's merge commit being in trunk so a PR merged
 into its parent branch stays; fast forward any tracked branch the remote is strictly ahead

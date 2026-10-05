@@ -145,7 +145,13 @@ func (a *App) planRestack(ctx context.Context, st *syncState, s *stack.Stack) re
 			continue
 		}
 		if a.ancestor(ctx, st, parent, tip) {
-			p.bases[b.Name] = parent
+			// A branch sitting exactly on its parent keeps an older base: that
+			// is what tells cleanup it was fast forwarded into trunk rather
+			// than created empty, and it stays correct (the base is still
+			// behind the tip, there are just no commits of its own left).
+			if tip != parent || b.Base == "" {
+				p.bases[b.Name] = parent
+			}
 			parentName, parent, oldParent = b.Name, tip, tip
 			continue
 		}
