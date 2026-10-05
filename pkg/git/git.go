@@ -7,6 +7,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
+	"slices"
 	"strings"
 	"time"
 
@@ -128,6 +130,17 @@ func sleepCtx(ctx context.Context, d time.Duration) error {
 // gitIn runs git inside the repo's working tree.
 func (c *Client) gitIn(ctx context.Context, repo Repo, args ...string) (exec.Result, error) {
 	return c.git(ctx, repo.TopLevel, args...)
+}
+
+// gitInput runs a captured git command with stdin and extra environment.
+// It does not retry on a held index lock; the commands that use it (ref
+// transactions, commit-tree, patch-id) never take the index.
+func (c *Client) gitInput(ctx context.Context, repo Repo, stdin io.Reader, env []string, args ...string) (exec.Result, error) {
+	return c.run.Run(ctx, exec.Cmd{
+		Name: "git", Args: args, Dir: repo.TopLevel,
+		Env:   append(slices.Clone(baseEnv), env...),
+		Stdin: stdin,
+	})
 }
 
 // Passthrough runs git with the terminal attached (editors, `add -p`).

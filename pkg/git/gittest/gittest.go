@@ -76,3 +76,15 @@ func Commit(t testing.TB, dir, name, content, message string) string {
 	Run(t, dir, "commit", "-q", "-m", message)
 	return Run(t, dir, "rev-parse", "HEAD")
 }
+
+// InitRemote creates a bare clone of dir as its origin, pushes every branch
+// and sets their upstreams. It returns the bare repository's path. Tests
+// move the remote by committing on a detached HEAD and pushing to it.
+func InitRemote(t testing.TB, dir string) string {
+	t.Helper()
+	bare := t.TempDir()
+	Run(t, bare, "init", "-q", "--bare", "-b", "main")
+	Run(t, dir, "remote", "add", "origin", bare)
+	Run(t, dir, "push", "-q", "-u", "origin", "--all")
+	return bare
+}
