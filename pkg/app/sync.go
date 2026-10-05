@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
+	"sync"
 
 	"github.com/DomBlack/git-stack/pkg/forge"
 	"github.com/DomBlack/git-stack/pkg/git"
@@ -103,6 +105,7 @@ type syncState struct {
 	local     map[string]git.Branch // every local branch, with tip and checkout location
 	worktrees []git.Worktree
 	prs       map[string]forge.PullRequest // best PR per head branch
+	mu        sync.Mutex                   // guards dirty: stacks are planned in parallel
 	dirty     map[string]bool              // worktree path -> dirty, cached
 }
 
@@ -116,14 +119,20 @@ func (st *syncState) worktreeRepo(path string) git.Repo {
 // isDirty reports whether a worktree has staged or unstaged changes.
 // Untracked files don't count.
 func (st *syncState) isDirty(ctx context.Context, g *git.Client, path string) bool {
-	if v, ok := st.dirty[path]; ok {
+	st.mu.Lock()
+	v, ok := st.dirty[path]
+	st.mu.Unlock()
+	if ok {
 		return v
 	}
 	r := st.worktreeRepo(path)
 	staged, _ := g.HasStagedChanges(ctx, r)
 	unstaged, _ := g.HasUnstagedChanges(ctx, r)
-	st.dirty[path] = staged || unstaged
-	return st.dirty[path]
+	v = staged || unstaged
+	st.mu.Lock()
+	st.dirty[path] = v
+	st.mu.Unlock()
+	return v
 }
 
 // Sync fetches, moves trunk, deletes merged branches, pulls in branches the
@@ -155,12 +164,33 @@ func (a *App) Sync(ctx context.Context, repo git.Repo, o SyncOptions) (SyncResul
 	if err := a.syncRemote(ctx, st, &res); err != nil {
 		return res, err
 	}
-	// Later task: restack.
+	var failed []string
+	if !o.NoRestack {
+		if failed, err = a.syncRestack(ctx, st, &res); err != nil {
+			return res, err
+		}
+	}
 
 	if a.d.Forge != nil {
 		if _, err := a.RefreshPRs(ctx, repo); err != nil {
 			a.d.Log.Debug("refresh after sync", "err", err)
 		}
+	}
+	if len(res.Conflicts) > 0 || len(failed) > 0 {
+		var parts, steps []string
+		if n := len(res.Conflicts); n > 0 {
+			names := make([]string, n)
+			for i, c := range res.Conflicts {
+				names[i] = c.Branch
+			}
+			parts = append(parts, fmt.Sprintf("%d %s (%s)", n, pluralise(n, "conflict", "conflicts"), joinNames(names)))
+			steps = append(steps, "run git stack restack from the conflicting branch to resolve it")
+		}
+		if n := len(failed); n > 0 {
+			parts = append(parts, fmt.Sprintf("%d %s not restacked (%s)", n, pluralise(n, "stack", "stacks"), joinNames(failed)))
+			steps = append(steps, "see the notes above, then run git stack sync again")
+		}
+		return res, stack.Newf(stack.KindConflict, "%s; everything else is in sync", strings.Join(parts, "; ")).WithSteps(steps...)
 	}
 	return res, nil
 }
