@@ -197,7 +197,9 @@ nothing for it to select.
 runs, so covering every stack meant checking each one out in turn, it never forgets a stack
 whose every PR merged, it can't move trunk when there are no stacks, and a linked worktree's
 metadata dies with the worktree. So `git stack sync` does what `gt sync` can be seen to do,
-itself: one `git fetch --prune`; fast forward every trunk (a diverged trunk is only reset
+itself: one `git fetch --prune` of the first trunk's remote (`branch.<trunk>.remote`, else
+`origin`; a second trunk that tracks another remote is still compared with the first
+remote's copy, and gets a `no-remote` notice when there is none); fast forward every trunk (a diverged trunk is only reset
 with `-f` or a yes at the prompt, a dirty checkout gets a notice); delete branches whose PR
 merged or closed, whose tip is already in trunk, or, for untracked branches, whose merged PR
 was for exactly the commit they're on (that last one is how branches orphaned by a dead
@@ -205,8 +207,12 @@ worktree get cleaned up), guarded by the PR's merge commit being in trunk so a P
 into its parent branch stays; fast forward any tracked branch the remote is strictly ahead
 of, and say so when the remote holds commits we don't have (by patch id, so our own
 unpushed restacks don't nag); then restack. A tracked branch whose merged or closed PR has a
-head commit different from the local tip is kept with a notice, even under `-f`, in case
-there is work on it the PR never saw. A candidate checked out in the current worktree whose
+head commit different from the local tip is kept with a notice, even under `-f`, when it
+holds a change (by patch id, ignoring what came from trunk) the PR never saw; a branch
+that sync restacked since its last push differs only by commit id and is deleted as usual.
+A branch recorded in two worktrees' metadata files is read from the first; once it is
+deleted the stale record in the other file shows up as gone on the next sync and is
+dropped then, so it heals over two syncs. A candidate checked out in the current worktree whose
 trunk is checked out in another worktree leaves HEAD detached at the trunk tip rather than
 failing. Consent for deletion is `stack.sync.prune` (`always` by default), `-d`, or `-f`;
 with no terminal and `ask`, branches are kept with a notice. Nothing is pushed; `submit`
@@ -217,11 +223,15 @@ does that.
 with `git merge-tree --write-tree` and `git commit-tree`, keeping author, date and message.
 The fallback range for a branch with no usable recorded base starts at the merge base with
 the parent's old tip, so when a squash merged parent was deleted and no base was recorded
-the parent's commits get replayed again, which is why the metadata base matters.
+the parent's commits get replayed again, which is why the metadata base matters. A
+replayed commit whose changes are already in the new parent comes out with the parent's
+tree and is dropped, as `git rebase` drops it, so that case costs nothing either.
 Stacks are computed in parallel since that only creates objects, then each stack's branches
 move in one `git update-ref --stdin` transaction with expected old values, so a stack moves
 whole or not at all. A branch checked out in a clean worktree gets `reset --hard` there; a
-dirty one is left and the branches above rebase onto its current tip. A conflict stops that
+dirty one, or one whose move would add a path that is an untracked file in that worktree
+(which `reset --hard` would delete), is left and the branches above rebase onto its current
+tip. A diverged trunk reset with `-f` gets the same untracked file check. A conflict stops that
 stack at that branch with a notice pointing at `git stack restack`, which still goes through
 `gh stack rebase` and its interactive flow; the other stacks finish, and the command exits
 non-zero at the end. A git error while planning a stack, a refused ref transaction, or a

@@ -8,9 +8,10 @@ import (
 )
 
 // node is an ordered JSON tree. Objects keep their member order and anything
-// that is not an object or an array is kept as its raw bytes, so a file
-// edited through it keeps members we don't model and the order gh stack
-// wrote them in.
+// that is not an object or an array is kept as a value, so a file edited
+// through it keeps members we don't model and the order gh stack wrote them
+// in. Scalars keep their value but the encoder may re-escape strings, so
+// they are not guaranteed to come back byte for byte.
 type node struct {
 	kind    byte // '{', '[' or 0 for a scalar
 	members []member
