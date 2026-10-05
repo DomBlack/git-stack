@@ -223,3 +223,52 @@ func TestSyncPlanningErrorFailsOneStack(t *testing.T) {
 		t.Errorf("notices = %v", res.Notices)
 	}
 }
+
+func TestSyncRestacksBranchCheckedOutInLinkedWorktree(t *testing.T) {
+	f := newSyncFixture(t) // on b
+	wt := filepath.Join(t.TempDir(), "wt")
+	gittest.Run(t, f.dir, "worktree", "add", "-q", wt, "a")
+	f.advanceRemote(t, "main", "r.txt")
+	res, err := f.sync(t, app.SyncOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := restacked(res, "a"); !ok {
+		t.Fatalf("a not restacked: %+v %v", res.Restacked, res.Notices)
+	}
+	if got := gittest.Run(t, wt, "rev-parse", "HEAD"); got != f.rev(t, "a") {
+		t.Errorf("linked worktree at %s, a at %s", got, f.rev(t, "a"))
+	}
+	if _, err := os.Stat(filepath.Join(wt, "r.txt")); err != nil {
+		t.Error("the linked worktree's tree should follow a")
+	}
+	if st := gittest.Run(t, wt, "status", "--porcelain"); st != "" {
+		t.Errorf("linked worktree should be clean: %q", st)
+	}
+}
+
+func TestSyncRefusedRefTransactionFailsTheStack(t *testing.T) {
+	f := newSyncFixture(t)
+	aBefore, bBefore := f.rev(t, "a"), f.rev(t, "b")
+	f.advanceRemote(t, "main", "r.txt")
+	// Another git process holding a's ref lock makes the transaction fail.
+	lock := filepath.Join(f.dir, ".git", "refs", "heads", "a.lock")
+	if err := os.WriteFile(lock, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Remove(lock) })
+	res, err := f.sync(t, app.SyncOptions{})
+	var se *stack.Error
+	if !errors.As(err, &se) || se.Kind != stack.KindConflict || !strings.Contains(se.Msg, "1 stack not restacked (a)") {
+		t.Fatalf("error = %v", err)
+	}
+	if f.rev(t, "a") != aBefore || f.rev(t, "b") != bBefore || len(res.Restacked) != 0 {
+		t.Errorf("a stack whose transaction failed must not move: %+v", res.Restacked)
+	}
+	if !strings.Contains(strings.Join(res.Notices, "\n"), "moved while syncing") {
+		t.Errorf("notices = %v", res.Notices)
+	}
+	if trunk(res, "main").Status != app.TrunkFastForwarded {
+		t.Errorf("the trunk still moves: %+v", res.Trunks)
+	}
+}

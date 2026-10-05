@@ -2,6 +2,7 @@
 package exectest
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"io"
@@ -103,6 +104,8 @@ func (f *Fake) Run(_ context.Context, c exec.Cmd) (exec.Result, error) {
 	if c.Stdin != nil {
 		b, _ := io.ReadAll(c.Stdin)
 		call.Stdin = string(b)
+		// Handlers and the fallback still get to read it.
+		c.Stdin = bytes.NewReader(b)
 	}
 
 	f.mu.Lock()

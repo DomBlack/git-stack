@@ -113,6 +113,15 @@ func TestSyncPrunePolicy(t *testing.T) {
 			t.Errorf("delete-all: %+v %v", res.Deleted, err)
 		}
 	})
+	t.Run("force beats never", func(t *testing.T) {
+		f := newSyncFixture(t)
+		f.deps.Config.SyncPrune = config.SyncPruneNever
+		f.mergeOnRemote(t, "a", 0)
+		res, err := f.sync(t, app.SyncOptions{Force: true, NoRestack: true})
+		if _, ok := deleted(res, "a"); err != nil || !ok || branchExists(t, f.dir, "a") {
+			t.Errorf("force: %+v %v", res.Deleted, err)
+		}
+	})
 	t.Run("ask yes", func(t *testing.T) {
 		f := newSyncFixture(t)
 		f.deps.Config.SyncPrune = config.SyncPruneAsk
