@@ -181,34 +181,18 @@ unless `-d`/`-p` is passed; non-interactively it drafts. `stack.submit.default` 
 question.
 
 **What we deliberately don't mirror from `gt` (yet).** `create --insert`, `restack --only`,
-`submit --update-only`, `submit --edit-title/--edit-description`, `sync --no-restack` and
+`submit --update-only`, `submit --edit-title/--edit-description` and
 `modify --into` all need a backend that can do more than gh stack can. Each prints a single
 line saying why.
 
-**Sync covers every stack, like gt.** gh stack keeps its metadata per worktree
-(`.git/worktrees/<name>/gh-stack`), so a stack created in a linked worktree is invisible from
-the main checkout and can only be synced from the worktree that holds it, and `gh stack sync`
-only syncs the stack of the branch checked out where it runs. The metadata adapter reads every
-worktree's file and merges them (current worktree first, a branch keeps its first stack), which
-is what makes `git stack` show everything on the machine. `sync` then plans one `gh stack
-sync` per stack, in the stack's home worktree: your current stack first, then the rest of this
-worktree's, then other worktrees'. A stack with none of its branches checked out there gets one
-checked out (top first, skipping branches checked out in other worktrees) for the duration and
-the previous branch (or detached HEAD) restored afterwards; that needs a clean worktree, so a
-dirty one gets a notice instead, as does a stack whose every branch is checked out somewhere
-else. `--all` is accepted for gt muscle memory and changes nothing.
-
-Two gh stack facts shape the planning. `sync --prune` deletes a merged branch but keeps it in
-the metadata, so after the first prune there are always stacks listing branches that no
-longer exist (and a stack whose every PR merged lingers forever; gh stack can only forget it
-with `unstack --local` from one of its branches, which are gone). So only branches that
-still exist are candidates for the checkout, a stack with none left is skipped (silently when
-every PR merged, with a notice when they haven't, because then someone deleted the branches
-by hand), and an open branch is preferred over a merged one so prune doesn't delete the
-branch we're standing on. And a linked worktree's metadata dies with the worktree, so
-branches created there are untracked once it's removed. Finally, one stack failing doesn't
-stop the rest: like gt, the others are synced, the failures are reported per stack and the
-command exits non-zero at the end.
+**Sync is native, not `gh stack sync`.** Running `gh stack sync` once per stack meant checking
+every stack out in turn, never moved trunk when no stack was checked out, and could not forget a
+finished stack. `sync` now fetches the trunk's remote once and fast forwards every trunk: by ref
+when it is not checked out, with a fast forward in its worktree when it is, and a dirty
+checkout is a notice and a skip, never an error. A trunk that has diverged from the remote is
+only reset with `-f` or a yes at the prompt. Deleting finished branches, fast forwarding
+branches the remote advanced and restacking follow in later phases. Flags match gt: `-f`,
+`-d/--delete-all` and `--no-restack`; `--all` is gone because every stack is always synced.
 
 **gh stack treats queued PRs as gone; we put the bases back.** When a branch's PR is sitting
 in a merge queue, `gh stack submit` skips it like a merged one and bases the next PR on the

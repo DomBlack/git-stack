@@ -2,7 +2,7 @@ package cmd
 
 import (
 	"fmt"
-	"io"
+	"strings"
 
 	"github.com/spf13/cobra"
 
@@ -12,35 +12,48 @@ import (
 func newSyncCmd(c *cli) *cobra.Command {
 	var (
 		force     bool
-		all       bool
+		deleteAll bool
 		noRestack bool
 	)
 	cmd := &cobra.Command{
 		Use:   "sync",
-		Short: "Sync every stack with the remote: fetch, update trunk, restack, push, prune merged branches",
-		Long: `Fetch the remote, fast-forward trunk, restack and push every stack, like gt sync: the
-one you are on first, then the rest, whether or not they are checked out and whichever
-worktree holds them (a stack that is not checked out gets a branch checked out in its
-worktree for the sync, then the previous branch back). Branches whose pull requests have
-merged are deleted; set git config stack.sync.prune to "ask" to be asked first or "never"
-to keep them. -f deletes them whatever the config says.`,
+		Short: "Fetch, move trunk, delete merged branches and restack every stack",
+		Long: `Sync every stack with the remote, like gt sync: fetch, fast forward each trunk,
+delete branches whose pull requests merged or closed (set git config stack.sync.prune to
+"ask" to be asked first or "never" to keep them), fast forward branches that moved on the
+remote, then restack every stack onto its updated parents without checking anything out.
+Nothing is pushed; git stack submit does that. A trunk that has diverged from the remote
+is only reset with -f or a yes at the prompt.`,
 		Args:              cobra.NoArgs,
 		ValidArgsFunction: completeNothing,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
-			if noRestack {
-				return fmt.Errorf("--no-restack is not available: gh stack decides itself whether a restack is needed")
-			}
 			a, repo, err := c.app(ctx)
 			if err != nil {
 				return err
 			}
 			rep := c.report()
-			res, err := a.Sync(ctx, repo, app.SyncOptions{Prune: force, All: all})
-			// A stack failing does not stop the others, so there is output
-			// and there are notices to show even when err is set.
-			if res.Output != "" {
-				_, _ = io.WriteString(rep.Stream(), res.Output+"\n")
+			res, err := a.Sync(ctx, repo, app.SyncOptions{Force: force, DeleteAll: deleteAll, NoRestack: noRestack})
+			// A conflict in one stack doesn't stop the others, so there is
+			// always something to show before the error.
+			for _, t := range res.Trunks {
+				switch t.Status {
+				case app.TrunkFastForwarded:
+					rep.Info("%s fast forwarded to %s", rep.Branch(t.Name), rep.SHA(t.To))
+				case app.TrunkReset:
+					rep.Info("%s reset to %s/%s at %s", rep.Branch(t.Name), res.Remote, t.Name, rep.SHA(t.To))
+				case app.TrunkAhead:
+					rep.Info("%s is ahead of %s/%s; left alone", rep.Branch(t.Name), res.Remote, t.Name)
+				}
+			}
+			for _, d := range res.Deleted {
+				rep.Info("deleted %s (%s, was %s)", rep.Branch(d.Name), d.Reason, rep.SHA(d.Head))
+			}
+			for _, u := range res.Updated {
+				rep.Info("%s fast forwarded to %s from %s", rep.Branch(u.Name), rep.SHA(u.To), res.Remote)
+			}
+			for _, m := range res.Restacked {
+				rep.Info("restacked %s", rep.Branch(m.Name))
 			}
 			for _, n := range res.Notices {
 				rep.Warn("%s", n)
@@ -48,21 +61,30 @@ to keep them. -f deletes them whatever the config says.`,
 			if err != nil {
 				return err
 			}
-			if !res.Aborted {
-				switch n := len(res.Stacks); {
-				case n == 0:
-					rep.Success("Nothing to sync")
-				case n > 1:
-					rep.Success("Synced %d stacks", n)
-				default:
-					rep.Success("Synced")
-				}
-			}
+			rep.Success("%s", syncSummary(res))
 			return nil
 		},
 	}
-	cmd.Flags().BoolVarP(&force, "force", "f", false, "delete merged branches even when stack.sync.prune is ask or never")
-	cmd.Flags().BoolVarP(&all, "all", "a", false, "accepted for gt parity; every stack is synced anyway")
-	cmd.Flags().BoolVar(&noRestack, "no-restack", false, "not available with gh stack")
+	cmd.Flags().BoolVarP(&force, "force", "f", false, "reset a diverged trunk and delete merged or closed branches without asking")
+	cmd.Flags().BoolVarP(&deleteAll, "delete-all", "d", false, "delete merged or closed branches without asking")
+	cmd.Flags().BoolVar(&noRestack, "no-restack", false, "skip restacking")
 	return cmd
+}
+
+// syncSummary is the one line result: "Synced: 2 branches deleted, 3 restacked".
+func syncSummary(res app.SyncResult) string {
+	var parts []string
+	if n := len(res.Deleted); n > 0 {
+		parts = append(parts, fmt.Sprintf("%d %s deleted", n, branchNoun(n)))
+	}
+	if n := len(res.Updated); n > 0 {
+		parts = append(parts, fmt.Sprintf("%d %s updated from the remote", n, branchNoun(n)))
+	}
+	if n := len(res.Restacked); n > 0 {
+		parts = append(parts, fmt.Sprintf("%d restacked", n))
+	}
+	if len(parts) == 0 {
+		return "Synced, nothing to do"
+	}
+	return "Synced: " + strings.Join(parts, ", ")
 }

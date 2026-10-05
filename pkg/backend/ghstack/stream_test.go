@@ -11,10 +11,10 @@ import (
 	"github.com/DomBlack/git-stack/pkg/stack"
 )
 
-// TestSubmitAndSyncStreamOutput checks that with WithOutput the backend
+// TestSubmitStreamOutput checks that with WithOutput the backend
 // relays gh stack's progress live and tells callers not to print it again,
 // while without it the output is only returned.
-func TestSubmitAndSyncStreamOutput(t *testing.T) {
+func TestSubmitStreamOutput(t *testing.T) {
 	newFake := func() *exectest.Fake {
 		f := exectest.New()
 		f.On("gh", "extension", "list").Reply("gh stack\tgithub/gh-stack\tv0.1.1\n")
@@ -23,9 +23,6 @@ func TestSubmitAndSyncStreamOutput(t *testing.T) {
 				t.Error("submit should pass the output writer as Stream")
 			}
 			return exec.Result{Stderr: []byte("Pushing to origin...\n✓ Created PR #1\n")}, nil
-		})
-		f.On("gh", "stack", "sync").Do(func(exec.Cmd) (exec.Result, error) {
-			return exec.Result{Stderr: []byte("Fetching...\nSynced.\n")}, nil
 		})
 		return f
 	}
@@ -42,14 +39,6 @@ func TestSubmitAndSyncStreamOutput(t *testing.T) {
 	}
 	if live.String() != "Pushing to origin...\n✓ Created PR #1\n" {
 		t.Errorf("live output = %q", live.String())
-	}
-	live.Reset()
-	sres, err := b.Sync(context.Background(), repo, stack.SyncOptions{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !sres.Streamed || !bytes.Contains(live.Bytes(), []byte("Synced.")) {
-		t.Errorf("sync result = %+v, live = %q", sres, live.String())
 	}
 
 	// No writer (the MCP server): nothing streamed, output returned.

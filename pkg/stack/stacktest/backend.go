@@ -27,8 +27,6 @@ type Backend struct {
 	// Submits records submit options; SubmitFn, when set, runs on submit.
 	Submits  []stack.SubmitOptions
 	SubmitFn func(o stack.SubmitOptions) error
-	Syncs    []stack.SyncOptions
-	SyncOut  string
 }
 
 // New returns a Backend over g with the given initial graph.
@@ -142,18 +140,10 @@ func (b *Backend) Submit(_ context.Context, _ git.Repo, o stack.SubmitOptions) (
 	return stack.SubmitResult{Output: "submitted"}, nil
 }
 
-func (b *Backend) Sync(_ context.Context, _ git.Repo, o stack.SyncOptions) (stack.SyncResult, error) {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	b.Syncs = append(b.Syncs, o)
-	return stack.SyncResult{Output: b.SyncOut}, nil
-}
-
 // Compile-time checks.
 var (
 	_ stack.Metadata  = (*Backend)(nil)
 	_ stack.Tracker   = (*Backend)(nil)
 	_ stack.Restacker = (*Backend)(nil)
 	_ stack.Submitter = (*Backend)(nil)
-	_ stack.Syncer    = (*Backend)(nil)
 )

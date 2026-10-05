@@ -57,7 +57,7 @@ agents such as Claude Code and Codex can drive git-stack. Register it with
 					}
 					backend := ghstack.New(runner, g)
 					return app.New(app.Deps{
-						Git: g, Meta: backend, Tracker: backend, Restack: backend, Submit: backend, Sync: backend,
+						Git: g, Meta: backend, Tracker: backend, Restack: backend, Submit: backend,
 						Forge: github.New(runner),
 						AI: claudecode.New(runner, claudecode.Config{
 							Command: cfg.AICommand, Model: cfg.AIModel, ExtraPrompt: cfg.AIExtraPrompt, Timeout: cfg.AITimeout,

@@ -292,7 +292,9 @@ func (s *Server) submit(ctx context.Context, req *mcp.CallToolRequest, in submit
 
 type syncInput struct {
 	repoArg
-	Prune bool `json:"prune,omitempty" jsonschema:"delete merged branches even when git config stack.sync.prune is ask or never (the default policy, always, deletes them anyway)"`
+	Prune     bool `json:"prune,omitempty" jsonschema:"delete merged or closed branches even when git config stack.sync.prune is ask or never (the default policy, always, deletes them anyway)"`
+	Force     bool `json:"force,omitempty" jsonschema:"also reset a trunk that has diverged from the remote"`
+	NoRestack bool `json:"no_restack,omitempty" jsonschema:"skip restacking"`
 }
 
 func (s *Server) sync(ctx context.Context, req *mcp.CallToolRequest, in syncInput) (*mcp.CallToolResult, app.SyncResult, error) {
@@ -300,9 +302,9 @@ func (s *Server) sync(ctx context.Context, req *mcp.CallToolRequest, in syncInpu
 	if err != nil {
 		return nil, app.SyncResult{}, wrapErr(err)
 	}
-	res, err := a.Sync(ctx, repo, app.SyncOptions{Prune: in.Prune})
+	res, err := a.Sync(ctx, repo, app.SyncOptions{DeleteAll: in.Prune, Force: in.Force, NoRestack: in.NoRestack})
 	if err != nil {
-		return nil, app.SyncResult{}, wrapErr(err)
+		return nil, res, wrapErr(err)
 	}
 	return nil, res, nil
 }
@@ -374,7 +376,7 @@ func (s *Server) registerTools() {
 	mcp.AddTool(s.mcp, &mcp.Tool{
 		Name:        "stack_sync",
 		Title:       "Sync the stack",
-		Description: "Fetch from the remote, update trunk, restack and push every stack (checked out or not, in any worktree; a stack that is not checked out has a branch checked out in its worktree for the sync and the previous branch restored), deleting merged branches according to stack.sync.prune (always by default; prune forces it).",
+		Description: "Fetch from the remote, fast forward trunk, delete branches whose pull requests merged or closed (per stack.sync.prune, always by default; prune forces it), fast forward branches that moved on the remote, and restack every stack without checking anything out. Nothing is pushed; stack_submit pushes.",
 		Annotations: &mcp.ToolAnnotations{DestructiveHint: boolp(true), OpenWorldHint: boolp(true)},
 	}, s.sync)
 }

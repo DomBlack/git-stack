@@ -69,6 +69,7 @@ func newHarness(t *testing.T, roots ...string) *harness {
 	gittest.Commit(t, dir, "a.txt", "a", "feat: a")
 	gittest.Run(t, dir, "switch", "-q", "-c", "b")
 	gittest.Commit(t, dir, "b.txt", "b", "feat: b")
+	gittest.InitRemote(t, dir)
 
 	g := git.New(exec.New())
 	repo, err := g.Discover(context.Background(), dir)
@@ -109,7 +110,7 @@ func newHarness(t *testing.T, roots ...string) *harness {
 			cfg := config.Defaults()
 			cfg.CacheTTL = 0
 			return app.New(app.Deps{
-				Git: g, Meta: backend, Tracker: backend, Restack: backend, Submit: backend, Sync: backend,
+				Git: g, Meta: backend, Tracker: backend, Restack: backend, Submit: backend,
 				Forge: ff, Cache: cache.New(repo), Config: cfg,
 			}), nil
 		},
@@ -333,11 +334,10 @@ func TestSubmitAndSync(t *testing.T) {
 		t.Errorf("no notices expected when texts were supplied: %v", sr.Notices)
 	}
 
-	h.backend.SyncOut = "Stack synced"
 	var sy app.SyncResult
-	h.call("stack_sync", map[string]any{"prune": true}, &sy)
-	if len(h.backend.Syncs) != 1 || !h.backend.Syncs[0].Prune || sy.Output != "Stack synced" {
-		t.Errorf("sync = %+v %+v", sy, h.backend.Syncs)
+	h.call("stack_sync", map[string]any{"prune": true, "no_restack": true}, &sy)
+	if sy.Remote != "origin" || len(sy.Trunks) != 1 || sy.Trunks[0].Status != app.TrunkUpToDate {
+		t.Errorf("sync = %+v", sy)
 	}
 }
 

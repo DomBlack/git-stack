@@ -83,25 +83,3 @@ type SubmitResult struct {
 type Submitter interface {
 	Submit(ctx context.Context, repo git.Repo, o SubmitOptions) (SubmitResult, error)
 }
-
-// SyncOptions controls Syncer.Sync.
-type SyncOptions struct {
-	// Prune deletes local branches whose PRs were merged.
-	Prune bool
-	// Dir is the worktree to sync in; empty means the repository's own
-	// working tree. gh stack syncs the stack of the branch checked out there.
-	Dir string
-}
-
-// SyncResult carries the backend's human-readable output for relaying.
-type SyncResult struct {
-	Output string
-	// Streamed is true when Output was already written to the user's
-	// terminal as it was produced, so callers must not print it again.
-	Streamed bool
-}
-
-// Syncer fetches, updates trunk, restacks and prunes the current stack.
-type Syncer interface {
-	Sync(ctx context.Context, repo git.Repo, o SyncOptions) (SyncResult, error)
-}

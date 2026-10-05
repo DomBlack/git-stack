@@ -61,7 +61,7 @@ created so the parent's commit is never rewritten.`,
 				rep.Success("Committed to %s  %s %s", rep.Branch(res.Branch), rep.SHA(res.Commit.Short()), res.Commit.Subject)
 			}
 			if n := len(res.Restacked); n > 0 {
-				rep.Success("Restacked %d %s above %s", n, plural(n, "branch", "branches"), rep.Branch(res.Branch))
+				rep.Success("Restacked %d %s above %s", n, branchNoun(n), rep.Branch(res.Branch))
 			}
 			return nil
 		},
@@ -79,9 +79,10 @@ created so the parent's commit is never rewritten.`,
 	return cmd
 }
 
-func plural(n int, one, many string) string {
+// branchNoun is "branch" or "branches" for n.
+func branchNoun(n int) string {
 	if n == 1 {
-		return one
+		return "branch"
 	}
-	return many
+	return "branches"
 }

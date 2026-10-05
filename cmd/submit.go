@@ -66,7 +66,7 @@ pass --stack to acknowledge the difference and silence the notice.`,
 				rep.Warn("Dry run; nothing was pushed. Would submit:")
 			} else {
 				n := len(res.PullRequests)
-				rep.Success("Submitted %d %s", n, plural(n, "branch", "branches"))
+				rep.Success("Submitted %d %s", n, branchNoun(n))
 			}
 			for _, pr := range res.PullRequests {
 				switch {

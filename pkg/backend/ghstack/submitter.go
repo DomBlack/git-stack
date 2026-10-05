@@ -11,7 +11,6 @@ import (
 
 var (
 	_ stack.Submitter = (*Backend)(nil)
-	_ stack.Syncer    = (*Backend)(nil)
 )
 
 // Submit runs `gh stack submit`. Non-interactive runs use --auto and are
@@ -31,23 +30,6 @@ func (b *Backend) Submit(ctx context.Context, repo git.Repo, o stack.SubmitOptio
 	args = append(args, "--auto")
 	res, err := b.ghRun(ctx, repo, b.out, args...)
 	return stack.SubmitResult{Output: res.Err(), Streamed: b.out != nil}, err
-}
-
-// Sync runs `gh stack sync [--prune]`.
-func (b *Backend) Sync(ctx context.Context, repo git.Repo, o stack.SyncOptions) (stack.SyncResult, error) {
-	if err := b.Preflight(ctx); err != nil {
-		return stack.SyncResult{}, err
-	}
-	args := []string{"sync"}
-	if o.Prune {
-		args = append(args, "--prune")
-	}
-	if o.Dir != "" {
-		// gh stack syncs the stack of whatever is checked out where it runs.
-		repo.TopLevel = o.Dir
-	}
-	res, err := b.ghRun(ctx, repo, b.out, args...)
-	return stack.SyncResult{Output: res.Err(), Streamed: b.out != nil}, err
 }
 
 // ghTTY runs `gh stack <args>` with the terminal attached. Only the CLI's

@@ -24,15 +24,8 @@ type submitFake struct {
 	forge    *recordingForge
 	graph    *stack.Graph
 	opts     []stack.SubmitOptions
-	syncs    []stack.SyncOptions
-	syncOut  string
 	output   string // Submit's backend output
 	streamed bool   // reported as already relayed live
-	// onSync, when set, observes each Sync call (tests check which branch
-	// was checked out at the time).
-	onSync func(stack.SyncOptions)
-	// syncErr, when set, decides whether a Sync call fails.
-	syncErr func(stack.SyncOptions) error
 	// baseOnTrunk makes new PRs target trunk instead of their parent, the
 	// way gh stack does when the branches below are queued for merge.
 	baseOnTrunk bool
@@ -62,19 +55,6 @@ func (s *submitFake) Submit(_ context.Context, _ git.Repo, o stack.SubmitOptions
 		out = "✓ pushed"
 	}
 	return stack.SubmitResult{Output: out, Streamed: s.streamed}, nil
-}
-
-func (s *submitFake) Sync(_ context.Context, _ git.Repo, o stack.SyncOptions) (stack.SyncResult, error) {
-	s.syncs = append(s.syncs, o)
-	if s.onSync != nil {
-		s.onSync(o)
-	}
-	if s.syncErr != nil {
-		if err := s.syncErr(o); err != nil {
-			return stack.SyncResult{}, err
-		}
-	}
-	return stack.SyncResult{Output: s.syncOut, Streamed: s.streamed}, nil
 }
 
 type recordingForge struct {
@@ -147,7 +127,7 @@ func submitFixture(t *testing.T) (app.Deps, *submitFake, *recordingForge, git.Re
 	sf := &submitFake{forge: fg, graph: graph}
 	cfg := config.Defaults()
 	cfg.CacheTTL = 0 // always refresh in tests
-	deps := app.Deps{Git: g, Meta: memMeta{graph}, Submit: sf, Sync: sf, Forge: fg, Cache: cache.New(repo), Config: cfg}
+	deps := app.Deps{Git: g, Meta: memMeta{graph}, Submit: sf, Forge: fg, Cache: cache.New(repo), Config: cfg}
 	return deps, sf, fg, repo, dir
 }
 
@@ -281,29 +261,5 @@ func TestSubmitErrors(t *testing.T) {
 	gittest.Run(t, dir, "switch", "-q", "main")
 	if _, err := a.Submit(ctx, repo, app.SubmitOptions{}); !errors.Is(err, &stack.Error{Kind: stack.KindNotInStack}) {
 		t.Errorf("trunk: %v", err)
-	}
-}
-
-func TestSync(t *testing.T) {
-	deps, sf, fg, repo, _ := submitFixture(t)
-	a := app.New(deps)
-	sf.syncOut = "Stack synced"
-	res, err := a.Sync(context.Background(), repo, app.SyncOptions{Prune: true, All: true})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(sf.syncs) != 1 || !sf.syncs[0].Prune || res.Output != "Stack synced" || res.Aborted {
-		t.Errorf("sync = %+v %+v", res, sf.syncs)
-	}
-	if len(res.Notices) != 0 || len(res.Stacks) != 1 || res.Stacks[0].Branch != "b" || res.Stacks[0].CheckedOut {
-		t.Errorf("notices/stacks = %v %+v", res.Notices, res.Stacks)
-	}
-	if fg.lists == 0 {
-		t.Error("PR cache should refresh after sync")
-	}
-	sf.syncOut = "remote stack diverged\nSync aborted — no changes were made"
-	res, err = a.Sync(context.Background(), repo, app.SyncOptions{})
-	if err != nil || !res.Aborted || len(res.Notices) != 1 {
-		t.Errorf("aborted: %+v %v", res, err)
 	}
 }

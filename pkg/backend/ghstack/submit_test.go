@@ -10,7 +10,7 @@ import (
 	"github.com/DomBlack/git-stack/pkg/stack"
 )
 
-func TestSubmitAndSync(t *testing.T) {
+func TestSubmit(t *testing.T) {
 	f := installed()
 	f.On("gh", "stack").Do(func(c exec.Cmd) (exec.Result, error) {
 		return exec.Result{Stderr: []byte("✓ pushed\n")}, nil
@@ -52,14 +52,6 @@ func TestSubmitAndSync(t *testing.T) {
 	_, err = New(noTTY, nil).Submit(ctx, repo, stack.SubmitOptions{Interactive: true})
 	if !errors.Is(err, &stack.Error{Kind: stack.KindInteractionRequired}) {
 		t.Errorf("no tty: %v", err)
-	}
-
-	sres, err := b.Sync(ctx, repo, stack.SyncOptions{Prune: true})
-	if err != nil || sres.Output != "✓ pushed" || lastGh(f) != "stack sync --prune" {
-		t.Errorf("sync: %+v %v %q", sres, err, lastGh(f))
-	}
-	if _, err := b.Sync(ctx, repo, stack.SyncOptions{}); err != nil || lastGh(f) != "stack sync" {
-		t.Errorf("sync plain: %v %q", err, lastGh(f))
 	}
 
 	f.On("gh", "stack", "submit").Fail(9, "Stacked PRs are not enabled for this repository")

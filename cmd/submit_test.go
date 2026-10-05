@@ -72,24 +72,15 @@ func TestSubmitAndSyncCommands(t *testing.T) {
 		t.Errorf("--update-only: %v", err)
 	}
 
-	f.On("gh", "stack", "sync").Do(func(exec.Cmd) (exec.Result, error) {
-		return exec.Result{Stderr: []byte("Stack synced")}, nil
-	})
+	gittest.InitRemote(t, dir)
 	f.Reset()
-	out, errOut, err = runWith(t, f, "--cwd", dir, "sync", "-f", "--all")
-	if err != nil || out != "ok: Synced\n" || !strings.Contains(errOut, "Stack synced") {
+	out, errOut, err = runWith(t, f, "--cwd", dir, "sync")
+	if err != nil || out != "ok: Synced, nothing to do\n" {
 		t.Errorf("sync: %q %q %v", out, errOut, err)
 	}
-	var syncArgs string
 	for _, c := range f.CallsTo("gh") {
 		if len(c.Args) > 1 && c.Args[1] == "sync" {
-			syncArgs = strings.Join(c.Args, " ")
+			t.Errorf("sync must not call gh stack sync: %v", c.Args)
 		}
-	}
-	if syncArgs != "stack sync --prune" {
-		t.Errorf("sync args = %q", syncArgs)
-	}
-	if _, _, err := runWith(t, f, "--cwd", dir, "sync", "--no-restack"); err == nil {
-		t.Error("--no-restack should be rejected")
 	}
 }

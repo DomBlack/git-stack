@@ -22,7 +22,6 @@ type Deps struct {
 	Tracker  stack.Tracker
 	Restack  stack.Restacker
 	Submit   stack.Submitter
-	Sync     stack.Syncer
 	Forge    forge.Forge
 	AI       ai.Drafter
 	Cache    *cache.Store
