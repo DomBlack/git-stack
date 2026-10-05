@@ -37,7 +37,8 @@ type candidate struct {
 }
 
 // syncCleanup deletes branches whose work is done: tracked branches whose
-// PR merged or closed or whose tip is in trunk, and untracked branches whose
+// PR merged or closed or whose tip is in trunk (including one trunk was fast
+// forwarded onto, which its recorded base gives away), and untracked branches whose
 // merged PR was for exactly the commit they're on. Branches already gone
 // locally are forgotten by the metadata whatever the policy.
 func (a *App) syncCleanup(ctx context.Context, st *syncState, o SyncOptions, res *SyncResult) error {
@@ -167,7 +168,7 @@ func (a *App) cleanupCandidates(ctx context.Context, st *syncState, res *SyncRes
 				cands = append(cands, candidate{b.Name, lb.Head, ReasonMerged, s.Trunk})
 			case hasPR && pr.State == forge.StateClosed:
 				cands = append(cands, candidate{b.Name, lb.Head, ReasonClosed, s.Trunk})
-			case lb.Head != trunkTip && a.ancestor(ctx, st, lb.Head, trunkTip):
+			case a.ancestor(ctx, st, lb.Head, trunkTip) && (lb.Head != trunkTip || a.movedPastBase(ctx, st, b, lb.Head)):
 				cands = append(cands, candidate{b.Name, lb.Head, ReasonInTrunk, s.Trunk})
 			}
 		}
@@ -193,6 +194,15 @@ func (a *App) cleanupCandidates(ctx context.Context, st *syncState, res *SyncRes
 	}
 	slices.SortFunc(cands, func(x, y candidate) int { return strings.Compare(x.name, y.name) })
 	return cands, gone
+}
+
+// movedPastBase tells a branch that was fast forwarded into trunk from one
+// that was created empty: both sit exactly on the trunk tip, but only the
+// first has a recorded base that is an older commit it has since moved past.
+// A branch with no recorded base, or one reset by hand so its base is no
+// longer behind it, is given the benefit of the doubt and kept.
+func (a *App) movedPastBase(ctx context.Context, st *syncState, b stack.Branch, tip string) bool {
+	return b.Base != "" && b.Base != tip && a.ancestor(ctx, st, b.Base, tip)
 }
 
 // prSawAll reports whether every change on a branch's local tip, other than

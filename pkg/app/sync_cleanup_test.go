@@ -234,6 +234,65 @@ func TestSyncKeepsEmptyBranchAtTrunkTip(t *testing.T) {
 	}
 }
 
+func TestSyncDeletesBranchFastForwardedIntoTrunk(t *testing.T) {
+	f := newSyncFixture(t)
+	base := f.rev(t, "main")
+	gittest.Run(t, f.dir, "switch", "-q", "main")
+	gittest.Run(t, f.dir, "merge", "-q", "--ff-only", "a") // main now sits exactly on a
+	gittest.Run(t, f.dir, "push", "-q", "origin", "main")
+	gittest.Run(t, f.dir, "switch", "-q", "b")
+	f.deps.Meta = memMeta{stack.NewGraph([]stack.Stack{
+		{Trunk: "main", Branches: []stack.Branch{{Name: "a", Base: base}, {Name: "b", Base: f.rev(t, "a")}}, Worktree: f.repo.TopLevel},
+	})}
+	res, err := f.sync(t, app.SyncOptions{NoRestack: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if d, ok := deleted(res, "a"); !ok || d.Reason != app.ReasonInTrunk || branchExists(t, f.dir, "a") {
+		t.Errorf("a was fast forwarded into main and should go: deleted = %+v", res.Deleted)
+	}
+	if _, ok := deleted(res, "b"); ok {
+		t.Errorf("b still has its own commit: deleted = %+v", res.Deleted)
+	}
+}
+
+func TestSyncKeepsEmptyBranchWhoseBaseIsItsTip(t *testing.T) {
+	f := newSyncFixture(t)
+	tip := f.rev(t, "main")
+	gittest.Run(t, f.dir, "branch", "empty", "main")
+	f.deps.Meta = memMeta{stack.NewGraph([]stack.Stack{
+		{Trunk: "main", Branches: []stack.Branch{{Name: "a"}, {Name: "b"}}, Worktree: f.repo.TopLevel},
+		{Trunk: "main", Branches: []stack.Branch{{Name: "empty", Base: tip}}, Worktree: f.repo.TopLevel},
+	})}
+	res, err := f.sync(t, app.SyncOptions{NoRestack: true})
+	if err != nil || len(res.Deleted) != 0 || !branchExists(t, f.dir, "empty") {
+		t.Errorf("an empty branch whose base is where it sits must stay: %+v %v", res.Deleted, err)
+	}
+}
+
+func TestSyncRestackKeepsOlderBaseOfBranchOnItsParent(t *testing.T) {
+	f := newSyncFixture(t)
+	base := f.rev(t, "main")
+	gittest.Run(t, f.dir, "switch", "-q", "main")
+	gittest.Run(t, f.dir, "merge", "-q", "--ff-only", "a")
+	gittest.Run(t, f.dir, "push", "-q", "origin", "main")
+	gittest.Run(t, f.dir, "switch", "-q", "b")
+	f.deps.Config.SyncPrune = config.SyncPruneNever // cleanup declines, so restack sees the branch
+	f.deps.Meta = memMeta{stack.NewGraph([]stack.Stack{
+		{Trunk: "main", Branches: []stack.Branch{{Name: "a", Base: base}, {Name: "b", Base: f.rev(t, "a")}}, Worktree: f.repo.TopLevel},
+	})}
+	if _, err := f.sync(t, app.SyncOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	g, _ := f.deps.Meta.Load(context.Background(), f.repo)
+	if got := g.Stacks[0].Branches[0].Base; got != base {
+		t.Errorf("a's base collapsed onto its tip (%s); want the older %s kept so the next sync still sees the merge", got, base)
+	}
+	if got := g.Stacks[0].Branches[1].Base; got != f.rev(t, "a") {
+		t.Errorf("b's base = %s, want its parent's tip %s", got, f.rev(t, "a"))
+	}
+}
+
 func TestSyncDeletesBranchAlreadyInTrunk(t *testing.T) {
 	f := newSyncFixture(t)
 	gittest.Run(t, f.dir, "switch", "-q", "main")
