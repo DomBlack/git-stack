@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"strings"
 
 	"github.com/DomBlack/git-stack/pkg/git"
 	"github.com/DomBlack/git-stack/pkg/stack"
@@ -41,12 +40,16 @@ type ModifyResult struct {
 // Modify amends (or adds to) the current branch and restacks its
 // descendants.
 func (a *App) Modify(ctx context.Context, repo git.Repo, o ModifyOptions) (ModifyResult, error) {
-	if o.Continue || o.Abort {
-		if err := a.continueOrAbort(ctx, repo, o.Continue, "git stack modify"); err != nil {
-			return ModifyResult{}, err
-		}
-		branch, _ := a.d.Git.CurrentBranch(ctx, repo)
-		return ModifyResult{Branch: branch}, nil
+	switch {
+	case o.Continue:
+		res, err := a.restackContinue(ctx, repo, false)
+		return ModifyResult{Branch: branchAfter(ctx, a, repo), Restacked: movedNames(res)}, err
+	case o.Abort:
+		_, err := a.restackAbort(ctx, repo)
+		return ModifyResult{Branch: branchAfter(ctx, a, repo)}, err
+	}
+	if err := a.noRebaseActive(ctx, repo); err != nil {
+		return ModifyResult{}, err
 	}
 
 	current, err := a.d.Git.CurrentBranch(ctx, repo)
@@ -67,12 +70,6 @@ func (a *App) Modify(ctx context.Context, repo git.Repo, o ModifyOptions) (Modif
 	if !ok {
 		return ModifyResult{}, stack.Newf(stack.KindNotInStack, "%s is not in a stack", current).
 			WithSteps("use plain git commit --amend, or adopt the branch: gh stack init " + current)
-	}
-	if inProgress, err := a.d.Git.RebaseInProgress(ctx, repo); err != nil {
-		return ModifyResult{}, err
-	} else if inProgress {
-		return ModifyResult{}, stack.New(stack.KindRebaseActive, "a rebase is in progress").
-			WithSteps("resolve conflicts, `git add` them, then `git stack modify --continue`", "or `git stack modify --abort`")
 	}
 
 	staged, err := a.stage(ctx, repo, o.Staging)
@@ -112,18 +109,16 @@ func (a *App) Modify(ctx context.Context, repo git.Repo, o ModifyOptions) (Modif
 	res.Commit = a.commitInfo(ctx, repo, sha)
 
 	children := upstack(graph, current)
-	if len(children) == 0 || a.d.Restack == nil {
+	if len(children) == 0 {
 		return res, nil
 	}
 	n := len(children)
 	headline := fmt.Sprintf("Restacking %d %s above %s", n, pluralise(n, "branch", "branches"), res.Branch)
-	err = a.progress(ctx, PhaseRestack, headline, func(ctx context.Context) error {
-		return a.d.Restack.Restack(ctx, repo, stack.ScopeUpstack)
-	})
+	rr, err := a.restack(ctx, repo, RestackOptions{Scope: stack.ScopeUpstack}, "git stack modify", headline)
 	if err != nil {
-		return res, withConflictSteps(err, "git stack modify")
+		return res, err
 	}
-	res.Restacked = children
+	res.Restacked = movedNames(rr)
 	return res, nil
 }
 
@@ -136,36 +131,19 @@ func upstack(graph *stack.Graph, name string) []string {
 	return s.Names()[i+1:]
 }
 
-// continueOrAbort forwards --continue / --abort to the restacker.
-func (a *App) continueOrAbort(ctx context.Context, repo git.Repo, cont bool, command string) error {
-	if a.d.Restack == nil {
-		return stack.New(stack.KindUnsupported, "no restack backend configured")
+// movedNames lists the branches a restack moved.
+func movedNames(res RestackResult) []string {
+	out := make([]string, 0, len(res.Moved))
+	for _, m := range res.Moved {
+		out = append(out, m.Name)
 	}
-	if cont {
-		return withConflictSteps(a.d.Restack.Continue(ctx, repo), command)
-	}
-	return a.d.Restack.Abort(ctx, repo)
+	return out
 }
 
-// withConflictSteps decorates a conflict error with the exact next steps
-// for the given command (e.g. "git stack modify").
-func withConflictSteps(err error, command string) error {
-	se, ok := errors.AsType[*stack.Error](err)
-	if !ok || se.Kind != stack.KindConflict {
-		return err
-	}
-	if len(se.NextSteps) > 0 {
-		return err
-	}
-	steps := []string{"resolve the conflicts"}
-	if len(se.Files) > 0 {
-		steps[0] = "resolve the conflicts in: " + strings.Join(se.Files, ", ")
-		steps = append(steps, "git add "+strings.Join(se.Files, " "))
-	} else {
-		steps = append(steps, "git add <files>")
-	}
-	steps = append(steps, fmt.Sprintf("%s --continue", command), fmt.Sprintf("or give up with %s --abort", command))
-	return se.WithSteps(steps...)
+// branchAfter is the current branch, or "" when HEAD is detached.
+func branchAfter(ctx context.Context, a *App, repo git.Repo) string {
+	b, _ := a.d.Git.CurrentBranch(ctx, repo)
+	return b
 }
 
 // pluralise picks the singular or plural word for n.

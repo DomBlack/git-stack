@@ -15,7 +15,7 @@ It's a ports and adapters app, wired by hand in `cmd/root.go`.
 ```
 cmd/            cobra commands (one per file)   -+
 pkg/mcp/        MCP tools                        +-> pkg/app (use cases) -> ports
-                                                 |      pkg/stack  Metadata, Tracker, Restacker, Submitter, Syncer
+                                                 |      pkg/stack  Metadata, Tracker, Submitter
                                                  |      pkg/forge  Forge (pull requests)
                                                  |      pkg/ai     Drafter (commit and PR text)
 adapters: pkg/backend/ghstack, pkg/forge/github, pkg/ai/claudecode
@@ -30,8 +30,8 @@ place.
 The ports:
 
 - `pkg/stack` is the domain; the `Graph`/`Stack`/`Branch` model, pure navigation, and the
-  five stack ports. The only adapter today is `pkg/backend/ghstack`, which implements all
-  five by reading gh stack's metadata file and shelling out to `gh stack` for anything that
+  three stack ports. The only adapter today is `pkg/backend/ghstack`, which implements all
+  three by reading gh stack's metadata file and shelling out to `gh stack` for anything that
   mutates.
 - `pkg/forge` is pull request operations with nothing GitHub specific in the signatures.
   Adapter: `pkg/forge/github` via the `gh` CLI.
@@ -117,10 +117,10 @@ to design around;
 2. With `-m`/`-A`/`-u`, if the current branch has no commits beyond its parent the commit
    lands on the *current* branch and no new branch is created.
 
-**`rebase --upstack --no-trunk`** is exactly the "restack after amend" operation we need.
-With `--no-trunk` there's no fetch and no trunk update; it rebases the current branch onto
-its parent and carries on upward. The bottom branch is never rebased onto trunk in this
-mode. There is no `--only`.
+**`rebase --upstack --no-trunk`** was the backend operation our first restack used after
+an amend. With `--no-trunk` there's no fetch and no trunk update; it rebases the current
+branch onto its parent and carries on upward. The bottom branch is never rebased onto
+trunk in this mode and there is no `--only`, which is why restack now runs natively.
 
 **`submit`** has `--auto`, `--open` and `--remote`, nothing else. It always submits the
 whole stack, new PRs are drafts unless `--open`, and there's no title/body/dry run. If
@@ -164,15 +164,9 @@ stack you get a `not_at_top` error with next steps; from an untracked branch you
 the branch isn't in a stack (Graphite does the same). `--insert` is accepted and fails with
 an explanation, so the flag is there for a future backend that can do it.
 
-**`modify` amends natively, then `gh stack rebase --upstack --no-trunk`** if there's
-anything above. Conflicts come back as a `conflict` error listing the files and the
-`--continue`/`--abort` commands.
-
-**`restack` and the bottom branch.** Because of `--no-trunk`, a plain restack never moves
-the bottom branch onto a moved trunk. Rather than reimplement that step (which would need
-our own continue state), we detect that the bottom branch is behind trunk and print a notice
-pointing at `git stack sync`. Doing the bottom branch natively is the obvious follow up if
-the notice gets annoying.
+**`modify` amends natively, then runs the native restack upstack.** Conflicts come back as
+a `conflict` error listing the files and the `git stack continue` / `git stack abort`
+commands.
 
 **`submit --ai` drafts first, then lets gh stack submit, then fixes the PRs up.** The
 alternative was to push and create PRs ourselves and only use gh stack to link them. We
@@ -188,7 +182,7 @@ same path with the agent's own titles and bodies instead of the Drafter.
 without one). Drafts used to be the default, but in practice they were one more step before
 anyone could review, and the MCP tool hard coding them meant it ignored the config.
 
-**What we deliberately don't mirror from `gt` (yet).** `create --insert`, `restack --only`,
+**What we deliberately don't mirror from `gt` (yet).** `create --insert`,
 `submit --update-only`, `submit --edit-title/--edit-description` and
 `modify --into` all need a backend that can do more than gh stack can. Each prints a single
 line saying why. `sync --all` is not accepted at all: every trunk is synced, so there is
@@ -224,7 +218,7 @@ failing. Consent for deletion is `stack.sync.prune` (`always` by default), `-d`,
 with no terminal and `ask`, branches are kept with a notice. Nothing is pushed; `submit`
 does that.
 
-**The restack never checks anything out.** Each branch's commits (from the metadata's
+**Sync's restack never checks anything out.** Each branch's commits (from the metadata's
 `base` when it is still an ancestor, else the merge base) are replayed onto the new parent
 with `git merge-tree --write-tree` and `git commit-tree`, keeping author, date and message.
 The fallback range for a branch with no usable recorded base starts at the merge base with
@@ -239,12 +233,39 @@ dirty one, or one whose move would add a path that clashes with an untracked fil
 worktree (the same path, or one is a directory the other sits in; `reset --hard` would
 delete it), is left and the branches above rebase onto its current
 tip. A diverged trunk reset with `-f` gets the same untracked file check. A conflict stops that
-stack at that branch with a notice pointing at `git stack restack`, which still goes through
-`gh stack rebase` and its interactive flow; the other stacks finish, and the command exits
+stack at that branch with a notice pointing at `git stack restack`, which starts the real rebase
+for that branch so it can be resolved; the other stacks finish, and the command exits
 non-zero at the end. A git error while planning a stack, a refused ref transaction, or a
 failed worktree reset marks that stack failed and the command exits non-zero too, never
 silently skipping it. Flags match gt: `-f`, `-d/--delete-all` and `--no-restack`; `--all` is
 gone because every stack is always synced.
+
+**Restack is native.** `gh stack rebase` drove a real `git rebase` per branch, so every
+branch was checked out in turn, a dirty tree or a branch in another worktree failed the
+whole run with a raw git error, and `--no-trunk` meant the bottom branch could never be
+moved onto trunk (sync's "run restack to resolve this" advice for a bottom branch led
+straight back to sync). `git stack restack` now runs sync's planner over the scope
+(whole stack, `--upstack`, `--downstack`, `--only`, from the current branch or `--branch`),
+bottom branch onto the local trunk included, moves the refs in one transaction, the
+checked out branch with `reset --keep` so local edits to untouched files survive, and
+refuses up front when a local edit overlaps a file the move rewrites. A conflict hands
+that one branch to `git rebase --onto` so the user gets ordinary conflict markers; the
+branches below it are already moved and recorded. What is left to do, and everything
+already moved, sits in `<git-dir>/git-stack/restack.json` (ours, per worktree, written only
+by `pkg/app`).
+
+`git stack continue` (also `restack --continue` and `modify --continue`) finishes git's
+rebase, records the branch and drains the rest. It also copes with a rebase finished by
+hand (`git rebase --continue`). After a hand abort, it explains that `git stack abort`
+must put the moved branches back and clear the saved state before the command can be
+tried again. Continue and abort check the active rebase's branch, original tip and new
+base before touching it, so a rebase started outside git-stack is left alone.
+
+`git stack abort` lets git put the conflicting branch back, or puts it back itself if
+the rebase was finished by hand, then puts every moved branch back, newest first,
+skipping any that moved again since, metadata included. Both are top level commands like
+gt's, with `git continue` and `git abort` among the installed aliases. Someone upgrading
+with a `gh stack rebase` conflict open is pointed at gh's own `--continue`/`--abort`.
 
 **gh stack treats queued PRs as gone; we put the bases back.** When a branch's PR is sitting
 in a merge queue, `gh stack submit` skips it like a merged one and bases the next PR on the
@@ -352,6 +373,5 @@ real) behind the `shellintegration` tag.
 
 - A native backend (our own metadata and push) would unlock everything in the "don't
   mirror" list above. The ports are shaped for it already; `Children` returns a slice and
-  `Scope` has an `Only` even though gh stack can't use them.
-- Rebase the bottom branch onto local trunk during `restack` instead of printing a notice.
+  the native restack already handles `Scope.Only`.
 - `submit --reviewers`/`--team-reviewers` via the forge after submit.

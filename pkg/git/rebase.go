@@ -1,6 +1,16 @@
 package git
 
-import "context"
+import (
+	"context"
+	"errors"
+	"fmt"
+	"io/fs"
+	"os"
+	"path/filepath"
+	"strings"
+
+	"github.com/DomBlack/git-stack/pkg/exec"
+)
 
 // Conflict is a commit that could not be replayed cleanly.
 type Conflict struct {
@@ -61,4 +71,93 @@ func (c *Client) Replay(ctx context.Context, repo Repo, commits []string, onto s
 	}
 	out.Tip = tip
 	return out, nil
+}
+
+// rebaseEnv keeps a rebase from opening an editor or a todo list.
+var rebaseEnv = []string{"GIT_EDITOR=true", "GIT_SEQUENCE_EDITOR=true"}
+
+// RebaseMatches reports whether the active rebase is for branch, from tip
+// onto onto. Both git rebase backends record these values in the worktree's
+// git dir; a rebase started after an earlier one was aborted can differ in
+// any of them. It only reads the state, leaving the rebase and index alone.
+func (c *Client) RebaseMatches(ctx context.Context, repo Repo, branch, onto, tip string) (bool, error) {
+	for _, dir := range []string{"rebase-merge", "rebase-apply"} {
+		res, err := c.gitIn(ctx, repo, "rev-parse", "--git-path", dir)
+		if err != nil {
+			return false, err
+		}
+		path := res.Out()
+		if !filepath.IsAbs(path) {
+			path = filepath.Join(repo.TopLevel, path)
+		}
+		head, err := os.ReadFile(filepath.Join(path, "head-name"))
+		if errors.Is(err, fs.ErrNotExist) {
+			continue
+		}
+		if err != nil {
+			return false, err
+		}
+		if strings.TrimSpace(string(head)) != "refs/heads/"+branch {
+			return false, nil
+		}
+		for _, field := range []struct{ name, want string }{{"onto", onto}, {"orig-head", tip}} {
+			data, err := os.ReadFile(filepath.Join(path, field.name))
+			if err != nil {
+				return false, err
+			}
+			if strings.TrimSpace(string(data)) != field.want {
+				return false, nil
+			}
+		}
+		return true, nil
+	}
+	return false, nil
+}
+
+// RebaseOnto runs `git rebase --onto onto upstream branch` without an
+// editor. It checks branch out, so the working tree must be clean enough
+// for git. stopped is true when git stopped on a conflict and left the
+// rebase in progress for the caller to resolve; any other failure is an
+// error.
+func (c *Client) RebaseOnto(ctx context.Context, repo Repo, onto, upstream, branch string) (stopped bool, err error) {
+	_, err = c.gitInput(ctx, repo, nil, rebaseEnv, "rebase", "--onto", onto, upstream, branch)
+	return c.rebaseOutcome(ctx, repo, err)
+}
+
+// RebaseContinue resumes a stopped rebase after the conflicts were staged.
+// stopped is true when it stopped again on unresolved conflicts; any other
+// failure is an error.
+func (c *Client) RebaseContinue(ctx context.Context, repo Repo) (stopped bool, err error) {
+	_, err = c.gitInput(ctx, repo, nil, rebaseEnv, "rebase", "--continue")
+	return c.rebaseOutcome(ctx, repo, err)
+}
+
+// RebaseAbort abandons a rebase in progress; git puts the branch it was
+// rebasing back and checks it out.
+func (c *Client) RebaseAbort(ctx context.Context, repo Repo) error {
+	_, err := c.gitIn(ctx, repo, "rebase", "--abort")
+	return err
+}
+
+// rebaseOutcome classifies a rebase failure. A rebase still in progress
+// after git exited non-zero is a stop for the caller to resolve, whether
+// paths are left unmerged or rerere already staged a remembered resolution;
+// anything else is an error carrying git's stderr. Callers refuse to start
+// while another rebase is in progress, so one found here is always theirs.
+func (c *Client) rebaseOutcome(ctx context.Context, repo Repo, err error) (bool, error) {
+	if err == nil {
+		return false, nil
+	}
+	ee, ok := errors.AsType[*exec.ExitError](err)
+	if !ok {
+		return false, err
+	}
+	active, aerr := c.RebaseInProgress(ctx, repo)
+	if aerr != nil {
+		return false, aerr
+	}
+	if active {
+		return true, nil
+	}
+	return false, fmt.Errorf("git rebase: %s", ee.Result.Err())
 }

@@ -116,7 +116,7 @@ func newHarness(t *testing.T, roots ...string) *harness {
 			cfg := config.Defaults()
 			cfg.CacheTTL = 0
 			return app.New(app.Deps{
-				Git: g, Meta: backend, Tracker: backend, Restack: backend, Submit: backend,
+				Git: g, Meta: backend, Tracker: backend, Submit: backend,
 				Forge: ff, Cache: cache.New(repo), Config: cfg,
 			}), nil
 		},
@@ -261,8 +261,22 @@ func TestViewCreateModifyNavigate(t *testing.T) {
 		t.Errorf("create = %+v (on %s)", cr, h.current())
 	}
 
-	// modify with a conflict yields structured next steps in tool terms.
-	h.backend.RestackErr = &stack.Error{Kind: stack.KindConflict, Msg: "rebase stopped", Files: []string{"x.go"}}
+	// modify with a conflict yields structured next steps in tool terms:
+	// feat-add-c edits b.txt, then b's amend edits it differently. Record
+	// feat-add-c's base the way gh stack does, so only its own commits
+	// are replayed.
+	bTip := gittest.Run(t, h.dir, "rev-parse", "b")
+	_ = h.backend.Update(context.Background(), h.repo, func(g *stack.Graph) error {
+		for i := range g.Stacks {
+			for j := range g.Stacks[i].Branches {
+				if b := &g.Stacks[i].Branches[j]; b.Name == "feat-add-c" {
+					b.Base = bTip
+				}
+			}
+		}
+		return nil
+	})
+	gittest.Commit(t, h.dir, "b.txt", "c side", "c edits b")
 	var nav navigateOutput
 	h.call("stack_navigate", map[string]any{"direction": "down"}, &nav)
 	if nav.To != "b" || h.current() != "b" {
@@ -270,14 +284,25 @@ func TestViewCreateModifyNavigate(t *testing.T) {
 	}
 	gittest.WriteFile(t, h.dir, "b.txt", "b2")
 	te := h.toolErr("stack_modify", map[string]any{"staging": "update"})
-	if te.Code != "conflict" || !slices.Equal(te.Files, []string{"x.go"}) || !slices.ContainsFunc(te.NextSteps, func(s string) bool { return s == "call stack_modify with continue: true" }) {
+	if te.Code != "conflict" || !slices.Equal(te.Files, []string{"b.txt"}) || !slices.ContainsFunc(te.NextSteps, func(s string) bool { return s == "call stack_continue" }) {
 		t.Errorf("conflict error = %+v", te)
 	}
-	h.backend.RestackErr = nil
+	// Resolve it and carry on: feat-add-c lands on the amended b and the
+	// run ends back on b.
+	gittest.WriteFile(t, h.dir, "b.txt", "resolved")
+	gittest.Run(t, h.dir, "add", "b.txt")
+	var rr app.RestackResult
+	h.call("stack_continue", map[string]any{}, &rr)
+	if len(rr.Moved) == 0 || h.current() != "b" {
+		t.Errorf("stack_continue = %+v (on %s)", rr, h.current())
+	}
+	if te := h.toolErr("stack_abort", map[string]any{}); te.Code != "invalid_args" {
+		t.Errorf("stack_abort with nothing pending = %+v", te)
+	}
 	var mr app.ModifyResult
-	h.call("stack_modify", map[string]any{"continue": true}, &mr)
-	if h.backend.Continued != 1 {
-		t.Error("continue not forwarded")
+	gittest.Run(t, h.dir, "merge-base", "--is-ancestor", "b", "feat-add-c")
+	if te := h.toolErr("stack_restack", map[string]any{"continue": true}); te.Code != "invalid_args" {
+		t.Errorf("continue with nothing pending = %+v", te)
 	}
 	gittest.WriteFile(t, h.dir, "b2.txt", "b2")
 	h.call("stack_modify", map[string]any{"mode": "commit", "message": "second", "staging": "all"}, &mr)
@@ -288,10 +313,17 @@ func TestViewCreateModifyNavigate(t *testing.T) {
 		t.Errorf("bad mode: %+v", te)
 	}
 
-	var rr app.RestackResult
 	h.call("stack_restack", map[string]any{"scope": "upstack"}, &rr)
 	if !slices.Equal(rr.Branches, []string{"b", "feat-add-c"}) {
 		t.Errorf("restack = %+v", rr)
+	}
+	if len(rr.InPlace)+len(rr.Moved) == 0 {
+		t.Errorf("restack reported neither moved nor in place: %+v", rr)
+	}
+	var only app.RestackResult
+	h.call("stack_restack", map[string]any{"scope": "only"}, &only)
+	if len(only.Branches) != 1 {
+		t.Errorf("restack only = %+v", only)
 	}
 
 	h.call("stack_navigate", map[string]any{"direction": "bottom"}, &nav)

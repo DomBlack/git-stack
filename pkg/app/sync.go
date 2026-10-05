@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"slices"
 	"strings"
-	"sync"
 
 	"github.com/DomBlack/git-stack/pkg/forge"
 	"github.com/DomBlack/git-stack/pkg/git"
@@ -108,34 +107,15 @@ type syncState struct {
 	local     map[string]git.Branch // every local branch, with tip and checkout location
 	worktrees []git.Worktree
 	prs       map[string]forge.PullRequest // best PR per head branch
-	mu        sync.Mutex                   // guards dirty: stacks are planned in parallel
-	dirty     map[string]bool              // worktree path -> dirty, cached
+	dirty     *dirtyCache
 }
 
 // worktreeRepo is repo seen from another worktree.
-func (st *syncState) worktreeRepo(path string) git.Repo {
-	r := st.repo
-	r.TopLevel = path
-	return r
-}
+func (st *syncState) worktreeRepo(path string) git.Repo { return worktreeRepo(st.repo, path) }
 
 // isDirty reports whether a worktree has staged or unstaged changes.
-// Untracked files don't count.
 func (st *syncState) isDirty(ctx context.Context, g *git.Client, path string) bool {
-	st.mu.Lock()
-	v, ok := st.dirty[path]
-	st.mu.Unlock()
-	if ok {
-		return v
-	}
-	r := st.worktreeRepo(path)
-	staged, _ := g.HasStagedChanges(ctx, r)
-	unstaged, _ := g.HasUnstagedChanges(ctx, r)
-	v = staged || unstaged
-	st.mu.Lock()
-	st.dirty[path] = v
-	st.mu.Unlock()
-	return v
+	return st.dirty.isDirty(ctx, g, st.repo, path)
 }
 
 // Sync fetches, moves trunk, deletes merged branches, pulls in branches the
@@ -230,7 +210,7 @@ func (a *App) gatherSync(ctx context.Context, repo git.Repo) (*syncState, error)
 	if err != nil {
 		return nil, err
 	}
-	st := &syncState{repo: repo, graph: graph, dirty: map[string]bool{}, local: map[string]git.Branch{}}
+	st := &syncState{repo: repo, graph: graph, dirty: newDirtyCache(), local: map[string]git.Branch{}}
 	st.trunks = graph.Trunks
 	if len(st.trunks) == 0 {
 		def, ok, err := a.d.Git.DefaultBranch(ctx, repo)
@@ -274,7 +254,7 @@ func (a *App) moveBranch(ctx context.Context, st *syncState, name, from, to stri
 		wt := st.worktreeRepo(lb.Worktree)
 		var err error
 		if reset {
-			files, ferr := a.untrackedInTheWay(ctx, st, lb.Worktree, from, to)
+			files, ferr := a.untrackedInTheWay(ctx, st.repo, lb.Worktree, from, to)
 			if ferr != nil {
 				return ferr
 			}
@@ -302,12 +282,12 @@ func (a *App) moveBranch(ctx context.Context, st *syncState, name, from, to stri
 // --hard deletes them without a word. A file is in the way when the move
 // adds the same path, a path under it (it would become a directory) or the
 // directory it sits in (as a file).
-func (a *App) untrackedInTheWay(ctx context.Context, st *syncState, path, from, to string) ([]string, error) {
-	added, err := a.d.Git.AddedPaths(ctx, st.repo, from, to)
+func (a *App) untrackedInTheWay(ctx context.Context, repo git.Repo, path, from, to string) ([]string, error) {
+	added, err := a.d.Git.AddedPaths(ctx, repo, from, to)
 	if err != nil || len(added) == 0 {
 		return nil, err
 	}
-	untracked, err := a.d.Git.Untracked(ctx, st.worktreeRepo(path))
+	untracked, err := a.d.Git.Untracked(ctx, worktreeRepo(repo, path))
 	if err != nil {
 		return nil, err
 	}

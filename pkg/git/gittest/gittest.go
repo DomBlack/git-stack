@@ -45,6 +45,15 @@ func Run(t testing.TB, dir string, args ...string) string {
 	return res.Out()
 }
 
+// RunErr runs git like Run but hands the failure back instead of failing
+// the test, for commands that are expected to exit non-zero (a rebase
+// that stops on a conflict, say).
+func RunErr(t testing.TB, dir string, args ...string) (string, error) {
+	t.Helper()
+	res, err := exec.New().Run(context.Background(), exec.Cmd{Name: "git", Args: args, Dir: dir})
+	return res.Out(), err
+}
+
 // InitRepo creates a repository with one commit on main and returns its path.
 // Call Isolate first.
 func InitRepo(t testing.TB) string {

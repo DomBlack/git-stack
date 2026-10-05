@@ -18,12 +18,6 @@ type Backend struct {
 	git   *git.Client
 	graph *stack.Graph
 
-	// Restacks records the scopes requested. RestackErr, when set, is
-	// returned by Restack.
-	Restacks   []stack.Scope
-	RestackErr error
-	Continued  int
-	Aborted    int
 	// Submits records submit options; SubmitFn, when set, runs on submit.
 	Submits  []stack.SubmitOptions
 	SubmitFn func(o stack.SubmitOptions) error
@@ -106,27 +100,6 @@ func (b *Backend) AddTop(ctx context.Context, repo git.Repo, name string) error 
 	return b.git.Switch(ctx, repo, name)
 }
 
-func (b *Backend) Restack(_ context.Context, _ git.Repo, scope stack.Scope) error {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	b.Restacks = append(b.Restacks, scope)
-	return b.RestackErr
-}
-
-func (b *Backend) Continue(context.Context, git.Repo) error {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	b.Continued++
-	return nil
-}
-
-func (b *Backend) Abort(context.Context, git.Repo) error {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	b.Aborted++
-	return nil
-}
-
 func (b *Backend) Submit(_ context.Context, _ git.Repo, o stack.SubmitOptions) (stack.SubmitResult, error) {
 	b.mu.Lock()
 	b.Submits = append(b.Submits, o)
@@ -144,6 +117,5 @@ func (b *Backend) Submit(_ context.Context, _ git.Repo, o stack.SubmitOptions) (
 var (
 	_ stack.Metadata  = (*Backend)(nil)
 	_ stack.Tracker   = (*Backend)(nil)
-	_ stack.Restacker = (*Backend)(nil)
 	_ stack.Submitter = (*Backend)(nil)
 )

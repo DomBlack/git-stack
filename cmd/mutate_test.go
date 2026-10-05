@@ -4,18 +4,22 @@ import (
 	"bytes"
 	"context"
 	"encoding/json/v2"
+	"errors"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
 	"github.com/DomBlack/git-stack/pkg/exec"
 	"github.com/DomBlack/git-stack/pkg/exec/exectest"
 	"github.com/DomBlack/git-stack/pkg/git/gittest"
+	"github.com/DomBlack/git-stack/pkg/stack"
 )
 
 // fakeGh simulates the gh-stack extension: git commands run for real, gh
-// stack add/init create the branch and update the metadata file.
+// stack add/init create the branch and update the metadata file, recording
+// each branch's base the way gh stack does.
 func fakeGh(t *testing.T, dir string) *exectest.Fake {
 	t.Helper()
 	f := exectest.New()
@@ -28,6 +32,7 @@ func fakeGh(t *testing.T, dir string) *exectest.Fake {
 
 	type branch struct {
 		Branch string `json:"branch"`
+		Base   string `json:"base,omitzero"`
 	}
 	type stk struct {
 		Trunk    branch   `json:"trunk"`
@@ -59,13 +64,13 @@ func fakeGh(t *testing.T, dir string) *exectest.Fake {
 		// gh stack init --base <trunk> <branches...>
 		trunk, names := c.Args[3], c.Args[4:]
 		fl := load()
-		s := stk{Trunk: branch{trunk}}
+		s := stk{Trunk: branch{Branch: trunk}}
 		prev := trunk
 		for _, n := range names {
 			if err := gitRun("branch", n, prev); err != nil {
 				return exec.Result{}, err
 			}
-			s.Branches = append(s.Branches, branch{n})
+			s.Branches = append(s.Branches, branch{Branch: n, Base: gittest.Run(t, dir, "rev-parse", prev)})
 			prev = n
 		}
 		fl.Stacks = append(fl.Stacks, s)
@@ -82,7 +87,7 @@ func fakeGh(t *testing.T, dir string) *exectest.Fake {
 				if err := gitRun("branch", name, cur); err != nil {
 					return exec.Result{}, err
 				}
-				s.Branches = append(s.Branches, branch{name})
+				s.Branches = append(s.Branches, branch{Branch: name, Base: gittest.Run(t, dir, "rev-parse", cur)})
 				save(fl)
 				return exec.Result{}, gitRun("switch", name)
 			}
@@ -90,7 +95,6 @@ func fakeGh(t *testing.T, dir string) *exectest.Fake {
 		res := exec.Result{ExitCode: 5, Stderr: []byte("✗ can only add branches to the top of the stack; run `gh stack top` then `gh stack add`")}
 		return res, &exec.ExitError{Cmd: c, Result: res}
 	})
-	f.On("gh", "stack", "rebase").Reply("")
 	return f
 }
 
@@ -157,29 +161,8 @@ func TestCreateModifyRestackCommands(t *testing.T) {
 	if err != nil || !strings.HasPrefix(out, "ok: Amended add-feature-a  ") || !strings.Contains(out, "Restacked 1 branch above add-feature-a") {
 		t.Errorf("modify amend: %q %v", out, err)
 	}
-	if calls := ghCalls(); !strings.Contains(strings.Join(calls, "|"), "stack rebase --no-trunk --upstack") {
-		t.Errorf("restack call missing: %v", calls)
-	}
-
-	// restack with scopes.
-	f.Reset()
-	out, errOut, err = runWith(t, f, "--cwd", dir, "restack", "--upstack")
-	if err != nil || out != "ok: Restacked add-feature-a, feat/b\n" || !strings.Contains(errOut, "Restacking add-feature-a, feat/b...") {
-		t.Errorf("restack: %q %q %v", out, errOut, err)
-	}
-	if calls := ghCalls(); len(calls) != 2 || calls[1] != "stack rebase --no-trunk --upstack" {
-		t.Errorf("restack calls = %v", calls)
-	}
-	out, _, err = runWith(t, f, "--cwd", dir, "rs", "--continue")
-	if err != nil || out != "ok: Restack continued\n" {
-		t.Errorf("continue: %q %v", out, err)
-	}
-	if _, _, err := runWith(t, f, "--cwd", dir, "restack", "--only"); err == nil || !strings.Contains(err.Error(), "single branch") {
-		t.Errorf("--only should be unsupported: %v", err)
-	}
-	if _, _, err := runWith(t, f, "--cwd", dir, "restack", "-u", "-d"); err == nil {
-		t.Error("mutually exclusive scope flags")
-	}
+	// gittest.Run fails the test when git exits non-zero.
+	gittest.Run(t, dir, "merge-base", "--is-ancestor", "add-feature-a", "feat/b")
 
 	// create mid-stack is refused with the gh-stack limitation explained.
 	_, _, err = runWith(t, f, "--cwd", dir, "create", "mid")
@@ -191,13 +174,65 @@ func TestCreateModifyRestackCommands(t *testing.T) {
 		t.Errorf("insert: %v", err)
 	}
 
-	// Trunk moved: restack warns about the bottom branch.
+	// restack after an amend lower down reports what moved and what didn't.
+	gittest.Run(t, dir, "switch", "-q", "add-feature-a")
+	gittest.WriteFile(t, dir, "a.txt", "a3")
+	gittest.Run(t, dir, "commit", "-q", "-a", "--amend", "--no-edit")
+	gittest.Run(t, dir, "switch", "-q", "feat/b")
+	out, errOut, err = runWith(t, f, "--cwd", dir, "restack")
+	if err != nil || out != "  add-feature-a already in place\nok: Restacked feat/b\n" || !strings.Contains(errOut, "Restacking add-feature-a, feat/b...") {
+		t.Errorf("restack: %q %q %v", out, errOut, err)
+	}
+	out, _, err = runWith(t, f, "--cwd", dir, "rs")
+	if err != nil || out != "ok: Nothing to restack; add-feature-a, feat/b are already in place\n" {
+		t.Errorf("no-op restack: %q %v", out, err)
+	}
+	out, _, err = runWith(t, f, "--cwd", dir, "restack", "--only", "--branch", "add-feature-a")
+	if err != nil || !strings.HasPrefix(out, "ok: Nothing to restack") {
+		t.Errorf("--only --branch: %q %v", out, err)
+	}
+	if _, _, err := runWith(t, f, "--cwd", dir, "restack", "-u", "-d"); err == nil {
+		t.Error("mutually exclusive scope flags")
+	}
+	_, _, err = runWith(t, f, "--cwd", dir, "rs", "--continue")
+	if err == nil || !strings.Contains(err.Error(), "nothing to continue") {
+		t.Errorf("continue with nothing pending: %v", err)
+	}
+
+	// Trunk moved: the bottom branch follows it.
 	gittest.Run(t, dir, "switch", "-q", "main")
 	gittest.Commit(t, dir, "m.txt", "m", "trunk moves")
 	gittest.Run(t, dir, "switch", "-q", "feat/b")
-	_, errOut, err = runWith(t, f, "--cwd", dir, "restack")
-	if err != nil || !strings.Contains(errOut, "add-feature-a is behind main") {
-		t.Errorf("behind-trunk note: %q %v", errOut, err)
+	out, _, err = runWith(t, f, "--cwd", dir, "restack")
+	if err != nil || out != "ok: Restacked add-feature-a, feat/b\n" {
+		t.Errorf("after trunk moved: %q %v", out, err)
+	}
+	gittest.Run(t, dir, "merge-base", "--is-ancestor", "main", "add-feature-a")
+
+	// A conflict stops with the files and our commands; abort restores.
+	gittest.Run(t, dir, "switch", "-q", "add-feature-a")
+	gittest.Commit(t, dir, "b.txt", "a's b", "a edits b.txt")
+	gittest.Run(t, dir, "switch", "-q", "feat/b")
+	_, _, err = runWith(t, f, "--cwd", dir, "restack")
+	se, ok := errors.AsType[*stack.Error](err)
+	if !ok || se.Kind != stack.KindConflict || !strings.Contains(se.Error(), "feat/b conflicts when rebased onto add-feature-a") ||
+		!slices.Contains(se.NextSteps, "git add b.txt") || !slices.Contains(se.NextSteps, "git stack continue") {
+		t.Errorf("conflict: %v", err)
+	}
+	// The top level commands do the same as the flags.
+	gittest.WriteFile(t, dir, "b.txt", "resolved")
+	out, _, err = runWith(t, f, "--cwd", dir, "continue", "--all")
+	if err != nil || out != "ok: Restacked feat/b\n" {
+		t.Errorf("continue: %q %v", out, err)
+	}
+	gittest.Run(t, dir, "merge-base", "--is-ancestor", "add-feature-a", "feat/b")
+	_, _, err = runWith(t, f, "--cwd", dir, "abort")
+	if err == nil || !strings.Contains(err.Error(), "nothing to abort") {
+		t.Errorf("abort with nothing pending: %v", err)
+	}
+	_, _, err = runWith(t, f, "--cwd", dir, "cont")
+	if err == nil || !strings.Contains(err.Error(), "nothing to continue") {
+		t.Errorf("cont alias: %v", err)
 	}
 }
 

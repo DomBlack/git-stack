@@ -7,6 +7,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/DomBlack/git-stack/pkg/git"
 )
 
 // syncTrunks fast forwards every trunk to its remote. A trunk that has
@@ -109,7 +111,12 @@ func (a *App) syncTrunks(ctx context.Context, st *syncState, o SyncOptions, res 
 
 // ancestor is IsAncestor with errors treated as "no".
 func (a *App) ancestor(ctx context.Context, st *syncState, ancestor, descendant string) bool {
-	ok, err := a.d.Git.IsAncestor(ctx, st.repo, ancestor, descendant)
+	return a.isAncestor(ctx, st.repo, ancestor, descendant)
+}
+
+// isAncestor is ancestor without a sync state.
+func (a *App) isAncestor(ctx context.Context, repo git.Repo, ancestor, descendant string) bool {
+	ok, err := a.d.Git.IsAncestor(ctx, repo, ancestor, descendant)
 	return err == nil && ok
 }
 

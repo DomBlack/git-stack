@@ -191,7 +191,7 @@ func TestInstallAndUninstall(t *testing.T) {
 }
 
 func gitconfigDefaults() []string {
-	return []string{"create", "modify", "restack", "submit", "sync", "up", "down", "top", "bottom", "c", "m", "rs", "ss", "u", "d", "t", "b", "co"}
+	return []string{"create", "modify", "restack", "submit", "sync", "up", "down", "top", "bottom", "continue", "abort", "c", "m", "rs", "ss", "u", "d", "t", "b", "co"}
 }
 
 func TestSkillOptInIsAsked(t *testing.T) {
