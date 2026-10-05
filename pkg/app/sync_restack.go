@@ -17,7 +17,6 @@ func joinNames(names []string) string { return strings.Join(names, ", ") }
 // plannedMove is one branch's rebase, computed but not applied.
 type plannedMove struct {
 	name, from, to string
-	base           string // the parent tip it was rebased onto
 	worktree       string // where it is checked out, if anywhere
 }
 
@@ -173,7 +172,20 @@ func (a *App) planRestack(ctx context.Context, st *syncState, s *stack.Stack) re
 			p.conflict = &Conflict{Stack: s.Bottom(), Branch: b.Name, Onto: parentName, Files: r.Conflict.Files}
 			return p
 		}
-		p.moves = append(p.moves, plannedMove{name: b.Name, from: tip, to: r.Tip, base: parent, worktree: lb.Worktree})
+		if lb.Worktree != "" {
+			files, err := a.untrackedInTheWay(ctx, st, lb.Worktree, tip, r.Tip)
+			if err != nil {
+				p.err = fmt.Errorf("%s: %w", b.Name, err)
+				return p
+			}
+			if len(files) > 0 {
+				p.notices = append(p.notices, fmt.Sprintf("%s is checked out in %s and restacking it would overwrite untracked %s, so it was not restacked; move them aside and sync again",
+					b.Name, shortPath(lb.Worktree), joinNames(files)))
+				parentName, parent, oldParent = b.Name, tip, tip
+				continue
+			}
+		}
+		p.moves = append(p.moves, plannedMove{name: b.Name, from: tip, to: r.Tip, worktree: lb.Worktree})
 		p.bases[b.Name] = parent
 		parentName, parent, oldParent = b.Name, r.Tip, tip
 	}

@@ -102,7 +102,8 @@ func (c *Client) MergeFF(ctx context.Context, repo Repo, rev string) error {
 }
 
 // ResetHard moves the checked out branch, the index and the tree to rev.
-// Untracked files are left alone.
+// git deletes an untracked file in the way of a tracked one; callers check
+// with AddedPaths and Untracked first.
 func (c *Client) ResetHard(ctx context.Context, repo Repo, rev string) error {
 	_, err := c.gitIn(ctx, repo, "reset", "--hard", "--quiet", rev)
 	if err != nil {

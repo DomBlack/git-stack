@@ -81,7 +81,7 @@ func (a *App) syncTrunks(ctx context.Context, st *syncState, o SyncOptions, res 
 					trunk, shortPath(lb.Worktree))
 			case errors.Is(err, errRefused):
 				t.Status = TrunkDirty
-				res.notice("%s is checked out in %s and could not be fast forwarded (%v); sort that out and sync again",
+				res.notice("%s is checked out in %s and was not updated (%v); sort that out and sync again",
 					trunk, shortPath(lb.Worktree), err)
 			default:
 				return err

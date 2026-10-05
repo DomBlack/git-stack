@@ -101,3 +101,33 @@ func intString(n int) string {
 	}
 	return string(b)
 }
+
+// AddedPaths lists the paths that exist in to's tree but not in from's.
+func (c *Client) AddedPaths(ctx context.Context, repo Repo, from, to string) ([]string, error) {
+	res, err := c.gitIn(ctx, repo, "diff", "--name-only", "-z", "--no-renames", "--diff-filter=A", from, to, "--")
+	if err != nil {
+		return nil, err
+	}
+	return splitNUL(string(res.Stdout)), nil
+}
+
+// Untracked lists the untracked, non ignored files in repo's worktree,
+// relative to its top level.
+func (c *Client) Untracked(ctx context.Context, repo Repo) ([]string, error) {
+	res, err := c.gitIn(ctx, repo, "ls-files", "-z", "--others", "--exclude-standard", "--full-name")
+	if err != nil {
+		return nil, err
+	}
+	return splitNUL(string(res.Stdout)), nil
+}
+
+// splitNUL splits git's -z output.
+func splitNUL(s string) []string {
+	var out []string
+	for p := range strings.SplitSeq(s, "\x00") {
+		if p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
+}

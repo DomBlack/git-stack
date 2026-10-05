@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"sync"
 
@@ -93,8 +94,10 @@ type SyncResult struct {
 // errDirty says a worktree has uncommitted changes so its checkout can't be moved.
 var errDirty = errors.New("worktree has uncommitted changes")
 
-// errRefused says git refused to fast forward a checked out branch for a reason other than uncommitted changes.
-var errRefused = errors.New("git refused to fast forward")
+// errRefused says a checked out branch could not be moved for a reason other
+// than uncommitted changes: git refused to fast forward it, or a reset would
+// overwrite untracked files.
+var errRefused = errors.New("the checkout was left alone")
 
 // syncState is what the phases share.
 type syncState struct {
@@ -245,6 +248,13 @@ func (a *App) moveBranch(ctx context.Context, st *syncState, name, from, to stri
 		wt := st.worktreeRepo(lb.Worktree)
 		var err error
 		if reset {
+			files, ferr := a.untrackedInTheWay(ctx, st, lb.Worktree, from, to)
+			if ferr != nil {
+				return ferr
+			}
+			if len(files) > 0 {
+				return fmt.Errorf("%w: resetting it would overwrite untracked %s", errRefused, joinNames(files))
+			}
 			err = a.d.Git.ResetHard(ctx, wt, to)
 		} else {
 			err = a.d.Git.MergeFF(ctx, wt, to)
@@ -259,6 +269,27 @@ func (a *App) moveBranch(ctx context.Context, st *syncState, name, from, to stri
 	lb.Head = to
 	st.local[name] = lb
 	return nil
+}
+
+// untrackedInTheWay lists the untracked files in the worktree at path that
+// moving its checkout from one commit to another would overwrite: git reset
+// --hard deletes them without a word.
+func (a *App) untrackedInTheWay(ctx context.Context, st *syncState, path, from, to string) ([]string, error) {
+	added, err := a.d.Git.AddedPaths(ctx, st.repo, from, to)
+	if err != nil || len(added) == 0 {
+		return nil, err
+	}
+	untracked, err := a.d.Git.Untracked(ctx, st.worktreeRepo(path))
+	if err != nil {
+		return nil, err
+	}
+	var out []string
+	for _, f := range added {
+		if slices.Contains(untracked, f) {
+			out = append(out, f)
+		}
+	}
+	return out, nil
 }
 
 // notice appends a formatted notice.

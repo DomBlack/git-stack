@@ -38,6 +38,15 @@ func (c *Client) CommitInfo(ctx context.Context, repo Repo, rev string) (CommitI
 	return info, nil
 }
 
+// TreeOf returns the tree of the commit rev.
+func (c *Client) TreeOf(ctx context.Context, repo Repo, rev string) (string, error) {
+	res, err := c.gitIn(ctx, repo, "rev-parse", "--verify", "--quiet", rev+"^{tree}")
+	if err != nil {
+		return "", fmt.Errorf("tree of %s: %w", rev, err)
+	}
+	return res.Out(), nil
+}
+
 // MergeTreeResult is a three way merge computed without a working tree:
 // the merged tree, and the conflicting paths when it was not clean (the
 // tree then contains conflict markers and must not be committed).

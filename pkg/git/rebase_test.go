@@ -66,3 +66,36 @@ func TestReplayStopsAtConflict(t *testing.T) {
 		t.Errorf("a conflicted replay has no tip: %+v", res)
 	}
 }
+
+func TestReplayDropsCommitsAlreadyInTheParent(t *testing.T) {
+	c, repo, dir := objectsFixture(t)
+	ctx := context.Background()
+	gittest.Run(t, dir, "switch", "-q", "-c", "feat")
+	c1 := gittest.Commit(t, dir, "1.txt", "1", "one")
+	c2 := gittest.Commit(t, dir, "2.txt", "2", "two")
+	gittest.Run(t, dir, "switch", "-q", "main")
+	gittest.Run(t, dir, "cherry-pick", c1)
+	mainTip := gittest.Run(t, dir, "rev-parse", "HEAD")
+
+	res, err := c.Replay(ctx, repo, []string{c1, c2}, mainTip)
+	if err != nil || res.Conflict != nil || res.Replayed != 1 || res.Skipped != 1 {
+		t.Fatalf("Replay = %+v %v", res, err)
+	}
+	if log := gittest.Run(t, dir, "log", "--format=%s", mainTip+".."+res.Tip); log != "two" {
+		t.Errorf("log = %q", log)
+	}
+}
+
+func TestReplayOfOnlyLandedCommitsIsOnto(t *testing.T) {
+	c, repo, dir := objectsFixture(t)
+	gittest.Run(t, dir, "switch", "-q", "-c", "feat")
+	c1 := gittest.Commit(t, dir, "1.txt", "1", "one")
+	gittest.Run(t, dir, "switch", "-q", "main")
+	gittest.Run(t, dir, "cherry-pick", c1)
+	mainTip := gittest.Run(t, dir, "rev-parse", "HEAD")
+
+	res, err := c.Replay(context.Background(), repo, []string{c1}, mainTip)
+	if err != nil || res.Tip != mainTip || res.Replayed != 0 || res.Skipped != 1 {
+		t.Errorf("Replay = %+v %v", res, err)
+	}
+}

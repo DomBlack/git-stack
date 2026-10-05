@@ -63,3 +63,22 @@ func TestDiffsLogsAndRebaseState(t *testing.T) {
 		t.Error("rebase should be aborted")
 	}
 }
+
+func TestAddedPathsAndUntracked(t *testing.T) {
+	c, repo, dir := objectsFixture(t)
+	ctx := context.Background()
+	base := gittest.Run(t, dir, "rev-parse", "HEAD")
+	gittest.Commit(t, dir, "README.md", "changed", "edit")
+	tip := gittest.Commit(t, dir, "sub/new file.txt", "n", "add")
+	added, err := c.AddedPaths(ctx, repo, base, tip)
+	if err != nil || !slices.Equal(added, []string{"sub/new file.txt"}) {
+		t.Errorf("AddedPaths = %q %v", added, err)
+	}
+	gittest.WriteFile(t, dir, "notes.md", "mine")
+	gittest.WriteFile(t, dir, ".gitignore", "*.log\n")
+	gittest.WriteFile(t, dir, "x.log", "ignored")
+	untracked, err := c.Untracked(ctx, repo)
+	if err != nil || !slices.Equal(untracked, []string{".gitignore", "notes.md"}) {
+		t.Errorf("Untracked = %q %v", untracked, err)
+	}
+}

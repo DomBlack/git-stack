@@ -158,7 +158,7 @@ func TestSyncUntrackedFileBlocksFastForward(t *testing.T) {
 	if b, _ := os.ReadFile(filepath.Join(f.dir, "r.txt")); string(b) != "mine" {
 		t.Error("the untracked file must be untouched")
 	}
-	if !strings.Contains(strings.Join(res.Notices, "\n"), "could not be fast forwarded") {
+	if !strings.Contains(strings.Join(res.Notices, "\n"), "was not updated (the checkout was left alone: fast forward") {
 		t.Errorf("notices = %v", res.Notices)
 	}
 }
@@ -184,6 +184,20 @@ func TestSyncDivergedTrunk(t *testing.T) {
 		res, err := f.sync(t, app.SyncOptions{Force: true, NoRestack: true})
 		if err != nil || trunk(res, "main").Status != app.TrunkReset || f.rev(t, "main") != remote {
 			t.Errorf("trunk = %+v %v", trunk(res, "main"), err)
+		}
+	})
+	t.Run("force leaves an untracked file the remote adds", func(t *testing.T) {
+		f, local, _ := setup(t)
+		gittest.WriteFile(t, f.dir, "r.txt", "mine")
+		res, err := f.sync(t, app.SyncOptions{Force: true, NoRestack: true})
+		if err != nil || trunk(res, "main").Status != app.TrunkDirty || f.rev(t, "main") != local {
+			t.Errorf("trunk = %+v %v", trunk(res, "main"), err)
+		}
+		if b, _ := os.ReadFile(filepath.Join(f.dir, "r.txt")); string(b) != "mine" {
+			t.Error("the untracked file must survive")
+		}
+		if !strings.Contains(strings.Join(res.Notices, "\n"), "would overwrite untracked r.txt") {
+			t.Errorf("notices = %v", res.Notices)
 		}
 	})
 	t.Run("yes at the prompt resets", func(t *testing.T) {

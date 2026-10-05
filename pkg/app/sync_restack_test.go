@@ -10,7 +10,6 @@ import (
 	"testing"
 
 	"github.com/DomBlack/git-stack/pkg/app"
-	"github.com/DomBlack/git-stack/pkg/forge"
 	"github.com/DomBlack/git-stack/pkg/git/gittest"
 	"github.com/DomBlack/git-stack/pkg/stack"
 )
@@ -73,8 +72,48 @@ func TestSyncRestackAfterSquashMergedParent(t *testing.T) {
 	if got := gittest.Run(t, f.dir, "log", "--format=%s", "main..b"); got != "feat: b" {
 		t.Errorf("b should carry only its own commit on top of main, got %q", got)
 	}
+	if n := gittest.Run(t, f.dir, "rev-list", "--count", "main..b"); n != "1" {
+		t.Errorf("b should have one commit on main, got %s", n)
+	}
 	if !strings.Contains(gittest.Run(t, f.dir, "ls-tree", "--name-only", "b"), "a.txt") {
 		t.Error("b should still see a's file via the squash merge")
+	}
+}
+
+func TestSyncRestackAfterSquashMergedParentWithoutBase(t *testing.T) {
+	f := newSyncFixture(t)
+	gittest.Run(t, f.dir, "switch", "-q", "main")
+	f.mergeOnRemote(t, "a", 0)
+	if _, err := f.sync(t, app.SyncOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	// With no base recorded a's commit is replayed too, and dropped because
+	// the squash merge already holds its changes.
+	if got := gittest.Run(t, f.dir, "log", "--format=%s", "main..b"); got != "feat: b" {
+		t.Errorf("b should carry no empty commits, got %q", got)
+	}
+}
+
+func TestSyncUntrackedFileBlocksRestackOfCheckedOutBranch(t *testing.T) {
+	f := newSyncFixture(t) // on b
+	bBefore := f.rev(t, "b")
+	f.advanceRemote(t, "main", "r.txt")
+	gittest.WriteFile(t, f.dir, "r.txt", "mine")
+	res, err := f.sync(t, app.SyncOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := restacked(res, "a"); !ok {
+		t.Error("a is not checked out and should restack")
+	}
+	if _, ok := restacked(res, "b"); ok || f.rev(t, "b") != bBefore {
+		t.Error("b must stay put rather than overwrite r.txt")
+	}
+	if b, _ := os.ReadFile(filepath.Join(f.dir, "r.txt")); string(b) != "mine" {
+		t.Error("the untracked file must survive")
+	}
+	if !strings.Contains(strings.Join(res.Notices, "\n"), "would overwrite untracked r.txt") {
+		t.Errorf("notices = %v", res.Notices)
 	}
 }
 
@@ -159,7 +198,6 @@ func TestSyncNothingToRestack(t *testing.T) {
 	if err != nil || len(res.Restacked) != 0 {
 		t.Errorf("already on trunk: %+v %v", res.Restacked, err)
 	}
-	_ = forge.StateOpen
 }
 
 func TestSyncPlanningErrorFailsOneStack(t *testing.T) {
