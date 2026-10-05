@@ -81,14 +81,22 @@ type prJSON struct {
 	HeadRefName       string    `json:"headRefName"`
 	BaseRefName       string    `json:"baseRefName"`
 	UpdatedAt         time.Time `json:"updatedAt"`
+	HeadRefOid        string    `json:"headRefOid"`
+	MergeCommit       *struct {
+		OID string `json:"oid"`
+	} `json:"mergeCommit"`
 }
 
-const prFields = "number,url,title,state,isDraft,isCrossRepository,headRefName,baseRefName,updatedAt"
+const prFields = "number,url,title,state,isDraft,isCrossRepository,headRefName,baseRefName,updatedAt,headRefOid,mergeCommit"
 
 func (p prJSON) toForge() forge.PullRequest {
 	pr := forge.PullRequest{
 		Number: p.Number, URL: p.URL, Title: p.Title,
 		Head: p.HeadRefName, Base: p.BaseRefName, UpdatedAt: p.UpdatedAt,
+	}
+	pr.HeadSHA = p.HeadRefOid
+	if p.MergeCommit != nil {
+		pr.MergeCommit = p.MergeCommit.OID
 	}
 	switch strings.ToUpper(p.State) {
 	case "MERGED":

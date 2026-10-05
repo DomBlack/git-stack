@@ -24,14 +24,18 @@ const (
 
 // PullRequest is a forge-neutral pull request.
 type PullRequest struct {
-	Number    int       `json:"number"`
-	URL       string    `json:"url"`
-	Title     string    `json:"title"`
-	Body      string    `json:"body,omitempty"`
-	State     State     `json:"state"`
-	Head      string    `json:"head"`
-	Base      string    `json:"base"`
-	UpdatedAt time.Time `json:"updatedAt"`
+	Number int    `json:"number"`
+	URL    string `json:"url"`
+	Title  string `json:"title"`
+	Body   string `json:"body,omitempty"`
+	State  State  `json:"state"`
+	Head   string `json:"head"`
+	Base   string `json:"base"`
+	// HeadSHA is the head commit the forge last saw for this PR.
+	HeadSHA string `json:"headSha,omitempty"`
+	// MergeCommit is the commit the PR was merged as, "" unless merged.
+	MergeCommit string    `json:"mergeCommit,omitempty"`
+	UpdatedAt   time.Time `json:"updatedAt"`
 }
 
 // CreatePR describes a new pull request.

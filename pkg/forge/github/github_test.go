@@ -112,3 +112,24 @@ func TestErrors(t *testing.T) {
 	}
 	_ = exec.Capture
 }
+
+func TestListPRsCarriesMergeAndHeadCommits(t *testing.T) {
+	f := exectest.New()
+	f.On("gh", "pr", "list").Reply(`[{"number":1,"url":"u","title":"t","state":"MERGED","isDraft":false,"isCrossRepository":false,"headRefName":"a","baseRefName":"main","updatedAt":"2026-01-01T00:00:00Z","mergeCommit":{"oid":"abc123"},"headRefOid":"def456"},
+{"number":2,"url":"u2","title":"t2","state":"OPEN","isDraft":false,"isCrossRepository":false,"headRefName":"b","baseRefName":"a","updatedAt":"2026-01-01T00:00:00Z","mergeCommit":null,"headRefOid":"0a0a0a"}]`)
+	prs, err := New(f).ListPRs(context.Background(), git.Repo{TopLevel: "/repo"})
+	if err != nil || len(prs) != 2 {
+		t.Fatalf("ListPRs = %+v %v", prs, err)
+	}
+	if prs[0].MergeCommit != "abc123" || prs[0].HeadSHA != "def456" {
+		t.Errorf("merged PR = %+v", prs[0])
+	}
+	if prs[1].MergeCommit != "" || prs[1].HeadSHA != "0a0a0a" {
+		t.Errorf("open PR = %+v", prs[1])
+	}
+	for _, c := range f.CallsTo("gh") {
+		if slices.Contains(c.Args, "--json") && !strings.Contains(c.Args[len(c.Args)-1], "mergeCommit") {
+			t.Errorf("mergeCommit and headRefOid must be requested: %v", c.Args)
+		}
+	}
+}
