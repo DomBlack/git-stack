@@ -140,10 +140,17 @@ importable `cmd` package drags in bubbletea v1. Hence the schema mirror in
 
 ## Decisions and why
 
-**Read the metadata file directly, never write it.** It's the only way to see every stack,
-it works offline, it's fast enough for completion, and gh-stack documents the file as a
-stable interface in its own AGENTS.md. Every mutation still goes through a `gh stack`
-command so there's exactly one writer.
+**Read the metadata file directly; write it only from one place.** Reading it is the only
+way to see every stack, it works offline, it's fast enough for completion, and gh-stack
+documents the file as a stable interface in its own AGENTS.md. For a long time nothing here
+wrote it, but sync has to forget merged branches and finished stacks and gh stack has no
+non-interactive command for that (`unstack --local` needs one of the stack's branches
+checked out, which are exactly the ones that have gone). So `pkg/backend/ghstack.Update`
+edits the file in place: it takes gh stack's own `gh-stack.lock` with `flock`, re-reads, lets
+the caller edit the graph, and writes back by editing an ordered `jsontext` tree rather than
+marshalling our structs, so members we don't model, PR records, stack ids and member order
+survive untouched. Files whose stacks didn't change are not rewritten. Every other mutation
+still goes through a `gh stack` command.
 
 **Navigation is native.** `up`/`down`/`top`/`bottom` are a pure function over the graph
 followed by `git switch`, with Graphite's semantics rather than gh-stack's; `down` from the
@@ -183,16 +190,44 @@ question.
 **What we deliberately don't mirror from `gt` (yet).** `create --insert`, `restack --only`,
 `submit --update-only`, `submit --edit-title/--edit-description` and
 `modify --into` all need a backend that can do more than gh stack can. Each prints a single
-line saying why.
+line saying why. `sync --all` is not accepted at all: every trunk is synced, so there is
+nothing for it to select.
 
-**Sync is native, not `gh stack sync`.** Running `gh stack sync` once per stack meant checking
-every stack out in turn, never moved trunk when no stack was checked out, and could not forget a
-finished stack. `sync` now fetches the trunk's remote once and fast forwards every trunk: by ref
-when it is not checked out, with a fast forward in its worktree when it is, and a dirty
-checkout is a notice and a skip, never an error. A trunk that has diverged from the remote is
-only reset with `-f` or a yes at the prompt. Deleting finished branches, fast forwarding
-branches the remote advanced and restacking follow in later phases. Flags match gt: `-f`,
-`-d/--delete-all` and `--no-restack`; `--all` is gone because every stack is always synced.
+**Sync is native.** `gh stack sync` only syncs the stack of the branch checked out where it
+runs, so covering every stack meant checking each one out in turn, it never forgets a stack
+whose every PR merged, it can't move trunk when there are no stacks, and a linked worktree's
+metadata dies with the worktree. So `git stack sync` does what `gt sync` can be seen to do,
+itself: one `git fetch --prune`; fast forward every trunk (a diverged trunk is only reset
+with `-f` or a yes at the prompt, a dirty checkout gets a notice); delete branches whose PR
+merged or closed, whose tip is already in trunk, or, for untracked branches, whose merged PR
+was for exactly the commit they're on (that last one is how branches orphaned by a dead
+worktree get cleaned up), guarded by the PR's merge commit being in trunk so a PR merged
+into its parent branch stays; fast forward any tracked branch the remote is strictly ahead
+of, and say so when the remote holds commits we don't have (by patch id, so our own
+unpushed restacks don't nag); then restack. A tracked branch whose merged or closed PR has a
+head commit different from the local tip is kept with a notice, even under `-f`, in case
+there is work on it the PR never saw. A candidate checked out in the current worktree whose
+trunk is checked out in another worktree leaves HEAD detached at the trunk tip rather than
+failing. Consent for deletion is `stack.sync.prune` (`always` by default), `-d`, or `-f`;
+with no terminal and `ask`, branches are kept with a notice. Nothing is pushed; `submit`
+does that.
+
+**The restack never checks anything out.** Each branch's commits (from the metadata's
+`base` when it is still an ancestor, else the merge base) are replayed onto the new parent
+with `git merge-tree --write-tree` and `git commit-tree`, keeping author, date and message.
+The fallback range for a branch with no usable recorded base starts at the merge base with
+the parent's old tip, so when a squash merged parent was deleted and no base was recorded
+the parent's commits get replayed again, which is why the metadata base matters.
+Stacks are computed in parallel since that only creates objects, then each stack's branches
+move in one `git update-ref --stdin` transaction with expected old values, so a stack moves
+whole or not at all. A branch checked out in a clean worktree gets `reset --hard` there; a
+dirty one is left and the branches above rebase onto its current tip. A conflict stops that
+stack at that branch with a notice pointing at `git stack restack`, which still goes through
+`gh stack rebase` and its interactive flow; the other stacks finish, and the command exits
+non-zero at the end. A git error while planning a stack, a refused ref transaction, or a
+failed worktree reset marks that stack failed and the command exits non-zero too, never
+silently skipping it. Flags match gt: `-f`, `-d/--delete-all` and `--no-restack`; `--all` is
+gone because every stack is always synced.
 
 **gh stack treats queued PRs as gone; we put the bases back.** When a branch's PR is sitting
 in a merge queue, `gh stack submit` skips it like a merged one and bases the next PR on the
@@ -207,10 +242,10 @@ removed, not added), so after a fix we run the backend submit once more and it a
 gh stack will grumble that the base isn't what it expected on later submits; that's a warning,
 not a failure.
 
-**Merged branches are deleted by default.** gh stack only prunes with `--prune` and would only
-ask on a terminal it never gets from us, so `stack.sync.prune` decides; `always` (default)
-passes `--prune`, `ask` prompts on a terminal and keeps with a notice otherwise, `never`
-keeps. `-f` deletes regardless. gh stack moves you off a branch it is about to delete.
+**Merged branches are deleted by default.** `stack.sync.prune` decides: `always` (default)
+deletes branches whose PRs merged or closed, `ask` prompts on a terminal and keeps with a
+notice otherwise, `never` keeps. `-d` and `-f` delete regardless. A branch checked out in
+the current worktree is moved off first.
 
 **Claude Code is driven through `claude -p`**, not an SDK, so it uses whatever login you
 already have. The call is `--tools ""`, `--output-format json`, `--json-schema <schema>`,

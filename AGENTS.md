@@ -39,7 +39,7 @@ git-stack is a Graphite-style stacked-branch CLI (`git stack <cmd>`) and stdio M
 - Read and write git config via `git config`, never by editing files as text.
 - Never edit `~/.claude.json` or `~/.codex/config.toml` directly; use `claude mcp` / `codex mcp`.
 - `install` must never clobber existing user aliases or config without confirmation, and `--uninstall` removes only what we recorded as managed.
-- We never write gh-stack's `<git-dir>/gh-stack` file; only `gh stack` commands mutate it.
+- Only `pkg/backend/ghstack` writes gh-stack's `<git-dir>/gh-stack` file, through its `Update` under `gh-stack.lock`, editing the JSON in place; nothing else writes it, and `gh stack` commands do every other mutation.
 
 ## Testing
 - Tests must never touch the real user environment. Use `gittest.Isolate(t)` (sets `HOME`, `XDG_CONFIG_HOME`, `GIT_CONFIG_GLOBAL`, `GIT_CONFIG_NOSYSTEM`) in any test that runs git or installers.
