@@ -149,6 +149,11 @@ func (a *App) Sync(ctx context.Context, repo git.Repo, o SyncOptions) (SyncResul
 	}
 	res.Remote = st.remote
 
+	// Listing pull requests is a forge round trip that can take longer than
+	// the fetch itself on a busy repository, so it runs alongside the fetch
+	// and gets its own headline for whatever is left when the fetch is done.
+	prsCh := make(chan []forge.PullRequest, 1)
+	go func() { prsCh <- a.syncPRs(ctx, repo) }()
 	err = a.progress(ctx, PhaseSync, "Fetching "+st.remote, func(ctx context.Context) error {
 		return a.d.Git.Fetch(ctx, repo, st.remote)
 	})
@@ -157,7 +162,18 @@ func (a *App) Sync(ctx context.Context, repo git.Repo, o SyncOptions) (SyncResul
 			WithDetail(err.Error()).WithCause(err).
 			WithSteps("check the remote and your network, then run git stack sync again")
 	}
-	st.prs = PRsFor(a.syncPRs(ctx, repo))
+	err = a.progress(ctx, PhaseSync, "Checking pull requests on "+st.remote, func(ctx context.Context) error {
+		select {
+		case prs := <-prsCh:
+			st.prs = PRsFor(prs)
+			return nil
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	})
+	if err != nil {
+		return res, err
+	}
 	if err := a.syncTrunks(ctx, st, o, &res); err != nil {
 		return res, err
 	}

@@ -265,9 +265,8 @@ func TestSyncFetchFailure(t *testing.T) {
 	if len(res.Trunks) != 0 || f.rev(t, "main") != before {
 		t.Errorf("nothing may run after a failed fetch: %+v", res.Trunks)
 	}
-	if f.forge.lists != 0 {
-		t.Error("the forge must not be listed when the fetch fails")
-	}
+	// The pull request list runs alongside the fetch, so it may well have
+	// been asked; what matters is that nothing moved and no phase ran.
 }
 
 func TestSyncAsksTheForgeOnceWhateverTheCache(t *testing.T) {

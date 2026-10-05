@@ -33,9 +33,11 @@ func TestSyncFlags(t *testing.T) {
 		gittest.Run(t, dir, "switch", "-q", "feat-a")
 	}
 
-	// --no-restack moves trunk but leaves the stack.
+	// --no-restack moves trunk but leaves the stack. The forge round trip
+	// gets its own headline so a slow one is never a silent pause.
 	pushMain("r1.txt")
-	if out := sync("--no-restack"); !strings.Contains(out, "main fast forwarded") || strings.Contains(out, "restacked feat-a") {
+	if out := sync("--no-restack"); !strings.Contains(out, "main fast forwarded") || strings.Contains(out, "restacked feat-a") ||
+		!strings.Contains(out, "Fetching origin...\nChecking pull requests on origin...\n") {
 		t.Errorf("--no-restack: %q", out)
 	}
 	if out := sync(); !strings.Contains(out, "restacked feat-a") {
