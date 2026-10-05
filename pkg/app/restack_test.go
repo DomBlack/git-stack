@@ -589,7 +589,7 @@ func TestRestackContinueThroughASecondConflict(t *testing.T) {
 	gittest.WriteFile(t, f.dir, "shared.txt", "resolved c")
 	gittest.Run(t, f.dir, "add", "shared.txt")
 	res, err := f.app.Restack(ctx, f.repo, app.RestackOptions{Continue: true})
-	if err != nil || !slices.Equal(moved(res), []string{"c"}) || f.stateExists() {
+	if err != nil || !slices.Equal(moved(res), []string{"b", "c"}) || f.stateExists() {
 		t.Fatalf("final continue = %+v %v", res, err)
 	}
 	if gittest.Run(t, f.dir, "branch", "--show-current") != "c" {
@@ -615,5 +615,213 @@ func TestModifyConflictAndContinue(t *testing.T) {
 	res, err := f.app.Modify(ctx, f.repo, app.ModifyOptions{Continue: true})
 	if err != nil || !slices.Equal(res.Restacked, []string{"b", "c"}) || res.Branch != "a" {
 		t.Fatalf("modify --continue = %+v %v", res, err)
+	}
+}
+
+// abortFixture: a is amended so b moves cleanly, then c conflicts on the
+// moved b. Returns the tips before the restack.
+func abortFixture(t *testing.T) (*restackFixture, map[string]string) {
+	t.Helper()
+	return abortFixtureWith(t, nil)
+}
+
+// abortFixtureWith is abortFixture with prep run just before the restack.
+func abortFixtureWith(t *testing.T, prep func(*restackFixture)) (*restackFixture, map[string]string) {
+	t.Helper()
+	f := prefixFixture(t)
+	if prep != nil {
+		prep(f)
+	}
+	before := map[string]string{"a": f.rev(t, "a"), "b": f.rev(t, "b"), "c": f.rev(t, "c")}
+	bases := map[string]string{"b": f.base("b"), "c": f.base("c")}
+	_, err := f.app.Restack(context.Background(), f.repo, app.RestackOptions{})
+	var se *stack.Error
+	if !errors.As(err, &se) || se.Kind != stack.KindConflict || se.Branch != "c" {
+		t.Fatalf("want c to conflict, got %+v", err)
+	}
+	if f.rev(t, "b") == before["b"] {
+		t.Fatal("b should have moved before the conflict")
+	}
+	before["base:b"], before["base:c"] = bases["b"], bases["c"]
+	return f, before
+}
+
+func TestRestackAbortPutsEverythingBack(t *testing.T) {
+	f, before := abortFixture(t)
+	res, err := f.app.Restack(context.Background(), f.repo, app.RestackOptions{Abort: true})
+	if err != nil || !slices.Equal(res.Restored, []string{"b"}) {
+		t.Fatalf("abort = %+v %v", res, err)
+	}
+	for _, n := range []string{"a", "b", "c"} {
+		if f.rev(t, n) != before[n] {
+			t.Errorf("%s = %s, want %s", n, f.rev(t, n), before[n])
+		}
+	}
+	if f.base("b") != before["base:b"] || f.base("c") != before["base:c"] {
+		t.Errorf("bases not restored: b=%s c=%s", f.base("b"), f.base("c"))
+	}
+	if f.rebaseActive(t) || f.stateExists() {
+		t.Error("nothing should be left in progress")
+	}
+	if gittest.Run(t, f.dir, "branch", "--show-current") != "c" || gittest.Run(t, f.dir, "status", "--short") != "" {
+		t.Error("back on c with a clean tree")
+	}
+	// And now there is nothing to abort.
+	if _, err := f.app.Restack(context.Background(), f.repo, app.RestackOptions{Abort: true}); !errors.Is(err, &stack.Error{Kind: stack.KindInvalidArgs}) {
+		t.Errorf("second abort = %v", err)
+	}
+}
+
+func TestRestackAbortLeavesBranchMovedSince(t *testing.T) {
+	f, before := abortFixture(t)
+	// Someone moves b by hand while the conflict is open.
+	gittest.Run(t, f.dir, "branch", "-f", "b", "a")
+	res, err := f.app.Restack(context.Background(), f.repo, app.RestackOptions{Abort: true})
+	if err != nil || len(res.Restored) != 0 || !strings.Contains(strings.Join(res.Notices, "\n"), "b moved") {
+		t.Fatalf("abort = %+v %v", res, err)
+	}
+	if f.rev(t, "b") != f.rev(t, "a") {
+		t.Error("a branch moved by hand must be left where it is")
+	}
+	if f.rev(t, "c") != before["c"] || f.rebaseActive(t) || f.stateExists() {
+		t.Error("c must still be put back by git and the state cleared")
+	}
+}
+
+func TestRestackAbortAfterHandAbortedRebase(t *testing.T) {
+	f, before := abortFixture(t)
+	gittest.Run(t, f.dir, "rebase", "--abort")
+	res, err := f.app.Restack(context.Background(), f.repo, app.RestackOptions{Abort: true})
+	if err != nil || !slices.Equal(res.Restored, []string{"b"}) || f.rev(t, "b") != before["b"] {
+		t.Fatalf("abort = %+v %v", res, err)
+	}
+}
+
+// startedOnAFixture: main edits shared.txt and so does b, so a moves
+// cleanly onto the new main while checked out here and b then conflicts on
+// the moved a.
+func startedOnAFixture(t *testing.T) (*restackFixture, map[string]string) {
+	t.Helper()
+	f := newRestackFixture(t)
+	gittest.Run(t, f.dir, "switch", "-q", "main")
+	gittest.Commit(t, f.dir, "shared.txt", "main version", "main edits shared")
+	gittest.Run(t, f.dir, "switch", "-q", "b")
+	gittest.Commit(t, f.dir, "shared.txt", "b version", "b edits shared")
+	gittest.Run(t, f.dir, "switch", "-q", "a")
+	before := map[string]string{"a": f.rev(t, "a"), "b": f.rev(t, "b"), "c": f.rev(t, "c"), "base:a": f.base("a")}
+	_, err := f.app.Restack(context.Background(), f.repo, app.RestackOptions{})
+	var se *stack.Error
+	if !errors.As(err, &se) || se.Kind != stack.KindConflict || se.Branch != "b" {
+		t.Fatalf("want b to conflict, got %+v", err)
+	}
+	if f.rev(t, "a") == before["a"] {
+		t.Fatal("a should have moved before the conflict")
+	}
+	return f, before
+}
+
+func TestRestackAbortPutsBackTheBranchItStartedOn(t *testing.T) {
+	f, before := startedOnAFixture(t)
+	res, err := f.app.Restack(context.Background(), f.repo, app.RestackOptions{Abort: true})
+	if err != nil || !slices.Equal(res.Restored, []string{"a"}) {
+		t.Fatalf("abort = %+v %v", res, err)
+	}
+	for _, n := range []string{"a", "b", "c"} {
+		if f.rev(t, n) != before[n] {
+			t.Errorf("%s = %s, want %s", n, f.rev(t, n), before[n])
+		}
+	}
+	if f.base("a") != before["base:a"] {
+		t.Errorf("base of a = %s, want %s", f.base("a"), before["base:a"])
+	}
+	if gittest.Run(t, f.dir, "branch", "--show-current") != "a" || gittest.Run(t, f.dir, "status", "--short") != "" {
+		t.Error("back on a with a clean tree")
+	}
+}
+
+// TestRestackAbortResetsTheCheckedOutBranch: with the moved branch checked
+// out here, abort moves it back with reset --keep, keeping unrelated edits.
+func TestRestackAbortResetsTheCheckedOutBranch(t *testing.T) {
+	f, before := startedOnAFixture(t)
+	gittest.Run(t, f.dir, "rebase", "--abort")
+	gittest.Run(t, f.dir, "switch", "-q", "a")
+	gittest.WriteFile(t, f.dir, "a.txt", "edited")
+	res, err := f.app.Restack(context.Background(), f.repo, app.RestackOptions{Abort: true})
+	if err != nil || !slices.Equal(res.Restored, []string{"a"}) || f.rev(t, "a") != before["a"] {
+		t.Fatalf("abort = %+v %v", res, err)
+	}
+	if gittest.Run(t, f.dir, "branch", "--show-current") != "a" || gittest.Run(t, f.dir, "status", "--short") != "M a.txt" {
+		t.Errorf("want a checked out with its edit kept, status = %q", gittest.Run(t, f.dir, "status", "--short"))
+	}
+}
+
+func TestRestackContinueReportsEveryMoveOfTheOperation(t *testing.T) {
+	f := prefixFixture(t)
+	ctx := context.Background()
+	if _, err := f.app.Restack(ctx, f.repo, app.RestackOptions{}); !errors.Is(err, &stack.Error{Kind: stack.KindConflict}) {
+		t.Fatalf("want a conflict, got %v", err)
+	}
+	gittest.WriteFile(t, f.dir, "shared.txt", "resolved")
+	res, err := f.app.Restack(ctx, f.repo, app.RestackOptions{Continue: true, StageAll: true})
+	if err != nil || !slices.Equal(moved(res), []string{"b", "c"}) {
+		t.Fatalf("continue = %+v %v", res, err)
+	}
+}
+
+func TestRestackAbortAfterBranchWasPutBackByHand(t *testing.T) {
+	f, before := abortFixture(t)
+	// b is already back (a retried abort, or by hand) while the state still
+	// says it moved.
+	gittest.Run(t, f.dir, "update-ref", "refs/heads/b", before["b"])
+	res, err := f.app.Restack(context.Background(), f.repo, app.RestackOptions{Abort: true})
+	if err != nil || !slices.Equal(res.Restored, []string{"b"}) || len(res.Notices) != 0 {
+		t.Fatalf("abort = %+v %v", res, err)
+	}
+	if f.rev(t, "b") != before["b"] || f.base("b") != before["base:b"] {
+		t.Errorf("b = %s base %s, want %s base %s", f.rev(t, "b"), f.base("b"), before["b"], before["base:b"])
+	}
+}
+
+func TestRestackAbortLeavesDeletedBranch(t *testing.T) {
+	f, _ := abortFixture(t)
+	gittest.Run(t, f.dir, "update-ref", "-d", "refs/heads/b")
+	res, err := f.app.Restack(context.Background(), f.repo, app.RestackOptions{Abort: true})
+	if err != nil || len(res.Restored) != 0 || !strings.Contains(strings.Join(res.Notices, "\n"), "b no longer exists") {
+		t.Fatalf("abort = %+v %v", res, err)
+	}
+}
+
+func TestRestackAbortResetsCleanOtherWorktree(t *testing.T) {
+	wt := ""
+	f, before := abortFixtureWith(t, func(f *restackFixture) {
+		wt = f.dir + "-wt"
+		gittest.Run(t, f.dir, "worktree", "add", "-q", wt, "b")
+	})
+	if gittest.Run(t, wt, "rev-parse", "HEAD") == before["b"] {
+		t.Fatal("the restack should have moved b in its worktree")
+	}
+	res, err := f.app.Restack(context.Background(), f.repo, app.RestackOptions{Abort: true})
+	if err != nil || !slices.Equal(res.Restored, []string{"b"}) {
+		t.Fatalf("abort = %+v %v", res, err)
+	}
+	if gittest.Run(t, wt, "rev-parse", "HEAD") != before["b"] || gittest.Run(t, wt, "status", "--short") != "" {
+		t.Error("the other worktree should be back on b's old tip, clean")
+	}
+}
+
+func TestRestackAbortSkipsDirtyOtherWorktree(t *testing.T) {
+	wt := ""
+	f, _ := abortFixtureWith(t, func(f *restackFixture) {
+		wt = f.dir + "-wt"
+		gittest.Run(t, f.dir, "worktree", "add", "-q", wt, "b")
+	})
+	movedTo := f.rev(t, "b")
+	gittest.WriteFile(t, wt, "b.txt", "uncommitted")
+	res, err := f.app.Restack(context.Background(), f.repo, app.RestackOptions{Abort: true})
+	if err != nil || slices.Contains(res.Restored, "b") || !strings.Contains(strings.Join(res.Notices, "\n"), "uncommitted changes") {
+		t.Fatalf("abort = %+v %v", res, err)
+	}
+	if f.rev(t, "b") != movedTo || f.stateExists() {
+		t.Error("b stays where the restack put it and the state is cleared")
 	}
 }

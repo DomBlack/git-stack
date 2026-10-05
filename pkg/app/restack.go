@@ -237,17 +237,20 @@ func (a *App) startConflictRebase(ctx context.Context, run *restackRun, p *resta
 }
 
 // recordRebased writes the conflicting branch's new tip and base once its
-// git rebase is done, and remembers the move for abort.
+// git rebase is done, and remembers the move for abort. A continue retried
+// after a later failure calls it again; the move is remembered once.
 func (a *App) recordRebased(ctx context.Context, run *restackRun, res *RestackResult) error {
 	st := run.state
 	tip, err := a.d.Git.RevParse(ctx, run.repo, st.Conflict)
 	if err != nil {
 		return err
 	}
-	m := movedRef{Name: st.Conflict, From: st.ConflictTip, To: tip, OldBase: st.ConflictOldBase}
-	run.moved = append(run.moved, m)
+	if !slices.ContainsFunc(run.moved, func(m movedRef) bool { return m.Name == st.Conflict }) {
+		m := movedRef{Name: st.Conflict, From: st.ConflictTip, To: tip, OldBase: st.ConflictOldBase}
+		run.moved = append(run.moved, m)
+		res.Moved = append(res.Moved, BranchMove{Name: m.Name, Stack: run.stackName, From: m.From, To: m.To})
+	}
 	st.Moved = run.moved
-	res.Moved = append(res.Moved, BranchMove{Name: m.Name, Stack: run.stackName, From: m.From, To: m.To})
 	err = a.d.Meta.Update(ctx, run.repo, func(g *stack.Graph) error {
 		for i := range g.Stacks {
 			for j := range g.Stacks[i].Branches {
@@ -353,6 +356,15 @@ func (a *App) applyMoves(ctx context.Context, run *restackRun, p *restackPlan, r
 		res.Moved = append(res.Moved, BranchMove{Name: m.name, Stack: run.stackName, From: m.from, To: m.to})
 		if m.empty {
 			res.Notices = append(res.Notices, fmt.Sprintf("%s has no commits of its own any more; its changes are already in its parent", m.name))
+		}
+	}
+	if run.state != nil {
+		// On the continue path a run is already saved; the refs have moved,
+		// so record them before anything else can fail and abort can put
+		// them back too.
+		run.state.Moved = run.moved
+		if err := saveRestackState(run.repo, run.state); err != nil {
+			return err
 		}
 	}
 	return a.d.Meta.Update(ctx, run.repo, func(g *stack.Graph) error {
@@ -461,6 +473,7 @@ func (a *App) restackContinue(ctx context.Context, repo git.Repo, stageAll bool)
 		return res, stack.Newf(stack.KindInvalidArgs, "the rebase of %s was abandoned outside git-stack", st.Conflict).
 			WithSteps(st.Command+" to try again", "or git stack abort to put the moved branches back")
 	}
+	earlier := slices.Clone(st.Moved)
 	run := &restackRun{repo: repo, command: st.Command, trunk: st.Trunk, originalBranch: st.OriginalBranch, moved: st.Moved, state: st}
 	if g, err := a.d.Meta.Load(ctx, repo); err == nil {
 		if s, _, ok := g.StackOf(st.Conflict); ok {
@@ -480,7 +493,23 @@ func (a *App) restackContinue(ctx context.Context, repo git.Repo, stageAll bool)
 		}
 		return a.restackBranches(ctx, run, branchesNamed(graph, st.Remaining), st.Conflict, &res)
 	})
+	if err == nil {
+		res.Moved = withEarlierMoves(earlier, res.Moved, run.stackName)
+	}
 	return res, err
+}
+
+// withEarlierMoves puts the moves an operation made before this continue
+// in front of the ones it made now, so the result covers the whole
+// operation, bottom to top.
+func withEarlierMoves(earlier []movedRef, now []BranchMove, stackName string) []BranchMove {
+	out := make([]BranchMove, 0, len(earlier)+len(now))
+	for _, m := range earlier {
+		if !slices.ContainsFunc(now, func(b BranchMove) bool { return b.Name == m.Name }) {
+			out = append(out, BranchMove{Name: m.Name, Stack: stackName, From: m.From, To: m.To})
+		}
+	}
+	return append(out, now...)
 }
 
 // branchesNamed looks the named branches up in the graph, keeping order
@@ -495,7 +524,9 @@ func branchesNamed(g *stack.Graph, names []string) []stack.Branch {
 	return out
 }
 
-// restackAbort gives up an interrupted restack.
+// restackAbort gives an interrupted restack up: git puts the conflicting
+// branch back, and every branch the operation moved is put back too,
+// newest first, unless it has moved again since.
 func (a *App) restackAbort(ctx context.Context, repo git.Repo) (RestackResult, error) {
 	st, err := loadRestackState(repo)
 	if err != nil {
@@ -504,7 +535,88 @@ func (a *App) restackAbort(ctx context.Context, repo git.Repo) (RestackResult, e
 	if st == nil {
 		return RestackResult{}, a.nothingToResume(ctx, repo, "abort")
 	}
-	return RestackResult{}, stack.New(stack.KindUnsupported, "abort is not implemented yet")
+	res := RestackResult{Branches: append([]string{st.Conflict}, st.Remaining...)}
+	err = a.progress(ctx, PhaseRestack, "Aborting the restack", func(ctx context.Context) error {
+		if active, err := a.d.Git.RebaseInProgress(ctx, repo); err != nil {
+			return err
+		} else if active {
+			if err := a.d.Git.RebaseAbort(ctx, repo); err != nil {
+				return err
+			}
+		}
+		local, err := a.localBranches(ctx, repo)
+		if err != nil {
+			return err
+		}
+		dirty := newDirtyCache()
+		var updates []git.RefUpdate
+		var others []movedRef
+		restored := map[string]movedRef{}
+		var names []string
+		for _, m := range slices.Backward(st.Moved) {
+			lb, ok := local[m.Name]
+			switch {
+			case !ok:
+				res.Notices = append(res.Notices, fmt.Sprintf("%s no longer exists and was left alone", m.Name))
+				continue
+			case lb.Head == m.From:
+				// Already back, by hand or by an abort that failed later
+				// on: only its metadata is left to put back.
+				restored[m.Name] = m
+				names = append(names, m.Name)
+				continue
+			case lb.Head != m.To:
+				res.Notices = append(res.Notices, fmt.Sprintf("%s moved since the restack and was left alone", m.Name))
+				continue
+			}
+			switch {
+			case lb.Worktree == repo.TopLevel:
+				if err := a.d.Git.ResetKeep(ctx, repo, m.From); err != nil {
+					return stack.Newf(stack.KindInvalidArgs, "could not put %s back: local changes are in the way", m.Name).
+						WithSteps("commit or stash them, then git stack abort").WithCause(err)
+				}
+			case lb.Worktree != "":
+				if dirty.isDirty(ctx, a.d.Git, repo, lb.Worktree) {
+					res.Notices = append(res.Notices, fmt.Sprintf("%s is checked out in %s with uncommitted changes and was left where the restack put it", m.Name, shortPath(lb.Worktree)))
+					continue
+				}
+				updates = append(updates, git.RefUpdate{Ref: "refs/heads/" + m.Name, New: m.From, Old: m.To})
+				others = append(others, m)
+			default:
+				updates = append(updates, git.RefUpdate{Ref: "refs/heads/" + m.Name, New: m.From, Old: m.To})
+			}
+			restored[m.Name] = m
+			names = append(names, m.Name)
+		}
+		if len(updates) > 0 {
+			if err := a.d.Git.UpdateRefs(ctx, repo, updates); err != nil {
+				return err
+			}
+		}
+		for _, m := range others {
+			if err := a.d.Git.ResetHard(ctx, worktreeRepo(repo, local[m.Name].Worktree), m.From); err != nil {
+				res.Notices = append(res.Notices, fmt.Sprintf("%s was put back but its checkout could not be updated: %v; run git reset --hard there", m.Name, err))
+			}
+		}
+		res.Restored = names
+		if err := a.d.Meta.Update(ctx, repo, func(g *stack.Graph) error {
+			for i := range g.Stacks {
+				for j := range g.Stacks[i].Branches {
+					b := &g.Stacks[i].Branches[j]
+					if m, ok := restored[b.Name]; ok {
+						b.Head, b.Base = m.From, m.OldBase
+					}
+				}
+			}
+			return nil
+		}); err != nil {
+			return err
+		}
+		slices.Reverse(res.Restored) // report bottom to top
+		run := &restackRun{repo: repo, originalBranch: st.OriginalBranch, state: st}
+		return a.finishRun(ctx, run)
+	})
+	return res, err
 }
 
 // conflictError is the error a stopped rebase surfaces: the branch, its
