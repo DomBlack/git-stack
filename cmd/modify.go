@@ -49,9 +49,13 @@ created so the parent's commit is never rewritten.`,
 			rep := c.report()
 			switch {
 			case cont:
-				rep.Success("Restack continued")
+				if n := len(res.Restacked); n > 0 {
+					rep.Success("Restack continued; restacked %d %s", n, branchNoun(n))
+				} else {
+					rep.Success("Restack continued")
+				}
 			case abort:
-				rep.Success("Restack aborted; branches restored")
+				rep.Success("Restack aborted; branches put back")
 			case res.Amended:
 				rep.Success("Amended %s  %s %s", rep.Branch(res.Branch), rep.SHA(res.Commit.Short()), res.Commit.Subject)
 			default:

@@ -4,14 +4,17 @@ import (
 	"bytes"
 	"context"
 	"encoding/json/v2"
+	"errors"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
 	"github.com/DomBlack/git-stack/pkg/exec"
 	"github.com/DomBlack/git-stack/pkg/exec/exectest"
 	"github.com/DomBlack/git-stack/pkg/git/gittest"
+	"github.com/DomBlack/git-stack/pkg/stack"
 )
 
 // fakeGh simulates the gh-stack extension: git commands run for real, gh
@@ -161,20 +164,6 @@ func TestCreateModifyRestackCommands(t *testing.T) {
 	// gittest.Run fails the test when git exits non-zero.
 	gittest.Run(t, dir, "merge-base", "--is-ancestor", "add-feature-a", "feat/b")
 
-	// restack with scopes.
-	if _, _, err := runWith(t, f, "--cwd", dir, "restack", "--upstack"); err != nil {
-		t.Errorf("restack: %v", err)
-	}
-	if _, _, err := runWith(t, f, "--cwd", dir, "rs", "--continue"); err == nil || !strings.Contains(err.Error(), "nothing to continue") {
-		t.Errorf("continue with nothing interrupted: %v", err)
-	}
-	if _, _, err := runWith(t, f, "--cwd", dir, "restack", "--only"); err != nil {
-		t.Errorf("--only: %v", err)
-	}
-	if _, _, err := runWith(t, f, "--cwd", dir, "restack", "-u", "-d"); err == nil {
-		t.Error("mutually exclusive scope flags")
-	}
-
 	// create mid-stack is refused with the gh-stack limitation explained.
 	_, _, err = runWith(t, f, "--cwd", dir, "create", "mid")
 	if err == nil || !strings.Contains(err.Error(), "not the top of its stack") {
@@ -185,15 +174,55 @@ func TestCreateModifyRestackCommands(t *testing.T) {
 		t.Errorf("insert: %v", err)
 	}
 
-	// Trunk moved: restack puts the bottom branch on it.
+	// restack after an amend lower down reports what moved and what didn't.
+	gittest.Run(t, dir, "switch", "-q", "add-feature-a")
+	gittest.WriteFile(t, dir, "a.txt", "a3")
+	gittest.Run(t, dir, "commit", "-q", "-a", "--amend", "--no-edit")
+	gittest.Run(t, dir, "switch", "-q", "feat/b")
+	out, errOut, err = runWith(t, f, "--cwd", dir, "restack")
+	if err != nil || out != "  add-feature-a already in place\nok: Restacked feat/b\n" || !strings.Contains(errOut, "Restacking add-feature-a, feat/b...") {
+		t.Errorf("restack: %q %q %v", out, errOut, err)
+	}
+	out, _, err = runWith(t, f, "--cwd", dir, "rs")
+	if err != nil || out != "ok: Nothing to restack; add-feature-a, feat/b are already in place\n" {
+		t.Errorf("no-op restack: %q %v", out, err)
+	}
+	out, _, err = runWith(t, f, "--cwd", dir, "restack", "--only", "--branch", "add-feature-a")
+	if err != nil || !strings.HasPrefix(out, "ok: Nothing to restack") {
+		t.Errorf("--only --branch: %q %v", out, err)
+	}
+	if _, _, err := runWith(t, f, "--cwd", dir, "restack", "-u", "-d"); err == nil {
+		t.Error("mutually exclusive scope flags")
+	}
+	_, _, err = runWith(t, f, "--cwd", dir, "rs", "--continue")
+	if err == nil || !strings.Contains(err.Error(), "nothing to continue") {
+		t.Errorf("continue with nothing pending: %v", err)
+	}
+
+	// Trunk moved: the bottom branch follows it.
 	gittest.Run(t, dir, "switch", "-q", "main")
 	gittest.Commit(t, dir, "m.txt", "m", "trunk moves")
 	gittest.Run(t, dir, "switch", "-q", "feat/b")
-	if _, _, err := runWith(t, f, "--cwd", dir, "restack"); err != nil {
-		t.Errorf("restack onto moved trunk: %v", err)
+	out, _, err = runWith(t, f, "--cwd", dir, "restack")
+	if err != nil || out != "ok: Restacked add-feature-a, feat/b\n" {
+		t.Errorf("after trunk moved: %q %v", out, err)
 	}
 	gittest.Run(t, dir, "merge-base", "--is-ancestor", "main", "add-feature-a")
-	gittest.Run(t, dir, "merge-base", "--is-ancestor", "add-feature-a", "feat/b")
+
+	// A conflict stops with the files and our commands; abort restores.
+	gittest.Run(t, dir, "switch", "-q", "add-feature-a")
+	gittest.Commit(t, dir, "b.txt", "a's b", "a edits b.txt")
+	gittest.Run(t, dir, "switch", "-q", "feat/b")
+	_, _, err = runWith(t, f, "--cwd", dir, "restack")
+	se, ok := errors.AsType[*stack.Error](err)
+	if !ok || se.Kind != stack.KindConflict || !strings.Contains(se.Error(), "feat/b conflicts when rebased onto add-feature-a") ||
+		!slices.Contains(se.NextSteps, "git add b.txt") || !slices.Contains(se.NextSteps, "git stack continue") {
+		t.Errorf("conflict: %v", err)
+	}
+	out, _, err = runWith(t, f, "--cwd", dir, "restack", "--abort")
+	if err != nil || out != "ok: Restack aborted\n" {
+		t.Errorf("abort: %q %v", out, err)
+	}
 }
 
 func TestCreateWithAIUsesClaude(t *testing.T) {

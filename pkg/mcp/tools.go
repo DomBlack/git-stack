@@ -176,9 +176,11 @@ func (s *Server) modify(ctx context.Context, req *mcp.CallToolRequest, in modify
 
 type restackInput struct {
 	repoArg
-	Scope    string `json:"scope,omitempty" jsonschema:"all (default), upstack (this branch and above), downstack (this branch and below) or only"`
-	Continue bool   `json:"continue,omitempty"`
-	Abort    bool   `json:"abort,omitempty"`
+	Scope    string `json:"scope,omitempty" jsonschema:"all (default), upstack (this branch and above), downstack (this branch and below) or only (this branch)"`
+	Branch   string `json:"branch,omitempty" jsonschema:"work the scope out from this branch instead of the current one; nothing is checked out"`
+	Continue bool   `json:"continue,omitempty" jsonschema:"continue an interrupted restack after the conflicts were resolved and git added"`
+	Abort    bool   `json:"abort,omitempty" jsonschema:"abort an interrupted restack and put every moved branch back"`
+	StageAll bool   `json:"stage_all,omitempty" jsonschema:"with continue: git add -A first"`
 }
 
 func (s *Server) restack(ctx context.Context, req *mcp.CallToolRequest, in restackInput) (*mcp.CallToolResult, app.RestackResult, error) {
@@ -199,7 +201,7 @@ func (s *Server) restack(ctx context.Context, req *mcp.CallToolRequest, in resta
 	if err != nil {
 		return nil, app.RestackResult{}, wrapErr(err)
 	}
-	res, err := a.Restack(ctx, repo, app.RestackOptions{Scope: scope, Continue: in.Continue, Abort: in.Abort})
+	res, err := a.Restack(ctx, repo, app.RestackOptions{Scope: scope, Branch: in.Branch, Continue: in.Continue, Abort: in.Abort, StageAll: in.StageAll})
 	if err != nil {
 		return nil, app.RestackResult{}, wrapErr(err)
 	}

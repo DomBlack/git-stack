@@ -254,12 +254,14 @@ func TestRestackKeepsUnrelatedLocalChanges(t *testing.T) {
 	f.amend(t, "a", "a2.txt")
 	gittest.WriteFile(t, f.dir, "c.txt", "edited but not committed")
 	gittest.WriteFile(t, f.dir, "notes.txt", "untracked")
+	gittest.WriteFile(t, f.dir, "staged.txt", "staged new file")
+	gittest.Run(t, f.dir, "add", "staged.txt")
 	res, err := f.app.Restack(context.Background(), f.repo, app.RestackOptions{})
 	if err != nil || !slices.Equal(moved(res), []string{"b", "c"}) {
 		t.Fatalf("res = %+v %v", res, err)
 	}
 	status := gittest.Run(t, f.dir, "status", "--short")
-	if !strings.Contains(status, "M c.txt") || !strings.Contains(status, "?? notes.txt") {
+	if !strings.Contains(status, "M c.txt") || !strings.Contains(status, "?? notes.txt") || !strings.Contains(status, "A  staged.txt") {
 		t.Errorf("local changes lost: %q", status)
 	}
 	if gittest.Run(t, f.dir, "branch", "--show-current") != "c" {

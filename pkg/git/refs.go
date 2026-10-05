@@ -118,8 +118,26 @@ func (c *Client) ResetHard(ctx context.Context, repo Repo, rev string) error {
 // ResetKeep moves HEAD and the checked out branch to rev and updates the
 // working tree, keeping local changes to files rev and HEAD agree on. git
 // refuses, and nothing moves, when a locally changed file differs between
-// the two.
+// the two. Staged new files are re-added afterwards because reset --keep
+// drops them from the index; the caller refuses up front when the move adds
+// the same path, so re-adding cannot clobber anything.
 func (c *Client) ResetKeep(ctx context.Context, repo Repo, rev string) error {
-	_, err := c.gitIn(ctx, repo, "reset", "--keep", "-q", rev)
+	res, err := c.gitIn(ctx, repo, "diff", "--cached", "--name-only", "-z", "--no-renames", "--diff-filter=A")
+	if err != nil {
+		return err
+	}
+	var added []string
+	for p := range strings.SplitSeq(res.Out(), "\x00") {
+		if p != "" {
+			added = append(added, p)
+		}
+	}
+	if _, err := c.gitIn(ctx, repo, "reset", "--keep", "-q", rev); err != nil {
+		return err
+	}
+	if len(added) == 0 {
+		return nil
+	}
+	_, err = c.gitIn(ctx, repo, append([]string{"add", "--"}, added...)...)
 	return err
 }

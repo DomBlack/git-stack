@@ -314,6 +314,14 @@ func TestViewCreateModifyNavigate(t *testing.T) {
 	if !slices.Equal(rr.Branches, []string{"b", "feat-add-c"}) {
 		t.Errorf("restack = %+v", rr)
 	}
+	if len(rr.InPlace)+len(rr.Moved) == 0 {
+		t.Errorf("restack reported neither moved nor in place: %+v", rr)
+	}
+	var only app.RestackResult
+	h.call("stack_restack", map[string]any{"scope": "only"}, &only)
+	if len(only.Branches) != 1 {
+		t.Errorf("restack only = %+v", only)
+	}
 
 	h.call("stack_navigate", map[string]any{"direction": "bottom"}, &nav)
 	h.call("stack_navigate", map[string]any{"direction": "down"}, &nav)

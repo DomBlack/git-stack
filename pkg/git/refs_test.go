@@ -173,6 +173,25 @@ func TestResetKeepKeepsUnrelatedLocalChanges(t *testing.T) {
 	}
 }
 
+func TestResetKeepKeepsStagedNewFile(t *testing.T) {
+	c, repo, dir := objectsFixture(t)
+	gittest.Run(t, dir, "switch", "-q", "-c", "feat")
+	target := gittest.Commit(t, dir, "f.txt", "f", "f")
+	gittest.Run(t, dir, "switch", "-q", "main")
+	gittest.WriteFile(t, dir, "n.txt", "new")
+	gittest.Run(t, dir, "add", "n.txt")
+
+	if err := c.ResetKeep(context.Background(), repo, target); err != nil {
+		t.Fatal(err)
+	}
+	if gittest.Run(t, dir, "rev-parse", "main") != target {
+		t.Error("main should have moved")
+	}
+	if got := gittest.Run(t, dir, "status", "--short"); got != "A  n.txt" {
+		t.Errorf("status = %q, want n.txt still staged", got)
+	}
+}
+
 func TestResetKeepRefusesOverlappingChange(t *testing.T) {
 	c, repo, dir := objectsFixture(t)
 	ctx := context.Background()
