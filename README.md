@@ -1,98 +1,220 @@
 # git-stack
 
-Graphite like commands for GitHub native stacked PR's.
+> Graphite like commands for GitHub native stacked PR's.
 
-It's a CLI for stacked branches, installed as `git-stack` so git picks it up as
-`git stack <cmd>`. It mirrors the `gt` workflow (`create`, `modify`, `restack`, `submit`,
-`sync`, `up`/`down`/`top`/`bottom`, `checkout`) but sits on top of GitHub's official
-[`gh stack`](https://github.com/github/gh-stack) extension rather than a third party service,
-i.e. the metadata lives in your repo and the PRs are plain GitHub PRs. The same binary also
-runs as a stdio MCP server so coding agents can drive the stack the same way you do.
+This CLI installs an extension into git, giving you `git stack create`, `git stack modify`
+and `git stack submit` commands, as well as setting up aliases in your `~/.gitconfig` allowing
+nice shortcuts like `git up` (to navigate to the next PR up the stack), `git down` etc, all built
+on-top of Github's own Stack's and this binary plays nicely along side Github's own CLI for stacks.
 
-The design, what we learnt about gh stack and the reasoning behind the decisions are in
-[`docs/architecture.md`](docs/architecture.md), if you want to know why things are the way
-they are.
-
-## Install
-
-```sh
-go install github.com/DomBlack/git-stack@latest
-git stack install          # git aliases, shell completion, agent MCP registration
-```
-
-### Prerequisites
-
-- git 2.40+
-- `gh` (the GitHub CLI) logged in via `gh auth login`, plus the extension;
-  `gh extension install github/gh-stack`
-- Claude Code (`claude`) on your `PATH` if you want the `--ai` flags (optional)
-
-## Commands
-
-If you know `gt` you already know most of this; the table is the mapping.
-
-| Graphite | git-stack | Notes |
-|---|---|---|
-| `gt create [name]` | `git stack create [name]` (`git c`) | `-a` `-u` `-p` `-m` `--ai` |
-| `gt modify` | `git stack modify` (`git m`) | amend (or `-c` for a new commit), then restack everything above |
-| `gt restack` | `git stack restack` (`git rs`) | `--upstack` `--downstack` `--only` `--branch`; bottom branch onto the local trunk included; only checks out a branch to resolve a conflict |
-| `gt continue` | `git stack continue` (`git continue`, `cont`) | finish an interrupted restack or modify once conflicts are resolved; `-a` stages everything first |
-| `gt abort` | `git stack abort` (`git abort`) | give up an interrupted restack and put every moved branch back |
-| `gt up/down/top/bottom` | `git stack up/down/top/bottom` (`git u/d/t/b`) | `down` from the bottom branch takes you to trunk |
-| `gt checkout` | `git stack checkout` (`git co`) | interactive tree picker |
-| `gt log` | `git stack` or `git stack log` | every stack as a tree, trunk at the bottom, with PR state |
-| `gt submit` / `gt ss` | `git stack submit` (`git ss`) | `-d` `-p` `--no-edit` `--dry-run` `--ai` |
-| `gt sync` | `git stack sync` (`git sync`) | fetch, fast forward trunk, delete merged and closed branches (`stack.sync.prune`, `-d`, `-f`), fast forward branches the remote moved, restack every stack without a checkout; nothing is pushed |
-| `gt merge` | `git stack merge [branch]` | merge the stack's PRs up to a branch into trunk, all or nothing, then sync; `--squash` `--rebase` `--merge` `--no-sync` |
-| (none) | `git stack install` | aliases, completion, agent MCP registration |
-| (none) | `git stack completion <shell>` | bash, zsh, fish |
-| (none) | `git stack mcp` | stdio MCP server |
-| (none) | `git stack version` | `--json` for scripts |
-| (none) | `git stack update` | `--check` `--force`; plain HTTPS, no login needed |
-
-## Day to day
+Once installed, git stack also exposes itself to your local agents via a local MCP server, giving
+your coding agents the ability to create and manage stacks of PR's too.
 
 With the aliases installed a typical stack looks like this;
 
 ```sh
-git co main                 # start from trunk
+git stack                   # view all stacked PR's checked out in the repo (alias for git stack log)
+git sync                    # fetch upstream changes and rebase all local PR's which can be rebased
+                            # cleanly including main. (alias for git stack sync)
+git co main                 # start from trunk, use without main to get an interactive picker
+                            # (alias for git stack checkout)
 # ...hack on the first change...
 git create -a --ai          # stage everything, Claude names the branch and writes the commit
+                            # (alias for git stack create)
 # ...hack on the next change, which depends on the first...
-git create -a --ai          # second branch, stacked on the first
-git ss                      # push the whole stack; new PRs are ready for review
+git create -a               # second branch, stacked on the first - but this time you write the commit
+git down                    # go back down one branch (alias for git stack down)
+# ...hack some more changes...
+git modify -a               # stage everything and update the original branches commit
+                            # (alias for git stack modify)
+git top                     # jump to the top of the stack  (alias for git stack top)
+git ss                      # push the whole stack; new PRs are ready for review (alias for git stack submit)
 ```
 
-Review comes back on the first PR;
+For older PR's you need to update due to conflicts;
+```sh
+git co my-feature    # Checkout the top of your stack with the conflict
+git sync             # attempt to cleanly sync it with main
+git restack          # start restacking it on main
+# ... fix conflicts on the first PR  of the stack ...
+git add .
+git continue         # once the conflicts have been fixed, continue the restack 
+                     # you can also run `git abort` if you want to stop and undo the restack.
+# ... fix conflicts on the third PR of the stack ...
+git continue -a      # the -a stages everything
+git ss               # push the fixed branches back to your remote
+```
+
+## Install
+
+If you have Go installed, the easiest way is;
 
 ```sh
-git down                    # back to the first branch
-# ...fix it up...
-git modify -a               # amend, and the branch above is restacked for you
-git ss                      # push both again
+go install github.com/DomBlack/git-stack@latest
+git stack install # Setup's the git aliases, shell completion and agent MCP registration.
 ```
 
-Once the bottom PR merges;
+If you do not have Go installed, you can download the latest binary for your system from the
+[releases page](https://github.com/DomBlack/git-stack/releases). Once downloaded put the binary
+into your `$PATH` and then run `git stack install` to have it setup the aliases, shell autocomplete
+and MCP setup for your coding harnesses.
 
-```sh
-git sync                    # fetch, move trunk, delete the merged branch, restack what's left
-git stack                   # where am I? every stack as a tree with its PRs
-git co                      # the picker, to jump somewhere else
-```
+### Prerequisites
 
-`--ai` is optional everywhere; `git create -a -m "message"` or plain `git create name`
-works just as well. `git ss --ai -p` drafts the PR titles and bodies for you and opens
-them ready for review rather than as drafts. If you always want the drafting, set
-`git config --global stack.ai.auto true` and drop the flag; `--no-ai` turns it off for one
-run.
+- git 2.40+
+- `gh` (the [GitHub CLI](https://cli.github.com/)) logged in via `gh auth login`, plus the stack extension;
+  `gh extension install github/gh-stack`
+- Claude Code (`claude`) on your `PATH` if you want the `--ai` flags, which will write commit messages, 
+  set branch names and write your PR's for you (optional)
 
-### Where am I?
+### Updating
 
-`git stack` on its own (or `git stack log`) shows every stack the way `gt log` does; trunk at
-the bottom, newest branch at the top, `●` on the branch you're on, and under each branch its
-PR (clickable in terminals that support it), how old it is and whether it needs a restack.
-Two stacks on the same trunk sit side by side and join above it. A repo with no stacks yet
-just shows its trunk.
+`git stack update` fetches the latest GitHub release, checks the archive against the
+release's `checksums.txt` and swaps the binary in place. `--check` just tells you whether there's
+something newer.
+
+If you built from source, `git stack version` says `dev` along with the commit, and `update`
+leaves you alone unless you pass `--force`; i.e. we assume you built it that way on purpose.
+
+Every command also checks for a newer release in the background, at most once a day, and
+remembers the answer in the OS cache directory (`~/Library/Caches/git-stack` on macOS,
+`~/.cache/git-stack` on Linux). When you're behind, a one line note after the command's own
+output says which version is out. Nothing waits for the check; a slow network just means you
+hear about it on the next run. It only happens on a terminal (never for scripts, agents or the
+MCP server) and `GIT_STACK_NO_UPDATE_CHECK=1` turns it off.
+
+
+## Commands
+
+This section contains details of the main commands you'll use day to day from this extension, but all
+commands in the entire extension are availaible in `git stack help`.
+
+#### `git stack create [branch name]`
+
+> Alias: `git create [branch name]`
+
+Create a new branch stacked on top of the current branch and commit the staged
+changes. Without a name the branch name is derived from the commit message (or drafted
+by `--ai`). With nothing staged an empty branch is created.
+
+Flags:
+- `-a` / `--all`  stage all changes, including untracked files, before committing
+- `-p` / `--patch` pick which hunks to stage
+- `--ai` uses claude to come up with the branch name and commit message based on the patch
+  (`git config stack.ai.auto true` makes this the default)
+- `--no-ai` stops AI being used if auto is set to true.
+- `-m "msg"` / `--message "msg"` Write the commit message inline
+
+#### `git stack modify`
+
+> Alias: `git modify`
+
+Modify the current branch by amending its commit, or creating a new one with -c, then
+restack every branch above it. If the branch has no commits of its own, a new commit is
+created so the parent's commit is never rewritten.
+
+Same flags as create, plus:
+- `-c` / `--commit` creates a new commit instead of amending
+- `-e` / `--edit`  open an editor to edit the commit message when amending
+- `--reset-author` set the author to the current user when amending
+
+#### `git stack submit`
+
+> Alias: `git ss`
+
+Push every branch of the current stack and create or update a pull request for
+each, chained onto its parent. New PRs are ready for review unless --draft is
+given (or git config stack.submit.default says draft, or ask to be asked on a
+terminal). Without --no-edit, --ai or --no-interactive, gh stack's editor opens
+for new PRs.
+
+Flags:
+- `-d` / `--draft` create new PRs as drafts
+- `-p` / `--publish` creates new PRs in a ready to review state (the default)
+  (`git config stack.submit.default [publish/draft/ask]` to change the default)
+- `--ai` draft titles and descriptions for new PRs with Claude Code
+- `--no-ai` stops AI being used if set to auto.
+- `--dry-run` report what would be submitted without pushing
+
+#### `git stack up` / `git stack down` / `git stack top` / `git stack bottom`
+
+> Aliases: `git up` / `git down` / `git top` / `git bottom`
+
+Allows you to navigate around your stack, where the bottom is the branch created
+ontop of your main branch and top is the last branch you created in the stack.
+Up/Down navigate one branch at a time.
+
+#### `git stack checkout`
+
+> Alias: `git co`
+
+Switch to a branch. With no branch, opens an interactive picker showing every
+stack as a tree rooted at its trunk.
+
+Flags:
+- `-a` / `--all` show every trunk and untracked branches in the picker
+- `-u` / `--show-untracked` includes branches that are in no stack in the picker
+- `-s` / `--stack` only show the current stack in the picker
+- `-t` / `--trunk` check out the trunk of the current stack
+
+#### `git stack sync`
+
+> Alias: `git sync`
+
+Sync every stack with the remote; fetch and then fast forward each trunk,
+delete branches whose pull requests merged or closed (set `git config stack.sync.prune` to
+"ask" to be asked first or "never" to keep them), fast forward branches that moved on the
+remote, then restack every stack onto its updated parents without checking anything out.
+Nothing is pushed; `git stack submit` does that. A trunk that has diverged from the remote
+is only reset with -f or a yes at the prompt.
+
+Flags:
+- `-d` / `--delete-all` delete merged or closed branches without asking
+- `-f` / `--force` reset a diverged trunk and delete merged or closed branches without asking
+- `--no-restack` skip restacking
+
+#### `git stack restack`
+
+> Alias: `git restack`
+
+Make sure each branch in the stack has its parent in its history, rebasing where
+needed without checking anything out (no fetch; the bottom branch goes onto the local
+trunk). A conflict stops at that branch: resolve it, git add the files, then run
+`git stack continue`, or `git stack abort` to put every moved branch back.
+
+Flags:
+- `-d` / `--downstack` only restack this branch and its ancestors
+- `-o`, `--only` only restack this branch
+- `-u` / `--upstack` only restack this branch and its descendants
+
+#### `git stack continue`
+
+> Alias: `git continue`
+
+Finish the rebase a restack or modify stopped on, now that the conflicts are resolved
+and git added, then restack whatever was left above it.
+
+Flags:
+- `-a` / `--all` stage every change first
+
+#### `git stack abort`
+
+> Alias: `git abort`
+
+Give up the rebase a restack or modify stopped on and put back every branch the
+operation had already moved, metadata included.
+
+Flags:
+_none_
+
+#### `git stack log`
+
+> Alias: `git stack`
+
+Show the stacks in this repository the way gt log does: trunk at the bottom, each
+stack rising from it, the current branch marked, and each branch's pull request,
+age and whether it needs a restack. A repository with no stacks yet shows just its
+trunk. Pull request state comes from the local cache and is refreshed when stale.
 
 ```
 ● billing-webhook-retries
@@ -107,19 +229,20 @@ just shows its trunk.
 ■ main  20m ago
 ```
 
-The rest of the output follows the same rules (one headline with a spinner while something
-runs, `✔` `✖` `⚠` result lines, plain `ok:`/`note:`/`error:` when piped); that's all written
-down in [`docs/style.md`](docs/style.md).
+Flags:
+_none_
 
-### Landing it
+#### `git stack merge`
 
-`git stack merge` merges the stack's PRs up to and including the current branch (or the one
-you name) into trunk in one go, using GitHub's all or nothing stack merge; if any PR in the
-way can't be merged, none are. Plain `gh pr merge` refuses stacked PRs, which is the main
-reason this exists. Every PR below has to be ready for review first (`git stack submit
---publish`), and GitHub's own rules still apply. Afterwards it syncs, so the merged branches
-go and anything left above is restacked onto the new trunk. `--squash`, `--rebase` and
-`--merge` pick how the commits land; `stack.merge.method` makes one the default.
+Merge the pull requests of the current stack up to and including a branch (the
+current one by default) into trunk, in one all or nothing operation on GitHub:
+if any of them can't be merged, none are. Then sync, so the merged branches go
+and whatever is left above is restacked onto the new trunk.
+
+Every pull request in the way must exist and be ready for review; a draft or
+closed one stops the merge before anything happens. GitHub's own rules (required
+checks, reviews, a merge queue, `git config stack.merge.method` makes one the default.).
+
 
 ```
 ❯ git stack merge
@@ -133,6 +256,12 @@ go and anything left above is restacked onto the new trunk. `--squash`, `--rebas
   ...
 ✔ Synced: 3 branches deleted
 ```
+
+Flags:
+- `--no-sync` don't sync afterwards
+- `--merge` merge with a merge commit
+- `--rebase` rebase the commits onto trunk as they are
+- `--squash` squash each pull request into one commit
 
 ## `git stack install`
 
@@ -170,37 +299,6 @@ Everything is plain `git config`, so set it globally or per repo as you like.
 | `stack.sync.prune` | `always` | what `sync` does with branches whose PRs merged or closed; `ask` on a terminal, or `never` |
 | `stack.merge.method` | (repo default) | `merge`, `squash` or `rebase` for `git stack merge` |
 
-## Differences from Graphite
-
-It's worth being upfront about this; gh stack is linear and only lets you add branches at the
-top, so a handful of `gt` behaviours aren't possible yet: `create --insert`,
-`submit --update-only` and `modify --into`. Each one prints a single line saying
-why rather than silently doing something else.
-
-`submit` also always submits the whole stack (gt submits downstack by default). Pass `--stack`
-to acknowledge that's what you want.
-
-`sync --all` is not accepted at all: every trunk is synced, so it has nothing to select.
-
-One thing we actively correct; gh stack treats a PR that is queued for merge like a merged one
-and bases the next PR on main, so a new PR shows the whole stack's diff. `submit` moves such a
-base back onto the real parent and tells you.
-
-## Updating
-
-`git stack update` fetches the latest GitHub release over plain HTTPS (no `gh` login
-needed), checks the archive against the release's `checksums.txt` and swaps the binary in
-place. `--check` just tells you whether there's something newer.
-
-If you built from source, `git stack version` says `dev` along with the commit, and `update`
-leaves you alone unless you pass `--force`; i.e. we assume you built it that way on purpose.
-
-Every command also checks for a newer release in the background, at most once a day, and
-remembers the answer in the OS cache directory (`~/Library/Caches/git-stack` on macOS,
-`~/.cache/git-stack` on Linux). When you're behind, a one line note after the command's own
-output says which version is out. Nothing waits for the check; a slow network just means you
-hear about it on the next run. It only happens on a terminal (never for scripts, agents or the
-MCP server) and `GIT_STACK_NO_UPDATE_CHECK=1` turns it off.
 
 ## Releasing
 
