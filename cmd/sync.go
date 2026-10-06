@@ -19,12 +19,27 @@ func newSyncCmd(c *cli) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "sync",
 		Short: "Fetch, move trunk, delete merged branches and restack every stack",
-		Long: `Sync every stack with the remote, like gt sync: fetch, fast forward each trunk,
-delete branches whose pull requests merged or closed (set git config stack.sync.prune to
-"ask" to be asked first or "never" to keep them), fast forward branches that moved on the
-remote, then restack every stack onto its updated parents without checking anything out.
-Nothing is pushed; git stack submit does that. A trunk that has diverged from the remote
-is only reset with -f or a yes at the prompt.`,
+		Long: `Brings every stack up to date with the remote, all without checking anything
+out;
+
+  1. fetches and fast forwards each trunk
+  2. deletes branches whose PRs have been merged or closed, as long as every
+     commit on your local branch made it onto the PR (set git config
+     stack.sync.prune to "ask" to be asked first, or "never" to keep them)
+  3. fast forwards any branch that moved on the remote
+  4. restacks every stack onto its updated parent
+
+Branches above a deleted one are restacked onto whatever was below it. Squash
+merges are fine; only the commits a branch added on top of its parent are
+replayed.
+
+Nothing gets pushed; that's what git stack submit is for. If your local trunk
+has diverged from the remote, it's only reset with -f or a yes at the prompt.`,
+		Example: `  # the usual; fetch, tidy up merged branches and restack
+  git sync
+
+  # don't ask before deleting anything, and reset a diverged trunk
+  git sync -f`,
 		Args:              cobra.NoArgs,
 		ValidArgsFunction: completeNothing,
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -45,9 +60,9 @@ is only reset with -f or a yes at the prompt.`,
 			return nil
 		},
 	}
-	cmd.Flags().BoolVarP(&force, "force", "f", false, "reset a diverged trunk and delete merged or closed branches without asking")
+	cmd.Flags().BoolVarP(&force, "force", "f", false, "like -d, and also reset a diverged trunk to the remote")
 	cmd.Flags().BoolVarP(&deleteAll, "delete-all", "d", false, "delete merged or closed branches without asking")
-	cmd.Flags().BoolVar(&noRestack, "no-restack", false, "skip restacking")
+	cmd.Flags().BoolVar(&noRestack, "no-restack", false, "skip the restack")
 	return cmd
 }
 

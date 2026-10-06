@@ -180,6 +180,9 @@ func RenderRow(tr TreeRow, o RenderOptions) string {
 	if r.NeedsRestack {
 		meta = append(meta, st.Restack.Render("needs restack"))
 	}
+	if r.NeedsPush {
+		meta = append(meta, st.Restack.Render("needs push"))
+	}
 	if !r.Tracked && !r.IsTrunk {
 		meta = append(meta, st.Muted.Render("untracked"))
 	}

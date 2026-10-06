@@ -9,9 +9,11 @@ import (
 func newTopCmd(c *cli) *cobra.Command {
 	var o navOptions
 	cmd := &cobra.Command{
-		Use:               "top",
-		Aliases:           []string{"t"},
-		Short:             "Switch to the tip branch of the current stack",
+		Use:     "top",
+		Aliases: []string{"t"},
+		Short:   "Switch to the tip branch of the current stack",
+		Long: `Switches to the tip branch of the current stack. On a trunk with several stacks,
+--to picks which one.`,
 		Args:              cobra.NoArgs,
 		ValidArgsFunction: completeNothing,
 		RunE: func(cmd *cobra.Command, args []string) error {

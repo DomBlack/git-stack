@@ -23,20 +23,30 @@ func newInstallCmd(c *cli) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "install",
 		Short: "Set up git aliases, shell completion and agent MCP registration",
-		Long: `Install everything git-stack needs to feel native:
+		Long: `Sets up the aliases, shell completion and agent registration. Everything but the
+skill is on by default; --aliases=false, --completion=false or --agents=false
+skips one.
 
-  aliases      git create/modify/restack/continue/abort/submit/sync/up/down/top/bottom and the
-               short forms c, m, rs, ss, u, d, t, b, co (checkout is a git builtin
-               and cannot be aliased). Existing aliases are never replaced without
-               --force or your confirmation.
-  completion   cobra completion for git-stack plus the hooks that make
-               "git stack <TAB>" and the aliases complete (bash, zsh, fish).
-  agents       registers "git stack mcp" with Claude Code and Codex at user scope
-               through their own CLIs (claude mcp / codex mcp).
-  skill        optionally installs a Claude Code skill describing the workflow.
+  aliases     git create/modify/restack/continue/abort/submit/sync/up/down/
+              top/bottom, and the short forms c, m, rs, ss, u, d, t, b and co
+              (checkout is a git builtin, so it can't be aliased). Existing
+              aliases are never replaced without --force or a yes from you.
+  completion  cobra completion for git-stack plus the hooks that make
+              "git stack <TAB>" and the aliases complete (bash, zsh, fish).
+  agents      registers "git stack mcp" with Claude Code and Codex at user
+              scope, through their own CLIs (claude mcp / codex mcp).
+  skill       optionally installs a Claude Code skill describing the workflow.
 
---uninstall removes exactly what was recorded as installed. --dry-run shows every
-change without making it.`,
+--dry-run shows every change without making it. --uninstall removes what it
+recorded installing and nothing else.`,
+		Example: `  # see everything it would change first
+  git stack install --dry-run
+
+  # just the aliases and completion, leave your agents alone
+  git stack install --agents=false
+
+  # take it all back out
+  git stack install --uninstall`,
 		Args:              cobra.NoArgs,
 		ValidArgsFunction: completeNothing,
 		RunE: func(cmd *cobra.Command, _ []string) error {

@@ -43,7 +43,6 @@ type Globals struct {
 	NoInteractive bool
 	Debug         bool
 	Quiet         bool
-	NoVerify      bool
 	Cwd           string
 }
 
@@ -280,11 +279,13 @@ func NewRootCmd(streams Streams) *cobra.Command {
 func newRootCmd(c *cli) *cobra.Command {
 	streams := c.streams
 	root := &cobra.Command{
-		Use:     "git-stack",
-		Short:   "Graphite-style stacked branches on top of gh stack",
-		Long:    "git-stack manages stacked branches and stacked pull requests.\nInstalled as git-stack, git exposes it as `git stack <command>`.",
-		Version: version.Current().String(),
-		Args:    cobra.NoArgs,
+		Use: "git-stack",
+		// Usage lines read the way people type it.
+		Annotations: map[string]string{cobra.CommandDisplayNameAnnotation: "git stack"},
+		Short:       "Git commands for GitHub's native stacked PRs; restack, sync and merge whole stacks",
+		Long:        "Git commands for GitHub's native stacked PRs; restack, sync and merge whole stacks.\nBuilt on gh stack. Run it as git stack <command>.\n\nFirst time? Run git stack install to set up the aliases and completion.",
+		Version:     version.Current().String(),
+		Args:        cobra.NoArgs,
 		// Every command sets ValidArgsFunction; the root has no positional args.
 		ValidArgsFunction: completeNothing,
 		SilenceUsage:      true,
@@ -310,7 +311,6 @@ func newRootCmd(c *cli) *cobra.Command {
 	pf.BoolVar(&c.globals.NoInteractive, "no-interactive", false, "never prompt or open a TUI (implied when stdin/stdout is not a terminal)")
 	pf.BoolVar(&c.globals.Debug, "debug", false, "log every subprocess to stderr")
 	pf.BoolVarP(&c.globals.Quiet, "quiet", "q", false, "minimise output; implies --no-interactive")
-	pf.BoolVar(&c.globals.NoVerify, "no-verify", false, "skip git hooks when committing")
 	pf.StringVar(&c.globals.Cwd, "cwd", "", "run as if started in this directory")
 	must(root.RegisterFlagCompletionFunc("cwd", completeDirs))
 

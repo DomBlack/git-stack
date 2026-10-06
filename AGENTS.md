@@ -1,6 +1,6 @@
 # AGENTS.md (git-stack)
 
-git-stack is a Graphite-style stacked-branch CLI (`git stack <cmd>`) and stdio MCP server, written in Go.
+git-stack is a CLI (`git stack <cmd>`) and stdio MCP server for GitHub's native stacked PRs, written in Go. It sits on top of `gh stack`.
 `docs/architecture.md` holds the design, what we learnt about gh stack and the decisions behind it; read it before large changes.
 
 ## Toolchain
@@ -26,7 +26,7 @@ git-stack is a Graphite-style stacked-branch CLI (`git stack <cmd>`) and stdio M
 ## CLI rules
 - Every command has `ValidArgsFunction`; every non-bool flag has a completion func. The completion-coverage test enforces this; don't weaken it.
 - Completion code must not touch the network, prompt, or write non-completion output. It may only run `git`.
-- Mirror Graphite (`gt`) names, flags and short aliases where practical. When behaviour differs because of a backend limitation, say so in one line of output rather than silently diverging.
+- Keep command names, flags and short aliases familiar to people coming from other stacking tools where practical, but describe behaviour in our own words in help text and docs; never present a command as a copy of another tool's. Don't add flags the backend can't support. When behaviour differs because of a backend limitation, say so in one line of output rather than silently diverging.
 - Every command works non-interactively (`--no-interactive` or no TTY).
 - Every human facing line goes through `ui.Reporter` (results on stdout, notices, progress and errors on stderr) and follows `docs/style.md`; `cmd/style_test.go` fails the build on raw `fmt.Fprint` in `cmd/`.
 

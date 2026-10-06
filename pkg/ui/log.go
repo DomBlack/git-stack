@@ -124,6 +124,9 @@ func logMeta(r app.Row, o LogOptions) string {
 	if r.NeedsRestack {
 		parts = append(parts, st.Restack.Render("needs restack"))
 	}
+	if r.NeedsPush {
+		parts = append(parts, st.Restack.Render("needs push"))
+	}
 	if age := RelativeTime(r.LastCommit, o.Now); age != "" {
 		parts = append(parts, st.Muted.Render(age))
 	}

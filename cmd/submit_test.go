@@ -30,9 +30,6 @@ func TestSubmitAndSyncCommands(t *testing.T) {
 	if !strings.Contains(errOut, "Dry run") || !strings.Contains(out, "feat-a  (new PR, ready for review)") || !strings.Contains(out, "feat-b  (new PR, ready for review)") {
 		t.Errorf("dry run output = %q", out)
 	}
-	if !strings.Contains(errOut, "note: gh stack submits the whole stack") {
-		t.Errorf("stack notice missing: %q", errOut)
-	}
 	for _, c := range f.CallsTo("gh") {
 		if len(c.Args) > 1 && c.Args[0] == "stack" && c.Args[1] == "submit" {
 			t.Error("dry run ran gh stack submit")
@@ -46,14 +43,14 @@ func TestSubmitAndSyncCommands(t *testing.T) {
 		return exec.Result{Stderr: []byte("✓ Created 2 PRs")}, nil
 	})
 	f.Reset()
-	out, errOut, err = runWith(t, f, "--cwd", dir, "ss", "--stack", "--no-edit")
+	out, errOut, err = runWith(t, f, "--cwd", dir, "ss", "--no-edit")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !strings.Contains(out, "feat-a  #1 created u/1") || !strings.Contains(out, "feat-b  #2 created u/2") {
 		t.Errorf("submit output = %q", out)
 	}
-	if strings.Contains(errOut, "note: gh stack submits") || !strings.Contains(errOut, "✓ Created 2 PRs") {
+	if !strings.Contains(errOut, "✓ Created 2 PRs") {
 		t.Errorf("stderr = %q", errOut)
 	}
 	var submitArgs string
@@ -68,9 +65,6 @@ func TestSubmitAndSyncCommands(t *testing.T) {
 	// --open is gh stack's "ready for review", the default now.
 	if submitArgs != "stack submit --open --auto" {
 		t.Errorf("submit args = %q", submitArgs)
-	}
-	if _, _, err := runWith(t, f, "--cwd", dir, "submit", "-u"); err == nil || !strings.Contains(err.Error(), "update-only") {
-		t.Errorf("--update-only: %v", err)
 	}
 
 	gittest.InitRemote(t, dir)

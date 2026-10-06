@@ -206,3 +206,26 @@ func TestTrunk(t *testing.T) {
 	}
 	_ = os.Getenv
 }
+
+func TestViewNeedsPush(t *testing.T) {
+	a, repo, dir := fixture(t)
+	gittest.InitRemote(t, dir)
+	// b gets a new commit locally, and origin gets one on a that we don't
+	// have (the remote being ahead isn't something a push fixes).
+	gittest.Commit(t, dir, "b2.txt", "b2", "more b")
+	gittest.Run(t, dir, "switch", "-q", "--detach", "origin/a")
+	gittest.Commit(t, dir, "a2.txt", "a2", "their a")
+	gittest.Run(t, dir, "push", "-q", "origin", "HEAD:refs/heads/a")
+	gittest.Run(t, dir, "switch", "-q", "b")
+	gittest.Run(t, dir, "branch", "unpushed", "b")
+
+	v, err := a.View(context.Background(), repo, app.ViewOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, want := range map[string]bool{"a": false, "b": true, "c": false} {
+		if r, _ := v.Row(name); r.NeedsPush != want {
+			t.Errorf("%s NeedsPush = %v, want %v", name, r.NeedsPush, want)
+		}
+	}
+}

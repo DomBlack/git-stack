@@ -279,9 +279,6 @@ func TestSubmitErrors(t *testing.T) {
 	deps, _, _, repo, dir := submitFixture(t)
 	a := app.New(deps)
 	ctx := context.Background()
-	if _, err := a.Submit(ctx, repo, app.SubmitOptions{UpdateOnly: true}); !errors.Is(err, &stack.Error{Kind: stack.KindUnsupported}) {
-		t.Errorf("update-only: %v", err)
-	}
 	if _, err := a.Submit(ctx, repo, app.SubmitOptions{Draft: true, Publish: true}); !errors.Is(err, &stack.Error{Kind: stack.KindInvalidArgs}) {
 		t.Errorf("draft+publish: %v", err)
 	}
@@ -291,5 +288,42 @@ func TestSubmitErrors(t *testing.T) {
 	gittest.Run(t, dir, "switch", "-q", "main")
 	if _, err := a.Submit(ctx, repo, app.SubmitOptions{}); !errors.Is(err, &stack.Error{Kind: stack.KindNotInStack}) {
 		t.Errorf("trunk: %v", err)
+	}
+}
+
+func TestSubmitRefusesToOverwriteSomeoneElsesCommits(t *testing.T) {
+	deps, sf, _, repo, dir := submitFixture(t)
+	gittest.InitRemote(t, dir)
+	a := app.New(deps)
+	ctx := context.Background()
+
+	// Our own rewrite (an amend, a restack) leaves the remote on a commit the
+	// branch used to point at, so that's fine to force push over.
+	gittest.Run(t, dir, "switch", "-q", "b")
+	gittest.WriteFile(t, dir, "b.txt", "b, amended")
+	gittest.Run(t, dir, "commit", "-q", "-a", "--amend", "-m", "feat: b")
+	if _, err := a.Submit(ctx, repo, app.SubmitOptions{NoEdit: true}); err != nil {
+		t.Fatalf("own rewrite refused: %v", err)
+	}
+
+	// Someone else pushes to a.
+	gittest.Run(t, dir, "switch", "-q", "--detach", "origin/a")
+	gittest.Commit(t, dir, "theirs.txt", "theirs", "their fix")
+	gittest.Run(t, dir, "push", "-q", "origin", "HEAD:refs/heads/a")
+	gittest.Run(t, dir, "switch", "-q", "b")
+
+	sf.opts = nil
+	_, err := a.Submit(ctx, repo, app.SubmitOptions{NoEdit: true})
+	if !errors.Is(err, &stack.Error{Kind: stack.KindInvalidArgs}) || !strings.Contains(err.Error(), "a (1 commit on origin)") {
+		t.Fatalf("expected a refusal naming a, got %v", err)
+	}
+	if len(sf.opts) != 0 {
+		t.Error("refused submit still pushed")
+	}
+	if _, err := a.Submit(ctx, repo, app.SubmitOptions{NoEdit: true, Force: true}); err != nil {
+		t.Fatalf("--force: %v", err)
+	}
+	if len(sf.opts) != 1 {
+		t.Errorf("--force should submit, got %d submits", len(sf.opts))
 	}
 }

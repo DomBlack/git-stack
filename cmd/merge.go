@@ -19,16 +19,22 @@ func newMergeCmd(c *cli) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "merge [branch]",
 		Short: "Merge the stack's pull requests up to a branch, all at once",
-		Long: `Merge the pull requests of the current stack up to and including a branch (the
-current one by default) into trunk, in one all or nothing operation on GitHub:
-if any of them can't be merged, none are. Then sync, so the merged branches go
-and whatever is left above is restacked onto the new trunk.
+		Long: `Merges the PRs in the current stack, up to and including a branch (the current
+one by default), into trunk as one all or nothing operation on GitHub; if any of
+them can't be merged, none are. It then runs a sync, so the merged branches get
+cleaned up and anything left above them is restacked onto the new trunk. Nothing
+is pushed after that, so run git stack submit to update the PRs that are left.
 
-Every pull request in the way must exist and be ready for review; a draft or
-closed one stops the merge before anything happens. GitHub's own rules (required
-checks, reviews, a merge queue) apply on top. Pick how the commits land with
---squash, --rebase or --merge, or set git config stack.merge.method; with
-neither, the repository's default applies.`,
+Every PR being merged has to exist and be ready for review; a draft or closed
+one stops the merge before anything happens. GitHub's own rules still apply
+(required checks, reviews, merge queues). It uses the repo's default merge
+method unless you pass one, or set git config stack.merge.method.`,
+		Example: `  # merge every PR up to and including the current branch
+  git stack merge
+
+  # merge up to billing-webhook-schema, squashing each PR, then push the rest
+  git stack merge billing-webhook-schema --squash
+  git ss`,
 		Args:              cobra.MaximumNArgs(1),
 		ValidArgsFunction: c.completeBranches,
 		RunE: func(cmd *cobra.Command, args []string) error {

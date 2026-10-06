@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -207,5 +208,22 @@ func TestResetKeepRefusesOverlappingChange(t *testing.T) {
 	}
 	if gittest.Run(t, dir, "rev-parse", "main") != before {
 		t.Error("main must not move on refusal")
+	}
+}
+
+func TestReflog(t *testing.T) {
+	c, repo, dir := remoteFixture(t)
+	ctx := context.Background()
+	first := gittest.Run(t, dir, "rev-parse", "HEAD")
+	second := gittest.Commit(t, dir, "a.txt", "a", "a")
+	got, err := c.Reflog(ctx, repo, "refs/heads/main")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) < 2 || got[0] != second || !slices.Contains(got, first) {
+		t.Errorf("reflog = %v, want %s then %s", got, second, first)
+	}
+	if got, err := c.Reflog(ctx, repo, "refs/heads/nope"); err != nil || got != nil {
+		t.Errorf("missing ref: %v %v", got, err)
 	}
 }

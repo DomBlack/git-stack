@@ -10,8 +10,9 @@ func newAbortCmd(c *cli) *cobra.Command {
 	return &cobra.Command{
 		Use:   "abort",
 		Short: "Abort an interrupted restack and put every moved branch back",
-		Long: `Give up the rebase a restack or modify stopped on and put back every branch the
-operation had already moved, metadata included. The same as "git stack restack --abort".`,
+		Long: `Gives up on the rebase a restack or modify stopped on and puts back every branch
+the operation had already moved, metadata included. The same as
+"git stack restack --abort".`,
 		Args:              cobra.NoArgs,
 		ValidArgsFunction: completeNothing,
 		RunE: func(cmd *cobra.Command, args []string) error {

@@ -42,6 +42,7 @@ type viewBranch struct {
 	Head         string  `json:"head,omitempty"`
 	PR           *prInfo `json:"pr,omitempty"`
 	NeedsRestack bool    `json:"needs_restack" jsonschema:"true when the parent's tip is not in this branch's history"`
+	NeedsPush    bool    `json:"needs_push" jsonschema:"true when the local branch has moved on from what was pushed, so its PR is behind until stack_submit"`
 	IsCurrent    bool    `json:"is_current"`
 	Merged       bool    `json:"merged"`
 	Worktree     string  `json:"worktree,omitempty" jsonschema:"path of another worktree the branch is checked out in"`
@@ -89,7 +90,7 @@ func (s *Server) view(ctx context.Context, req *mcp.CallToolRequest, in viewInpu
 		for _, b := range st.Branches {
 			vb := viewBranch{Name: b.Name, Parent: parent, Merged: b.Merged()}
 			if r, ok := rowsByName[b.Name]; ok {
-				vb.Head, vb.NeedsRestack, vb.IsCurrent, vb.Worktree = r.Head, r.NeedsRestack, r.IsCurrent, r.Worktree
+				vb.Head, vb.NeedsRestack, vb.NeedsPush, vb.IsCurrent, vb.Worktree = r.Head, r.NeedsRestack, r.NeedsPush, r.IsCurrent, r.Worktree
 				if r.PR != nil {
 					vb.PR = &prInfo{Number: r.PR.Number, State: string(r.PR.State), URL: r.PR.URL, Title: r.PR.Title}
 				}
@@ -302,6 +303,7 @@ type submitInput struct {
 	DryRun       bool                  `json:"dry_run,omitempty" jsonschema:"report what would be submitted without pushing"`
 	PullRequests map[string]app.PRText `json:"pull_requests,omitempty" jsonschema:"title and body per branch name; write these yourself for every branch that has no PR yet (see stack_view)"`
 	UseAI        bool                  `json:"use_ai,omitempty" jsonschema:"let git-stack's own AI draft missing titles and bodies (opt-in)"`
+	Force        bool                  `json:"force,omitempty" jsonschema:"push even when a branch has commits on the remote that aren't in the local branch, overwriting them; only with the user's say so"`
 }
 
 func (s *Server) submit(ctx context.Context, req *mcp.CallToolRequest, in submitInput) (*mcp.CallToolResult, app.SubmitResult, error) {
@@ -310,7 +312,7 @@ func (s *Server) submit(ctx context.Context, req *mcp.CallToolRequest, in submit
 		return nil, app.SubmitResult{}, wrapErr(err)
 	}
 	res, err := a.Submit(ctx, repo, app.SubmitOptions{
-		Publish: in.Publish, Draft: in.Draft, NoEdit: true, DryRun: in.DryRun, UseAI: in.UseAI, Texts: in.PullRequests,
+		Publish: in.Publish, Draft: in.Draft, NoEdit: true, DryRun: in.DryRun, UseAI: in.UseAI, Texts: in.PullRequests, Force: in.Force,
 	})
 	if err != nil {
 		return nil, app.SubmitResult{}, wrapErr(err)
@@ -457,7 +459,7 @@ func (s *Server) registerTools() {
 	mcp.AddTool(s.mcp, &mcp.Tool{
 		Name:        "stack_submit",
 		Title:       "Submit the stack",
-		Description: "Push every branch of the current stack and create or update chained pull requests on GitHub. New PRs are ready for review unless draft is true (or git config stack.submit.default says draft). Supply pull_requests {branch: {title, body}} for branches without a PR; use dry_run to see the plan first.",
+		Description: "Push every branch of the current stack and create or update chained pull requests on GitHub. New PRs are ready for review unless draft is true (or git config stack.submit.default says draft). Supply pull_requests {branch: {title, body}} for branches without a PR; use dry_run to see the plan first. Refuses with invalid_args when a branch has commits on the remote that aren't local (someone else pushed); pull them in, or pass force only if the user agrees to overwrite them.",
 		Annotations: &mcp.ToolAnnotations{DestructiveHint: boolp(true), OpenWorldHint: boolp(true)},
 	}, s.submit)
 	mcp.AddTool(s.mcp, &mcp.Tool{

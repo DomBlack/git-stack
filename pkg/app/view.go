@@ -38,8 +38,12 @@ type Row struct {
 	// NeedsRestack is true when the parent's tip is not in the branch's
 	// history.
 	NeedsRestack bool
-	Head         string
-	LastCommit   time.Time
+	// NeedsPush is true when the branch is on the remote but the local
+	// branch has moved on from it (new commits, a restack, an amend), so
+	// its PR is behind until the next submit.
+	NeedsPush  bool
+	Head       string
+	LastCommit time.Time
 	// Worktree is the path of another worktree the branch is checked out in.
 	Worktree string
 	// PR is the known pull request, if any. State is StateUnknown until the
@@ -137,6 +141,9 @@ func (a *App) View(ctx context.Context, repo git.Repo, o ViewOptions) (*View, er
 							}
 							row.NeedsRestack = !ok
 						}
+						if row.NeedsPush, err = a.needsPush(ctx, repo, b.Name, row.Head); err != nil {
+							return nil, err
+						}
 					}
 				}
 				v.Rows = append(v.Rows, row)
@@ -168,4 +175,16 @@ func (a *App) row(name string, depth int, parent string, tracked bool, current s
 		}
 	}
 	return r
+}
+
+// needsPush reports whether the local branch has moved on from what its
+// remote tracking ref says was pushed. A branch that was never pushed, or
+// that the remote is simply ahead of, doesn't count.
+func (a *App) needsPush(ctx context.Context, repo git.Repo, name, head string) (bool, error) {
+	_, tip, ok, err := a.remoteTip(ctx, repo, name)
+	if err != nil || !ok || tip == head {
+		return false, err
+	}
+	behind, err := a.d.Git.IsAncestor(ctx, repo, head, tip)
+	return !behind, err
 }

@@ -16,14 +16,23 @@ func newModifyCmd(c *cli) *cobra.Command {
 		resetAuthor bool
 		cont        bool
 		abort       bool
+		noVerify    bool
 	)
 	cmd := &cobra.Command{
 		Use:     "modify",
 		Aliases: []string{"m"},
-		Short:   "Amend the current branch's commit (or add one) and restack its descendants",
-		Long: `Modify the current branch by amending its commit, or creating a new one with -c, then
-restack every branch above it. If the branch has no commits of its own, a new commit is
-created so the parent's commit is never rewritten.`,
+		Short:   "Amend the current branch's commit (or add one) and restack everything above it",
+		Long: `Amends the current branch's commit (or adds a new one with -c), then restacks
+every branch above it. If the branch has no commits of its own yet, a new commit
+is created so the parent's commit is never rewritten.`,
+		Example: `  # fold everything you've changed into this branch's commit
+  git modify -a
+
+  # add a new commit on this branch rather than amending
+  git modify -a -c -m "Address review comments"
+
+  # reword this branch's commit
+  git modify -e`,
 		Args:              cobra.NoArgs,
 		ValidArgsFunction: completeNothing,
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -39,7 +48,7 @@ created so the parent's commit is never rewritten.`,
 				Message:     messages,
 				Edit:        edit && !noEdit,
 				ResetAuthor: resetAuthor,
-				NoVerify:    c.globals.NoVerify,
+				NoVerify:    noVerify,
 				Continue:    cont,
 				Abort:       abort,
 			})
@@ -70,15 +79,16 @@ created so the parent's commit is never rewritten.`,
 			return nil
 		},
 	}
-	cmd.Flags().StringArrayVarP(&messages, "message", "m", nil, "commit message (repeat for paragraphs); no editor is opened")
+	cmd.Flags().StringArrayVarP(&messages, "message", "m", nil, "commit message; repeat it for more paragraphs (no editor is opened)")
 	must(cmd.RegisterFlagCompletionFunc("message", completeNothing))
 	st.add(cmd)
 	cmd.Flags().BoolVarP(&newCommit, "commit", "c", false, "create a new commit instead of amending")
 	cmd.Flags().BoolVarP(&edit, "edit", "e", false, "open an editor to edit the commit message when amending")
 	cmd.Flags().BoolVar(&noEdit, "no-edit", false, "keep the commit message (default when amending without -m)")
+	cmd.Flags().BoolVar(&noVerify, "no-verify", false, "skip git hooks when committing")
 	cmd.Flags().BoolVar(&resetAuthor, "reset-author", false, "set the author to the current user when amending")
-	cmd.Flags().BoolVar(&cont, "continue", false, "continue an interrupted restack after resolving conflicts")
-	cmd.Flags().BoolVar(&abort, "abort", false, "abort an interrupted restack and restore the branches")
+	cmd.Flags().BoolVar(&cont, "continue", false, "same as git stack continue")
+	cmd.Flags().BoolVar(&abort, "abort", false, "same as git stack abort")
 	cmd.MarkFlagsMutuallyExclusive("continue", "abort")
 	return cmd
 }

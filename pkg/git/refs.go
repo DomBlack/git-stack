@@ -141,3 +141,20 @@ func (c *Client) ResetKeep(ctx context.Context, repo Repo, rev string) error {
 	_, err = c.gitIn(ctx, repo, append([]string{"add", "--"}, added...)...)
 	return err
 }
+
+// Reflog lists every commit ref has pointed at that the reflog still
+// remembers, newest first. A ref with no reflog, or no ref at all, gives
+// nothing.
+func (c *Client) Reflog(ctx context.Context, repo Repo, ref string) ([]string, error) {
+	if _, ok, err := c.Tip(ctx, repo, ref); err != nil || !ok {
+		return nil, err
+	}
+	res, err := c.gitIn(ctx, repo, "log", "-g", "--format=%H", ref, "--")
+	if err != nil {
+		return nil, err
+	}
+	if res.Out() == "" {
+		return nil, nil
+	}
+	return strings.Split(res.Out(), "\n"), nil
+}

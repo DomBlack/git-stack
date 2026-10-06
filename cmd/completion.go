@@ -13,7 +13,7 @@ func newCompletionCmd(_ *cli) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "completion <bash|zsh|fish>",
 		Short: "Print the shell completion script",
-		Long: `Print the completion script for a shell, including the git-integration hooks
+		Long: `Print the completion script for a shell, including the git integration hooks
 that make "git stack <TAB>" and aliases such as "git co <TAB>" complete.
 "git stack install --completion" writes it to the right place for you.
 
