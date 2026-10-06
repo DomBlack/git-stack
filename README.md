@@ -73,10 +73,12 @@ git ss               # push the fixed branches
 
 ## Why not just use...
 
-**`gh stack` on its own?** You can, and git-stack doesn't replace it. What it adds is the
-workflow on top; restacking without checking branches out, `continue` / `abort` that work
-across the whole stack (abort puts every branch it moved back), a `sync` that prunes merged
-branches, an all or nothing `merge` for the stack, a picker, and short aliases for all of it.
+**`gh stack` on its own?** You can, and git-stack doesn't replace it; it uses the same metadata,
+so you can switch between the two whenever you like. git-stack is the day to day workflow I
+wanted on top of it; restacks that don't check branches out unless there's a conflict, a `sync`
+that covers every stack rather than just the one you're on and never pushes, a submit that won't
+push over someone else's commits, a tree of every stack showing what needs restacking or
+pushing, a picker, and short aliases for all of it.
 
 **Graphite?** Graphite inspired this, but it's a separate service that tracks stacks itself.
 This uses GitHub's own stacks instead.
