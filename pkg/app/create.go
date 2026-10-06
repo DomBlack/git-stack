@@ -19,8 +19,6 @@ type CreateOptions struct {
 	// something is staged.
 	Message []string
 	Staging StagingMode
-	// Insert is accepted for parity but unsupported by the gh-stack backend.
-	Insert bool
 	// UseAI drafts the branch name (and the message when none is given).
 	UseAI    bool
 	NoVerify bool
@@ -44,11 +42,6 @@ func (a *App) Create(ctx context.Context, repo git.Repo, o CreateOptions) (Creat
 	if a.d.Tracker == nil {
 		return CreateResult{}, stack.New(stack.KindUnsupported, "no stack backend configured")
 	}
-	if o.Insert {
-		return CreateResult{}, stack.New(stack.KindUnsupported, "gh stack cannot insert a branch below existing ones").
-			WithSteps("run `git stack top` and create the branch there",
-				"or restructure with `gh stack modify` (interactive)")
-	}
 	current, err := a.d.Git.CurrentBranch(ctx, repo)
 	if err != nil {
 		if errors.Is(err, git.ErrDetached) {
@@ -71,7 +64,7 @@ func (a *App) Create(ctx context.Context, repo git.Repo, o CreateOptions) (Creat
 	case ok:
 		return CreateResult{}, stack.Newf(stack.KindNotAtTop, "%s is not the top of its stack (top is %s)", current, s.Top()).
 			WithSteps("run `git stack top` and create the branch there",
-				"gh stack can only add branches at the top; insert needs `gh stack modify`")
+				"gh stack can only add branches at the top of a stack")
 	default:
 		return CreateResult{}, stack.Newf(stack.KindNotInStack, "%s is not in a stack", current).
 			WithSteps("check out your trunk (`git stack checkout --trunk`) and run `git stack create` to start a stack",

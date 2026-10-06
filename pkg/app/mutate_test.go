@@ -177,9 +177,6 @@ func TestCreateErrors(t *testing.T) {
 	if _, err := a.Create(ctx, repo, app.CreateOptions{Name: "x"}); !errors.Is(err, &stack.Error{Kind: stack.KindNotAtTop}) {
 		t.Errorf("mid-stack: %v", err)
 	}
-	if _, err := a.Create(ctx, repo, app.CreateOptions{Name: "x", Insert: true}); !errors.Is(err, &stack.Error{Kind: stack.KindUnsupported}) {
-		t.Errorf("insert: %v", err)
-	}
 	gittest.Run(t, dir, "switch", "-q", "-c", "loose", "main")
 	if _, err := a.Create(ctx, repo, app.CreateOptions{Name: "x"}); !errors.Is(err, &stack.Error{Kind: stack.KindNotInStack}) {
 		t.Errorf("untracked: %v", err)

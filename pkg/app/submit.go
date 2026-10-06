@@ -34,8 +34,9 @@ type SubmitOptions struct {
 	// Texts supplies title/body per branch (the MCP path). Branches without
 	// a PR need an entry unless UseAI is set or the editor can open.
 	Texts map[string]PRText
-	// UpdateOnly is accepted for parity but unsupported by gh stack.
-	UpdateOnly bool
+	// Force pushes even when a branch has commits on the remote that aren't
+	// in the local branch, overwriting them.
+	Force bool
 }
 
 // SubmittedPR is one line of the result.
@@ -70,10 +71,6 @@ func (a *App) Submit(ctx context.Context, repo git.Repo, o SubmitOptions) (Submi
 	if a.d.Submit == nil {
 		return SubmitResult{}, stack.New(stack.KindUnsupported, "no submit backend configured")
 	}
-	if o.UpdateOnly {
-		return SubmitResult{}, stack.New(stack.KindUnsupported, "gh stack always creates PRs for every branch; --update-only is not available").
-			WithSteps("submit the whole stack, or push a single branch with git push")
-	}
 	current, err := a.d.Git.CurrentBranch(ctx, repo)
 	if err != nil {
 		if errors.Is(err, git.ErrDetached) {
@@ -93,6 +90,17 @@ func (a *App) Submit(ctx context.Context, repo git.Repo, o SubmitOptions) (Submi
 		return SubmitResult{}, stack.Newf(stack.KindNotInStack, "%s is not in a stack", current)
 	}
 	res := SubmitResult{Stack: s.Names(), DryRun: o.DryRun}
+	if !o.Force {
+		var live []string
+		for _, b := range s.Branches {
+			if !b.Merged() {
+				live = append(live, b.Name)
+			}
+		}
+		if err := a.checkPushedOver(ctx, repo, live); err != nil {
+			return SubmitResult{}, err
+		}
+	}
 
 	// Existing PRs decide which branches are new.
 	before := PRsFor(a.loadPRs(ctx, repo, PRsFresh))

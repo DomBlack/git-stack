@@ -86,3 +86,14 @@ func TestRenderLogEmptyAndLinks(t *testing.T) {
 		t.Errorf("PR should be a hyperlink when Links is on:\n%q", out)
 	}
 }
+
+func TestRenderLogNeedsPush(t *testing.T) {
+	rows := sampleRows()
+	for i := range rows {
+		rows[i].NeedsPush = rows[i].Name == "feat/api"
+	}
+	out := RenderLog(&app.View{Rows: rows}, LogOptions{Now: now})
+	if !strings.Contains(out, "#12 open · needs push") {
+		t.Errorf("RenderLog =\n%s", out)
+	}
+}

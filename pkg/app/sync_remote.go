@@ -8,8 +8,7 @@ import (
 // syncRemote fast forwards every tracked branch the remote is strictly ahead
 // of (a suggestion applied on GitHub, a colleague's commit, work from another
 // machine). Local ahead is left for submit. Diverged branches get a notice
-// only when the remote holds changes we don't have at all; a local restack
-// that hasn't been pushed looks diverged by commit id but not by patch id.
+// only when the remote holds changes we don't have at all (see theirCommits).
 func (a *App) syncRemote(ctx context.Context, st *syncState, res *SyncResult) error {
 	return a.progress(ctx, PhaseSync, "Checking "+st.remote, func(ctx context.Context) error {
 		for _, name := range st.graph.Branches() {
@@ -44,23 +43,9 @@ func (a *App) syncRemote(ctx context.Context, st *syncState, res *SyncResult) er
 			case a.ancestor(ctx, st, remoteTip, lb.Head):
 				// Local ahead: submit pushes it.
 			default:
-				base, err := a.d.Git.MergeBase(ctx, st.repo, lb.Head, remoteTip)
+				n, err := a.theirCommits(ctx, st.repo, name, lb.Head, remoteTip)
 				if err != nil {
 					return err
-				}
-				remoteIDs, err := a.d.Git.PatchIDs(ctx, st.repo, base, remoteTip)
-				if err != nil {
-					return err
-				}
-				localIDs, err := a.d.Git.PatchIDs(ctx, st.repo, base, lb.Head)
-				if err != nil {
-					return err
-				}
-				n := 0
-				for id := range remoteIDs {
-					if _, ok := localIDs[id]; !ok {
-						n++
-					}
 				}
 				if n == 0 {
 					continue

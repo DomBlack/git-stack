@@ -169,10 +169,6 @@ func TestCreateModifyRestackCommands(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "not the top of its stack") {
 		t.Errorf("mid-stack create: %v", err)
 	}
-	_, _, err = runWith(t, f, "--cwd", dir, "create", "-i", "mid")
-	if err == nil || !strings.Contains(err.Error(), "insert") {
-		t.Errorf("insert: %v", err)
-	}
 
 	// restack after an amend lower down reports what moved and what didn't.
 	gittest.Run(t, dir, "switch", "-q", "add-feature-a")

@@ -1,6 +1,6 @@
 ---
 name: git-stack
-description: Work with stacked branches and stacked pull requests using git-stack (a Graphite-style CLI on top of gh stack). Use when the repository uses stacks, when the user mentions git stack, gt, stacked PRs, restacking, or when a change should be split into dependent pull requests.
+description: Work with stacked branches and stacked pull requests using git-stack (git commands for GitHub's native stacked PRs, on top of gh stack). Use when the repository uses stacks, when the user mentions git stack, gt, stacked PRs, restacking, or when a change should be split into dependent pull requests.
 ---
 
 # git-stack

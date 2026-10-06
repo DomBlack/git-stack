@@ -153,7 +153,7 @@ survive untouched. Files whose stacks didn't change are not rewritten. Every oth
 still goes through a `gh stack` command.
 
 **Navigation is native.** `up`/`down`/`top`/`bottom` are a pure function over the graph
-followed by `git switch`, with Graphite's semantics rather than gh-stack's; `down` from the
+followed by `git switch`, with our own semantics rather than gh-stack's; `down` from the
 bottom branch lands on trunk, overshooting clamps silently, merged branches are skipped. We
 also check `worktreepath` before switching so you get told which worktree has the branch
 rather than a confusing git error.
@@ -161,8 +161,7 @@ rather than a confusing git error.
 **`create` from trunk runs `gh stack init`, from the top runs `gh stack add`, and we
 always commit natively.** This sidesteps both `add` quirks above. From the middle of a
 stack you get a `not_at_top` error with next steps; from an untracked branch you get told
-the branch isn't in a stack (Graphite does the same). `--insert` is accepted and fails with
-an explanation, so the flag is there for a future backend that can do it.
+the branch isn't in a stack.
 
 **`modify` amends natively, then runs the native restack upstack.** Conflicts come back as
 a `conflict` error listing the files and the `git stack continue` / `git stack abort`
@@ -182,16 +181,33 @@ same path with the agent's own titles and bodies instead of the Drafter.
 without one). Drafts used to be the default, but in practice they were one more step before
 anyone could review, and the MCP tool hard coding them meant it ignored the config.
 
-**What we deliberately don't mirror from `gt` (yet).** `create --insert`,
-`submit --update-only`, `submit --edit-title/--edit-description` and
-`modify --into` all need a backend that can do more than gh stack can. Each prints a single
-line saying why. `sync --all` is not accepted at all: every trunk is synced, so there is
-nothing for it to select.
+**Submit won't force push over someone else's commits.** gh stack pushes with
+`--force-with-lease`, which only protects against what changed since the last fetch, and
+`git stack sync` has just fetched. So before handing over to gh stack, submit looks at each
+branch's remote tracking ref. A remote tip the local branch has pointed at before (it's in
+the branch's reflog) was pushed from here and is fine to overwrite; that's every restack and
+amend. Otherwise the commits on the remote are compared with the local branch by patch id,
+the same check sync uses for its "you don't have these" notice, and any that are missing
+stop the submit unless `--force` is passed. The reflog check comes first because after a
+squash merge further down the remote still holds the parent's old commits, which don't match
+anything locally by patch id. If the reflog has expired we fall back to just the patch id
+check, so the worst case is a refusal that needs `--force`, never a silent overwrite.
+
+**`log` shows "needs push"** when a branch's remote tracking ref exists and the local branch
+has moved on from it (new commits, a restack, an amend). It's worked out from local refs
+only, so it's as fresh as the last fetch or push, and a remote that's simply ahead of the
+local branch doesn't count; that's sync's job.
+
+**No flags for things gh stack can't do.** If gh stack can't back an option we don't offer
+it, rather than shipping a flag whose only job is to explain why it fails. `sync` has no
+`--all` either: every trunk is synced, so there is nothing for it to select. The one leftover
+is a hidden `submit --stack` that does nothing; older installs wrote `git ss` as
+`stack submit --stack`, and we don't want that alias to break on upgrade.
 
 **Sync is native.** `gh stack sync` only syncs the stack of the branch checked out where it
 runs, so covering every stack meant checking each one out in turn, it never forgets a stack
 whose every PR merged, it can't move trunk when there are no stacks, and a linked worktree's
-metadata dies with the worktree. So `git stack sync` does what `gt sync` can be seen to do,
+metadata dies with the worktree. So `git stack sync` does the whole job
 itself: one `git fetch --prune` of the first trunk's remote (`branch.<trunk>.remote`, else
 `origin`; a second trunk that tracks another remote is still compared with the first
 remote's copy, and gets a `no-remote` notice when there is none); fast forward every trunk (a diverged trunk is only reset
@@ -237,7 +253,7 @@ stack at that branch with a notice pointing at `git stack restack`, which starts
 for that branch so it can be resolved; the other stacks finish, and the command exits
 non-zero at the end. A git error while planning a stack, a refused ref transaction, or a
 failed worktree reset marks that stack failed and the command exits non-zero too, never
-silently skipping it. Flags match gt: `-f`, `-d/--delete-all` and `--no-restack`; `--all` is
+silently skipping it. Flags are `-f`, `-d/--delete-all` and `--no-restack`; `--all` is
 gone because every stack is always synced.
 
 **Restack is native.** `gh stack rebase` drove a real `git rebase` per branch, so every
@@ -263,8 +279,8 @@ base before touching it, so a rebase started outside git-stack is left alone.
 
 `git stack abort` lets git put the conflicting branch back, or puts it back itself if
 the rebase was finished by hand, then puts every moved branch back, newest first,
-skipping any that moved again since, metadata included. Both are top level commands like
-gt's, with `git continue` and `git abort` among the installed aliases. Someone upgrading
+skipping any that moved again since, metadata included. Both are top level commands,
+with `git continue` and `git abort` among the installed aliases. Someone upgrading
 with a `gh stack rebase` conflict open is pointed at gh's own `--continue`/`--abort`.
 
 **gh stack treats queued PRs as gone; we put the bases back.** When a branch's PR is sitting

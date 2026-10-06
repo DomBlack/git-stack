@@ -13,11 +13,14 @@ import (
 func newLogCmd(c *cli) *cobra.Command {
 	return &cobra.Command{
 		Use:   "log",
-		Short: "Show every stack as a tree, with pull request state (also what bare `git stack` does)",
-		Long: `Show the stacks in this repository the way gt log does: trunk at the bottom, each
-stack rising from it, the current branch marked, and each branch's pull request,
-age and whether it needs a restack. A repository with no stacks yet shows just its
-trunk. Pull request state comes from the local cache and is refreshed when stale.`,
+		Short: "Show every stack as a tree with PR state",
+		Long: `Shows every stack in the repo as a tree; trunk at the bottom, each stack rising
+out of it, the current branch marked, and each branch's PR, age and whether it
+needs a restack or a push (you've changed it since the last push, so its PR is
+behind). A repo with no stacks yet just shows its trunk. PR state comes from a
+local cache and is refreshed when it goes stale.
+
+Bare git stack runs this.`,
 		Args:              cobra.NoArgs,
 		ValidArgsFunction: completeNothing,
 		RunE: func(cmd *cobra.Command, _ []string) error {

@@ -16,9 +16,10 @@ func TestPlanApplyUninstall(t *testing.T) {
 	home := t.TempDir()
 	g := git.New(exec.New())
 	ctx := context.Background()
-	gittest.Run(t, home, "config", "--global", "alias.co", "checkout")    // conflict
-	gittest.Run(t, home, "config", "--global", "alias.up", "stack up")    // same
-	gittest.Run(t, home, "config", "--global", "alias.recent", "!echo x") // untouched user alias
+	gittest.Run(t, home, "config", "--global", "alias.co", "checkout")             // conflict
+	gittest.Run(t, home, "config", "--global", "alias.up", "stack up")             // same
+	gittest.Run(t, home, "config", "--global", "alias.recent", "!echo x")          // untouched user alias
+	gittest.Run(t, home, "config", "--global", "alias.ss", "stack submit --stack") // an old value of ours
 
 	aliases := append(slices.Clone(gitconfig.DefaultAliases), gitconfig.Alias{Name: "checkout", Command: "stack checkout"}, gitconfig.Alias{Name: "lfs", Command: "stack x"})
 	m := gitconfig.New(g)
@@ -32,6 +33,9 @@ func TestPlanApplyUninstall(t *testing.T) {
 	}
 	if status["co"] != gitconfig.StatusConflict || status["up"] != gitconfig.StatusSame || status["c"] != gitconfig.StatusNew || status["checkout"] != gitconfig.StatusBuiltin {
 		t.Errorf("statuses = %v", status)
+	}
+	if status["ss"] != gitconfig.StatusNew {
+		t.Errorf("retired ss value should be replaced without asking, got %v", status["ss"])
 	}
 	if s, ok := status["lfs"]; ok && s != gitconfig.StatusShadows && s != gitconfig.StatusNew {
 		t.Errorf("lfs status = %v", s)
@@ -47,7 +51,7 @@ func TestPlanApplyUninstall(t *testing.T) {
 	if !slices.Contains(installed, "up") || !slices.Contains(installed, "ss") {
 		t.Errorf("installed = %v", installed)
 	}
-	if v := gittest.Run(t, home, "config", "--global", "alias.ss"); v != "stack submit --stack" {
+	if v := gittest.Run(t, home, "config", "--global", "alias.ss"); v != "stack submit" {
 		t.Errorf("ss = %q", v)
 	}
 	if v := gittest.Run(t, home, "config", "--global", "alias.co"); v != "checkout" {

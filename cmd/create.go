@@ -10,17 +10,29 @@ func newCreateCmd(c *cli) *cobra.Command {
 	var (
 		messages []string
 		st       stagingFlags
-		insert   bool
 		useAI    bool
 		noAI     bool
+		noVerify bool
 	)
 	cmd := &cobra.Command{
 		Use:     "create [name]",
 		Aliases: []string{"c"},
 		Short:   "Create a new branch stacked on top of the current branch",
-		Long: `Create a new branch stacked on top of the current branch and commit the staged
-changes. Without a name the branch name is derived from the commit message (or drafted
-by --ai). With nothing staged an empty branch is created.`,
+		Long: `Creates a new branch on top of the current one and commits whatever is staged.
+It needs a name, -m or --ai; without a name the branch name comes from the
+commit message (or from --ai). If nothing is staged you get an empty branch.
+
+It works from trunk (starting a new stack) or from the top of a stack, since gh
+stack can only add branches at the top. Run git stack top first if you're
+further down.`,
+		Example: `  # stage everything; the branch name comes from the message
+  git stack create -a -m "Add retries to the billing webhook"
+
+  # pick the name yourself, with a second paragraph for the commit body
+  git create fix-login -m "Fix the login timeout" -m "Sessions expired early."
+
+  # let Claude name the branch and write the message from the diff
+  git create -a --ai`,
 		Args:              cobra.MaximumNArgs(1),
 		ValidArgsFunction: completeNothing,
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -37,9 +49,8 @@ by --ai). With nothing staged an empty branch is created.`,
 			o := app.CreateOptions{
 				Message:  messages,
 				Staging:  staging,
-				Insert:   insert,
 				UseAI:    ai,
-				NoVerify: c.globals.NoVerify,
+				NoVerify: noVerify,
 			}
 			if len(args) == 1 {
 				o.Name = args[0]
@@ -58,11 +69,11 @@ by --ai). With nothing staged an empty branch is created.`,
 			return nil
 		},
 	}
-	cmd.Flags().StringArrayVarP(&messages, "message", "m", nil, "commit message (repeat for paragraphs)")
+	cmd.Flags().StringArrayVarP(&messages, "message", "m", nil, "commit message; repeat it for more paragraphs")
 	must(cmd.RegisterFlagCompletionFunc("message", completeNothing))
 	st.add(cmd)
-	cmd.Flags().BoolVarP(&insert, "insert", "i", false, "insert between the current branch and its child (not supported by gh stack yet)")
-	cmd.Flags().BoolVar(&useAI, "ai", false, "draft the branch name (and the commit message if -m is absent) with Claude Code; git config stack.ai.auto true makes this the default")
+	cmd.Flags().BoolVar(&useAI, "ai", false, "have Claude Code name the branch and write the message")
+	cmd.Flags().BoolVar(&noVerify, "no-verify", false, "skip git hooks when committing")
 	cmd.Flags().BoolVar(&noAI, "no-ai", false, "never use AI; takes precedence over --ai and stack.ai.auto")
 	return cmd
 }
@@ -74,7 +85,7 @@ type stagingFlags struct {
 
 func (s *stagingFlags) add(cmd *cobra.Command) {
 	cmd.Flags().BoolVarP(&s.all, "all", "a", false, "stage all changes, including untracked files, before committing")
-	cmd.Flags().BoolVarP(&s.update, "update", "u", false, "stage all changes to tracked files before committing")
+	cmd.Flags().BoolVarP(&s.update, "update", "u", false, "stage changes to tracked files only, before committing")
 	cmd.Flags().BoolVarP(&s.patch, "patch", "p", false, "pick hunks to stage before committing")
 	cmd.MarkFlagsMutuallyExclusive("all", "update", "patch")
 }

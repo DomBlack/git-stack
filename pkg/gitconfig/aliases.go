@@ -16,7 +16,7 @@ import (
 // Alias maps a git alias to a git-stack command.
 type Alias struct {
 	Name string
-	// Command is the part after "git ", e.g. "stack submit --stack".
+	// Command is the part after "git ", e.g. "stack submit".
 	Command string
 }
 
@@ -40,12 +40,18 @@ var DefaultAliases = []Alias{
 	{"c", "stack create"},
 	{"m", "stack modify"},
 	{"rs", "stack restack"},
-	{"ss", "stack submit --stack"},
+	{"ss", "stack submit"},
 	{"u", "stack up"},
 	{"d", "stack down"},
 	{"t", "stack top"},
 	{"b", "stack bottom"},
 	{"co", "stack checkout"},
+}
+
+// retired lists values we used to install for an alias. An alias still set to
+// one of these is ours and out of date, so it's replaced without asking.
+var retired = map[string][]string{
+	"ss": {"stack submit --stack"},
 }
 
 // Status of one alias in a Plan.
@@ -133,9 +139,12 @@ func (m *Manager) Plan(ctx context.Context, aliases []Alias) (Plan, error) {
 		default:
 			if v, ok := current[strings.ToLower(a.Name)]; ok {
 				e.Existing = v
-				if v == a.Value() {
+				switch {
+				case v == a.Value():
 					e.Status = StatusSame
-				} else {
+				case slices.Contains(retired[a.Name], v):
+					// e.Status stays StatusNew; Existing says what it replaces.
+				default:
 					e.Status = StatusConflict
 				}
 			}

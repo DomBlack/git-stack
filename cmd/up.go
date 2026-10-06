@@ -9,10 +9,15 @@ import (
 func newUpCmd(c *cli) *cobra.Command {
 	var o navOptions
 	cmd := &cobra.Command{
-		Use:               "up [steps]",
-		Aliases:           []string{"u"},
-		Short:             "Switch to the child of the current branch",
-		Long:              "Switch to the child of the current branch. Stops at the top of the stack.",
+		Use:     "up [steps]",
+		Aliases: []string{"u"},
+		Short:   "Switch to the child of the current branch",
+		Long:    `Switches to the child of the current branch. Stops at the top of the stack.`,
+		Example: `  # move up two branches
+  git up 2
+
+  # this branch has two children; head towards fix-login-timeout
+  git up --to fix-login-timeout`,
 		Args:              cobra.MaximumNArgs(1),
 		ValidArgsFunction: c.completeSteps(stack.Up),
 		RunE: func(cmd *cobra.Command, args []string) error {

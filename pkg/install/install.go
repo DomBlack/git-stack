@@ -113,6 +113,10 @@ func (i *Installer) installAliases(ctx context.Context, o Options) error {
 		e := &plan.Entries[idx]
 		switch e.Status {
 		case gitconfig.StatusNew:
+			if e.Existing != "" {
+				i.say("  alias  git %-8s → git %s (updating %q)", e.Alias.Name, e.Alias.Command, e.Existing)
+				break
+			}
 			i.say("  alias  git %-8s → git %s", e.Alias.Name, e.Alias.Command)
 		case gitconfig.StatusSame:
 			i.say("  alias  git %-8s already set", e.Alias.Name)

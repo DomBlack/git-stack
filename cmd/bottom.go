@@ -9,9 +9,11 @@ import (
 func newBottomCmd(c *cli) *cobra.Command {
 	var o navOptions
 	cmd := &cobra.Command{
-		Use:               "bottom",
-		Aliases:           []string{"b"},
-		Short:             "Switch to the branch closest to trunk in the current stack",
+		Use:     "bottom",
+		Aliases: []string{"b"},
+		Short:   "Switch to the branch closest to trunk in the current stack",
+		Long: `Switches to the branch closest to trunk in the current stack. On a trunk with
+several stacks, --to picks which one.`,
 		Args:              cobra.NoArgs,
 		ValidArgsFunction: completeNothing,
 		RunE: func(cmd *cobra.Command, args []string) error {

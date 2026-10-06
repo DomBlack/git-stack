@@ -92,7 +92,7 @@ func TestInstallAndUninstall(t *testing.T) {
 	if _, err := os.ReadFile(in.Env.InstallPath(shell.Bash)); err != nil {
 		t.Errorf("bash completion not written: %v", err)
 	}
-	if v := gittest.Run(t, home, "config", "--global", "alias.ss"); v != "stack submit --stack" {
+	if v := gittest.Run(t, home, "config", "--global", "alias.ss"); v != "stack submit" {
 		t.Errorf("alias ss = %q", v)
 	}
 	if v := gittest.Run(t, home, "config", "--global", "alias.co"); v != "checkout" {

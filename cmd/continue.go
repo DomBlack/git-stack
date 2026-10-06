@@ -12,8 +12,8 @@ func newContinueCmd(c *cli) *cobra.Command {
 		Use:     "continue",
 		Aliases: []string{"cont"},
 		Short:   "Continue an interrupted restack once its conflicts are resolved",
-		Long: `Finish the rebase a restack or modify stopped on, now that the conflicts are resolved
-and git added, then restack whatever was left above it. The same as
+		Long: `Once you've fixed and git added the conflicts, finishes the rebase a restack or
+modify stopped on and then restacks whatever was left above it. The same as
 "git stack restack --continue".`,
 		Args:              cobra.NoArgs,
 		ValidArgsFunction: completeNothing,

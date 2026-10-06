@@ -29,7 +29,7 @@
 **fish.** The embedded git completion registers, for every `git-<name>` binary on `PATH`,
 `complete -c git -n '__fish_git_using_command <name>' -a '(__fish_git_complete_custom_command <name>)'`,
 which re-enters completion as `complete -C "git-<name> <args>"`. Aliases are resolved to
-their first word (so `git ss` counts as `stack`) but the tail (`submit --stack`) is dropped.
+their first word (so `git ss` counts as `stack`) but the tail (`submit`) is dropped.
 fish leaves the typed subcommand in `$__fish_git_cmd` and the command line in
 `$__fish_git_cmdline`; the hook prepended to cobra's script (`__git_stack_git_args`)
 re-reads the alias with `git config --get alias.<x>` and re-inserts the tail, then clears

@@ -24,9 +24,9 @@ func newCheckoutCmd(c *cli) *cobra.Command {
 		Use:     "checkout [branch]",
 		Aliases: []string{"co"},
 		Short:   "Switch to a branch",
-		Long: `Switch to a branch. With no branch, opens an interactive picker showing every
-stack as a tree rooted at its trunk: type to filter, arrows or j/k to move,
-enter to switch, esc to cancel.`,
+		Long: `Switches to a branch. With no branch it opens an interactive picker showing
+every stack as a tree from its trunk; type to filter, arrows or j/k to move,
+enter to switch and esc to cancel.`,
 		Args:              cobra.MaximumNArgs(1),
 		ValidArgsFunction: c.completeBranches,
 		RunE: func(cmd *cobra.Command, args []string) error {

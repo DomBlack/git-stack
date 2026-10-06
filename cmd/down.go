@@ -9,10 +9,11 @@ import (
 func newDownCmd(c *cli) *cobra.Command {
 	var o navOptions
 	cmd := &cobra.Command{
-		Use:               "down [steps]",
-		Aliases:           []string{"d"},
-		Short:             "Switch to the parent of the current branch",
-		Long:              "Switch to the parent of the current branch. From the bottom branch this checks out the trunk.",
+		Use:     "down [steps]",
+		Aliases: []string{"d"},
+		Short:   "Switch to the parent of the current branch",
+		Long: `Switches to the parent of the current branch. From the bottom branch it checks
+out trunk.`,
 		Args:              cobra.MaximumNArgs(1),
 		ValidArgsFunction: c.completeSteps(stack.Down),
 		RunE: func(cmd *cobra.Command, args []string) error {
