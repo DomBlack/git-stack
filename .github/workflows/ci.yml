@@ -1,8 +1,19 @@
 name: ci
 
 on:
+  # PR branches are covered by pull_request, so push only runs for main;
+  # otherwise every push to a PR branch ran the whole matrix twice
   push:
+    branches: [main]
   pull_request:
+
+# A newer push to the same PR makes the old run pointless, so PR runs share a
+# group per PR and cancel each other. Every other run (pushes to main) gets a
+# group of its own: GitHub keeps only one pending run per group and replaces
+# it, even without cancel-in-progress, so a shared group could drop main runs.
+concurrency:
+  group: ci-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || format('run-{0}', github.run_id) }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
   contents: read
