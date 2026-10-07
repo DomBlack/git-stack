@@ -42,8 +42,8 @@ One vocabulary, used everywhere, nothing else;
 |---|---|---|
 | `✔` | it worked | result line, stdout, green |
 | `✖` | it didn't | error line, stderr, red |
-| `⚠` | worked, but you should know something | notice, stderr, yellow |
-| `↳` | something you can do about it | under an error, stderr |
+| `⚠` | worked, but you should know something | notice, stderr, yellow; or the result line of a command that finished but left something you have to deal with, stdout |
+| `↳` | something you can do about it | under an error, stderr; or under a `⚠` result line, stdout |
 | `│` | a line from a subprocess (gh stack) as it happens | under a headline, stderr, faint |
 | `●` `○` `■` | current branch, other branch, trunk | the tree picker and `git stack` / `git stack log` |
 
@@ -82,6 +82,23 @@ the bottom line and the detail scrolls up as it comes in.
 - Errors say what's wrong in one line, then the detail (faint), then `↳` next steps that
   are things you can actually run.
 - Notices are for "it worked but"; a branch left alone because its checkout in another worktree is dirty, a dry run.
+- The result line never claims more than happened. A command that finished but left something
+  undone for a reason that's yours to sort out (uncommitted changes in the way, a diverged
+  trunk you said no to) ends on a `⚠` result line instead of `✔` ("Synced, but main was not
+  updated"); one that couldn't do part of its job for any other reason (a conflict, another
+  git process holding a lock) ends on an error and exits non-zero, after showing what it did
+  manage. Never "nothing to do" when something was left.
+- A `⚠` result line is followed straight away by why, one idea per line: which branch, which
+  checkout (`~` shortened), which files (three, then "and N more", relative to that
+  checkout), then a `↳` with a command that works from wherever the user is (`git -C
+  ~/src/app stash`). Never git's own stderr. Every path or file name in a command is quoted for
+  the shell (`shell.Arg` / `shell.Path`); one with a control character can't be pasted safely,
+  so it gets directions ("stash them in the checkout at …") instead of a command.
+- Shas are short (seven characters) and faint; `Reporter.SHA` does both.
+- Names and text from outside (file names, git's stderr, gh stack's output) never reach the
+  terminal raw. A file name with anything odd in it is shown C quoted (`ui.QuoteName`), and
+  the Reporter escapes control characters in notices, errors and gutter lines. Structured
+  output (MCP) keeps the raw names.
 - Branch names are bold cyan, PR refs take the colour of their state (green open, faint
   draft, magenta merged, red closed) when it's known and the line's own colour when it isn't,
   shas faint, subjects plain. Semantic colour only; nothing is coloured for decoration.

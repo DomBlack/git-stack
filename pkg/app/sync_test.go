@@ -138,8 +138,8 @@ func TestSyncDirtyTrunkWorktreeIsLeft(t *testing.T) {
 	if b, _ := os.ReadFile(filepath.Join(f.dir, "README.md")); string(b) != "dirty" {
 		t.Error("the dirty file must be untouched")
 	}
-	if !strings.Contains(strings.Join(res.Notices, "\n"), "main") {
-		t.Errorf("want a notice about main: %v", res.Notices)
+	if n := res.NotUpdated; len(n) != 1 || n[0].Reason != app.NotUpdatedDirty || !slices.Equal(n[0].Changed, []string{"README.md"}) {
+		t.Errorf("want main left for README.md: %+v", n)
 	}
 }
 
@@ -159,8 +159,8 @@ func TestSyncUntrackedFileBlocksFastForward(t *testing.T) {
 	if b, _ := os.ReadFile(filepath.Join(f.dir, "r.txt")); string(b) != "mine" {
 		t.Error("the untracked file must be untouched")
 	}
-	if !strings.Contains(strings.Join(res.Notices, "\n"), "was not updated (the checkout was left alone: fast forward") {
-		t.Errorf("notices = %v", res.Notices)
+	if n := res.NotUpdated; len(n) != 1 || n[0].Reason != app.NotUpdatedUntracked || !slices.Equal(n[0].Untracked, []string{"r.txt"}) {
+		t.Errorf("want main left for r.txt: %+v", n)
 	}
 }
 
@@ -197,8 +197,8 @@ func TestSyncDivergedTrunk(t *testing.T) {
 		if b, _ := os.ReadFile(filepath.Join(f.dir, "r.txt")); string(b) != "mine" {
 			t.Error("the untracked file must survive")
 		}
-		if !strings.Contains(strings.Join(res.Notices, "\n"), "would overwrite untracked r.txt") {
-			t.Errorf("notices = %v", res.Notices)
+		if n := res.NotUpdated; len(n) != 1 || n[0].Reason != app.NotUpdatedUntracked || !slices.Equal(n[0].Untracked, []string{"r.txt"}) {
+			t.Errorf("want main left for r.txt: %+v", n)
 		}
 	})
 	t.Run("yes at the prompt resets", func(t *testing.T) {
@@ -348,4 +348,84 @@ func (g *stepGuard) Select(q string, _ []string) (int, error) {
 		g.t.Errorf("asked %q while a step was running", q)
 	}
 	return 0, nil
+}
+
+// A trunk checked out somewhere whose index lock another git process holds:
+// a brief hold is waited out, one that stays fails the sync with a clear
+// reason, and the lock file is never touched.
+func TestSyncTrunkWithAHeldIndexLock(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		release time.Duration // 0: never
+	}{
+		{"released while we wait", 300 * time.Millisecond},
+		{"held throughout", 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newSyncFixture(t)
+			gittest.Run(t, f.dir, "switch", "-q", "main")
+			before := f.rev(t, "main")
+			remote := f.advanceRemote(t, "main", "r.txt")
+			lock := filepath.Join(f.dir, ".git", "index.lock")
+			if err := os.WriteFile(lock, nil, 0o644); err != nil {
+				t.Fatal(err)
+			}
+			if tc.release > 0 {
+				time.AfterFunc(tc.release, func() { _ = os.Remove(lock) })
+			}
+			res, err := f.sync(t, app.SyncOptions{NoRestack: true})
+			if tc.release > 0 {
+				if err != nil || trunk(res, "main").Status != app.TrunkFastForwarded || f.rev(t, "main") != remote {
+					t.Fatalf("a brief lock should be waited out: %+v %v", trunk(res, "main"), err)
+				}
+				return
+			}
+			if !errors.Is(err, &stack.Error{Kind: stack.KindPartial}) {
+				t.Fatalf("err = %v, want a partial sync", err)
+			}
+			if msg := err.Error(); strings.Contains(msg, "\n") || !strings.Contains(msg, "another git process holds its index lock, so main was not updated") {
+				t.Errorf("error should be one clear line: %q", msg)
+			}
+			if trunk(res, "main").Status != app.TrunkNotUpdated || f.rev(t, "main") != before {
+				t.Errorf("trunk = %+v", trunk(res, "main"))
+			}
+			if len(res.NotUpdated) != 1 || res.NotUpdated[0].Reason != app.NotUpdatedLocked || !strings.HasSuffix(res.NotUpdated[0].Lock, filepath.Join(".git", "index.lock")) {
+				t.Errorf("not updated = %+v", res.NotUpdated)
+			}
+			if _, err := os.Stat(lock); err != nil {
+				t.Error("sync must never remove someone else's lock")
+			}
+		})
+	}
+}
+
+// A branch's own ref lock held during the fast forward is a ref lock, not
+// the index: reported with its file and never retried, since git has moved
+// the checkout by then.
+func TestSyncTrunkWithAHeldRefLock(t *testing.T) {
+	f := newSyncFixture(t)
+	gittest.Run(t, f.dir, "switch", "-q", "main")
+	f.advanceRemote(t, "main", "r.txt")
+	lock := filepath.Join(f.dir, ".git", "refs", "heads", "main.lock")
+	if err := os.WriteFile(lock, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	start := time.Now()
+	res, err := f.sync(t, app.SyncOptions{NoRestack: true})
+	if !errors.Is(err, &stack.Error{Kind: stack.KindPartial}) {
+		t.Fatalf("err = %v, want a partial sync", err)
+	}
+	if time.Since(start) > 1500*time.Millisecond {
+		t.Errorf("took %v; a ref lock must not be waited on", time.Since(start))
+	}
+	n := res.NotUpdated
+	if len(n) != 1 || n[0].Reason != app.NotUpdatedLocked || n[0].LockKind != "ref" {
+		t.Fatalf("not updated = %+v", n)
+	}
+	if real, _ := filepath.EvalSymlinks(filepath.Dir(lock)); filepath.Join(real, "main.lock") != n[0].Lock && lock != n[0].Lock {
+		t.Errorf("lock = %q, want %q", n[0].Lock, lock)
+	}
+	if !strings.Contains(err.Error(), "holds the lock on main") || strings.Contains(err.Error(), "index lock") {
+		t.Errorf("message = %q", err.Error())
+	}
 }

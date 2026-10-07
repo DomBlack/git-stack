@@ -48,9 +48,22 @@ Tool errors (`isError: true`) carry a JSON object in the text content:
                 "call stack_modify with continue: true", "or give up with call stack_modify with abort: true"]}
 ```
 
-Codes: `not_repo`, `not_in_stack`, `not_at_top`, `conflict`, `rebase_active`, `locked`,
+Codes: `not_repo`, `not_in_stack`, `not_at_top`, `conflict`, `partial`, `rebase_active`, `locked`,
 `stacks_unavailable`, `auth_required`, `not_installed`, `unsupported`, `invalid_args`,
 `interaction_required`, `api_failure`, `disambiguate`, `modify_recovery`, `unknown`.
+`partial` comes from `stack_sync` when everything else was done but some branches could not
+be updated; the structured result still comes back, and its `notUpdated` lists each one with
+a `reason`: `locked` (another git process held a lock the update needed) or `refused` (git
+would not move the checkout for any other reason, e.g. a merge in progress there) fail the
+sync; `dirty` (uncommitted changes in the way) and `untracked` (untracked files in the way)
+are listed too but are only warnings. Each entry has the `worktree` it is checked out in
+(empty for a branch with no checkout). A `locked` entry has the `lock` file that was held and
+its `lockKind`: `index` is that checkout's index lock, `ref` is the branch's own ref lock,
+which can happen to a branch with no checkout at all, and after git has already moved a
+checkout (so it can show the incoming changes as staged until a later sync finishes). Act on
+the `lock` path and `lockKind` given; don't assume it's a checkout's `.git/index.lock`. A
+`dirty` / `untracked` entry has the files in the way (`changed`, `untracked`, at most 20
+each, with `moreChanged` / `moreUntracked` counting the rest).
 Input-schema violations (a missing required field, a wrong type) are rejected by the SDK
 before the tool runs and come back as plain text.
 

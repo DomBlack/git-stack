@@ -41,6 +41,10 @@ const (
 	KindNotAtTop
 	// KindInteractionRequired: a prompt, editor or TUI is needed but not available.
 	KindInteractionRequired
+	// KindPartial: the command did everything it could, but some of it
+	// could not be done (the result says what); running it again after
+	// following the next steps finishes the job.
+	KindPartial
 )
 
 var kindCodes = map[Kind]string{
@@ -60,6 +64,7 @@ var kindCodes = map[Kind]string{
 	KindAuthRequired:        "auth_required",
 	KindNotAtTop:            "not_at_top",
 	KindInteractionRequired: "interaction_required",
+	KindPartial:             "partial",
 }
 
 // Code is the stable machine-readable name of the kind.

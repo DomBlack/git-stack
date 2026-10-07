@@ -317,8 +317,16 @@ Nothing gets pushed; that's what `git ss` is for. If your local trunk has diverg
 it's only reset with `-f` or a yes at the prompt.
 
 Stacks are per worktree (that's how gh stack stores them), but sync covers all of them. A branch
-checked out in another worktree gets moved there too if that checkout is clean, and is skipped
-with a notice if it isn't.
+checked out in another worktree is fast forwarded there too, and like `git pull` any uncommitted
+changes it doesn't touch come along. If a change or an untracked file is in the way, the branch
+is left where it was and sync ends on `⚠ Synced, but main was not updated`, naming the files
+and the checkout, with the `git -C … stash` to run. If another git
+process is holding that worktree's index lock (an IDE, a prompt or status bar running
+`git status`), sync waits up to about two seconds for it; if the lock is still there it leaves
+the branch, finishes everything else and exits non-zero saying which lock file was held. A
+lock on the branch itself (`.git/refs/heads/main.lock`, which can happen whether or not it's
+checked out) is reported straight away with its path rather than waited on, because by then
+git may already have updated the checkout. It never deletes a lock itself.
 
 Flags:
 - `-d` / `--delete-all` delete merged or closed branches without asking

@@ -46,18 +46,36 @@ func TestSyncFastForwardsCheckedOutBranch(t *testing.T) {
 	}
 }
 
-func TestSyncLeavesDirtyCheckedOutBranch(t *testing.T) {
-	f := newSyncFixture(t) // on b
-	before := f.rev(t, "b")
-	f.advanceRemote(t, "b", "suggestion.txt")
-	gittest.WriteFile(t, f.dir, "b.txt", "edited")
-	res, err := f.sync(t, app.SyncOptions{NoRestack: true})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(res.Updated) != 0 || f.rev(t, "b") != before || !strings.Contains(strings.Join(res.Notices, "\n"), "b") {
-		t.Errorf("dirty branch must stay: %+v %v", res.Updated, res.Notices)
-	}
+// Local changes the fast forward doesn't touch come along, as with git
+// pull; ones it would overwrite leave the branch where it was, named.
+func TestSyncDirtyCheckedOutBranch(t *testing.T) {
+	t.Run("changes elsewhere are kept", func(t *testing.T) {
+		f := newSyncFixture(t) // on b
+		sha := f.advanceRemote(t, "b", "suggestion.txt")
+		gittest.WriteFile(t, f.dir, "b.txt", "edited")
+		res, err := f.sync(t, app.SyncOptions{NoRestack: true})
+		if err != nil || f.rev(t, "b") != sha || len(res.NotUpdated) != 0 {
+			t.Fatalf("b should fast forward: %+v %+v %v", res.Updated, res.NotUpdated, err)
+		}
+		if b, _ := os.ReadFile(filepath.Join(f.dir, "b.txt")); string(b) != "edited" {
+			t.Error("the local change must survive")
+		}
+	})
+	t.Run("changes in the way stop it", func(t *testing.T) {
+		f := newSyncFixture(t) // on b
+		before := f.rev(t, "b")
+		f.advanceRemote(t, "b", "b.txt")
+		gittest.WriteFile(t, f.dir, "b.txt", "edited")
+		res, err := f.sync(t, app.SyncOptions{NoRestack: true})
+		if err != nil || f.rev(t, "b") != before {
+			t.Fatalf("b must stay: %v", err)
+		}
+		n := res.NotUpdated
+		if len(n) != 1 || n[0].Name != "b" || n[0].Reason != app.NotUpdatedDirty || n[0].Worktree == "" ||
+			!slices.Equal(n[0].Changed, []string{"b.txt"}) || len(n[0].Untracked) != 0 {
+			t.Errorf("not updated = %+v", n)
+		}
+	})
 }
 
 func TestSyncLocalAheadIsLeftForSubmit(t *testing.T) {

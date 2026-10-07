@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 
 	"github.com/DomBlack/git-stack/pkg/exec"
@@ -43,8 +44,16 @@ func (c *Client) UpdateRefs(ctx context.Context, repo Repo, updates []RefUpdate)
 		}
 	}
 	in.WriteString("prepare\ncommit\n")
-	_, err := c.gitInput(ctx, repo, strings.NewReader(in.String()), nil, "update-ref", "--stdin")
+	// The transaction takes every ref lock in prepare, before writing
+	// anything, so a ref lock someone else holds is safe to wait out.
+	args := []string{"update-ref", "--stdin"}
+	_, err := c.retryLocked(ctx, args, func(string) bool { return false }, true, func() (exec.Result, error) {
+		return c.gitInput(ctx, repo, strings.NewReader(in.String()), nil, args...)
+	})
 	if err != nil {
+		if LockPath(err) != "" {
+			return err
+		}
 		if ee, ok := errors.AsType[*exec.ExitError](err); ok {
 			return fmt.Errorf("update refs: %s", ee.Result.Err())
 		}
@@ -93,8 +102,11 @@ func (c *Client) RevList(ctx context.Context, repo Repo, from, to string) ([]str
 func (c *Client) MergeFF(ctx context.Context, repo Repo, rev string) error {
 	_, err := c.gitIn(ctx, repo, "merge", "--ff-only", "--quiet", rev)
 	if err != nil {
-		if ee, ok := errors.AsType[*exec.ExitError](err); ok {
-			return fmt.Errorf("fast forward: %s", ee.Result.Err())
+		if ee, ok := errors.AsType[*exec.ExitError](err); ok && LockPath(err) == "" {
+			if changed, untracked := parseOverwrite(ee.Result.Err()); len(changed)+len(untracked) > 0 {
+				return &OverwriteError{Changed: changed, Untracked: untracked}
+			}
+			return fmt.Errorf("fast forward: %s", firstLine(ee.Result.Err()))
 		}
 		return err
 	}
@@ -107,8 +119,8 @@ func (c *Client) MergeFF(ctx context.Context, repo Repo, rev string) error {
 func (c *Client) ResetHard(ctx context.Context, repo Repo, rev string) error {
 	_, err := c.gitIn(ctx, repo, "reset", "--hard", "--quiet", rev)
 	if err != nil {
-		if ee, ok := errors.AsType[*exec.ExitError](err); ok {
-			return fmt.Errorf("reset: %s", ee.Result.Err())
+		if ee, ok := errors.AsType[*exec.ExitError](err); ok && LockPath(err) == "" {
+			return fmt.Errorf("reset: %s", firstLine(ee.Result.Err()))
 		}
 		return err
 	}
@@ -157,4 +169,63 @@ func (c *Client) Reflog(ctx context.Context, repo Repo, ref string) ([]string, e
 		return nil, nil
 	}
 	return strings.Split(res.Out(), "\n"), nil
+}
+
+// firstLine is the first line of git's message without its "error: " or
+// "fatal: " prefix, for errors shown on one line.
+func firstLine(msg string) string {
+	msg, _, _ = strings.Cut(strings.TrimSpace(msg), "\n")
+	for _, p := range []string{"error: ", "fatal: "} {
+		msg = strings.TrimPrefix(msg, p)
+	}
+	return strings.TrimSpace(msg)
+}
+
+// OverwriteError is git refusing to move a checkout because doing so would
+// overwrite files in it: local changes to tracked files (Changed) and
+// untracked files where the update writes (Untracked). Paths are relative
+// to the checkout. git touched nothing.
+type OverwriteError struct {
+	Changed, Untracked []string
+}
+
+func (e *OverwriteError) Error() string {
+	var parts []string
+	if n := len(e.Changed); n > 0 {
+		parts = append(parts, fmt.Sprintf("%d changed", n))
+	}
+	if n := len(e.Untracked); n > 0 {
+		parts = append(parts, fmt.Sprintf("%d untracked", n))
+	}
+	return "fast forward would overwrite " + strings.Join(parts, " and ") + " files"
+}
+
+// parseOverwrite reads the file lists out of git's "would be overwritten"
+// refusal: a header line, then one tab indented path per line (C quoted
+// when it has unusual characters), then a hint.
+func parseOverwrite(stderr string) (changed, untracked []string) {
+	var cur *[]string
+	for line := range strings.SplitSeq(stderr, "\n") {
+		switch {
+		case strings.Contains(line, "Your local changes to the following files would be overwritten"):
+			cur = &changed
+		case strings.Contains(line, "untracked working tree files would be overwritten"):
+			cur = &untracked
+		case strings.HasPrefix(line, "\t") && cur != nil:
+			*cur = append(*cur, unquotePath(strings.TrimPrefix(line, "\t")))
+		default:
+			cur = nil
+		}
+	}
+	return changed, untracked
+}
+
+// unquotePath undoes git's C style quoting of a path ("a\303\251.txt").
+func unquotePath(p string) string {
+	if len(p) >= 2 && p[0] == '"' && p[len(p)-1] == '"' {
+		if u, err := strconv.Unquote(p); err == nil {
+			return u
+		}
+	}
+	return p
 }

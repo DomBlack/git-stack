@@ -57,16 +57,20 @@ type MergeTreeResult struct {
 
 // MergeTree merges ours and theirs with base as the common ancestor.
 func (c *Client) MergeTree(ctx context.Context, repo Repo, base, ours, theirs string) (MergeTreeResult, error) {
-	res, err := c.gitIn(ctx, repo, "merge-tree", "--write-tree", "--name-only", "--no-messages", "--merge-base="+base, ours, theirs)
+	res, err := c.gitIn(ctx, repo, "merge-tree", "--write-tree", "--name-only", "--no-messages", "-z", "--merge-base="+base, ours, theirs)
 	if err == nil {
-		return MergeTreeResult{Tree: res.Out()}, nil
+		return MergeTreeResult{Tree: strings.TrimRight(res.Out(), "\x00")}, nil
 	}
 	ee, ok := errors.AsType[*exec.ExitError](err)
 	if !ok || ee.Result.ExitCode != 1 {
 		return MergeTreeResult{}, err
 	}
-	// Exit 1 is a conflict: first line the tree, then one conflicted path per line.
-	lines := strings.Split(strings.TrimSpace(string(ee.Result.Stdout)), "\n")
+	// Exit 1 is a conflict: the tree, then each conflicted path, all NUL
+	// terminated (raw, where the newline form would C quote odd paths).
+	lines := splitNUL(string(ee.Result.Stdout))
+	if len(lines) == 0 {
+		return MergeTreeResult{}, fmt.Errorf("merge-tree: no output")
+	}
 	out := MergeTreeResult{Tree: lines[0]}
 	seen := map[string]bool{}
 	for _, p := range lines[1:] {

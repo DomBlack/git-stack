@@ -3,8 +3,10 @@ package app
 import (
 	"context"
 	"errors"
+	"fmt"
 
 	"github.com/DomBlack/git-stack/pkg/git"
+	"github.com/DomBlack/git-stack/pkg/shell"
 	"github.com/DomBlack/git-stack/pkg/stack"
 )
 
@@ -58,7 +60,7 @@ func (a *App) Checkout(ctx context.Context, repo git.Repo, name string) error {
 	}
 	if found.Worktree != "" && found.Worktree != repo.TopLevel {
 		return stack.Newf(stack.KindInvalidArgs, "%s is checked out in another worktree: %s", name, found.Worktree).
-			WithSteps("cd " + found.Worktree)
+			WithSteps(cdStep(found.Worktree))
 	}
 	return a.d.Git.Switch(ctx, repo, name)
 }
@@ -95,4 +97,14 @@ func (a *App) Trunk(ctx context.Context, repo git.Repo) (string, error) {
 		return "", stack.Newf(stack.KindDisambiguate, "several trunks are in use (%v)", graph.Trunks).
 			WithSteps("check out a stacked branch first, or name the trunk explicitly")
 	}
+}
+
+// cdStep is the step that takes the user to a worktree: a cd they can
+// paste, or, when the path has a control character no quoting makes safe,
+// directions instead.
+func cdStep(path string) string {
+	if p, ok := shell.Path(shortPath(path)); ok {
+		return "cd " + p
+	}
+	return fmt.Sprintf("change to the worktree at %q", path)
 }

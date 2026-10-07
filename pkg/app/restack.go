@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/DomBlack/git-stack/pkg/git"
+	"github.com/DomBlack/git-stack/pkg/shell"
 	"github.com/DomBlack/git-stack/pkg/stack"
 )
 
@@ -663,9 +664,24 @@ func conflictError(branch, onto string, files []string) *stack.Error {
 	steps := []string{"resolve the conflicts"}
 	if len(files) > 0 {
 		steps[0] = "resolve the conflicts in: " + joinNames(files)
-		steps = append(steps, "git add "+strings.Join(files, " "))
+		steps = append(steps, gitAddStep(files))
 	} else {
 		steps = append(steps, "git add <files>")
 	}
 	return e.WithSteps(append(steps, "git stack continue", "or give up with git stack abort")...)
+}
+
+// gitAddStep is the git add for the conflicted files, each quoted for the
+// shell; if one has a control character no quoting makes safe to paste, it
+// says what to do instead of printing a command.
+func gitAddStep(files []string) string {
+	args := make([]string, len(files))
+	for i, f := range files {
+		q, ok := shell.Arg(f)
+		if !ok {
+			return "git add each of those files once it's resolved"
+		}
+		args[i] = q
+	}
+	return "git add " + strings.Join(args, " ")
 }

@@ -129,6 +129,40 @@ func (r *Reporter) Success(format string, args ...any) {
 	r.println(r.out, "ok: "+msg)
 }
 
+// Partial prints a result line on stdout for a command that finished but
+// left something undone that the user has to deal with: "⚠ Synced, but main
+// was not updated" (note: when piped). Use it instead of Success whenever
+// claiming success would be untrue; a real failure is an error instead.
+func (r *Reporter) Partial(format string, args ...any) {
+	msg := fmt.Sprintf(format, args...)
+	r.mu.Lock()
+	r.result = msg
+	r.mu.Unlock()
+	if r.o.Quiet {
+		return
+	}
+	if r.o.OutTTY {
+		r.println(r.out, r.st.Warning.Render(markWarn)+" "+msg)
+		return
+	}
+	r.println(r.out, "note: "+msg)
+}
+
+// NextStep prints something the user can do about the line above it, on
+// stdout under a ⚠ result: "  ↳ git -C ~/src/app stash, then git stack sync
+// again" ("  - " when piped). Errors carry their own next steps.
+func (r *Reporter) NextStep(format string, args ...any) {
+	if r.o.Quiet {
+		return
+	}
+	msg := fmt.Sprintf(format, args...)
+	if r.o.OutTTY {
+		r.println(r.out, "  "+r.st.Muted.Render(markStep)+" "+msg)
+		return
+	}
+	r.println(r.out, "  - "+msg)
+}
+
 // Info prints a detail line on stdout, indented under the result line.
 func (r *Reporter) Info(format string, args ...any) {
 	if r.o.Quiet {
@@ -138,11 +172,13 @@ func (r *Reporter) Info(format string, args ...any) {
 }
 
 // Warn prints a notice on stderr: "⚠ gh stack submits the whole stack".
+// Notices carry names and git's words, so control characters in them are
+// shown escaped rather than sent to the terminal.
 func (r *Reporter) Warn(format string, args ...any) {
 	if r.o.Quiet {
 		return
 	}
-	msg := fmt.Sprintf(format, args...)
+	msg := Printable(fmt.Sprintf(format, args...))
 	if r.o.ErrTTY {
 		r.println(r.err, r.st.Warning.Render(markWarn)+" "+msg)
 		return
@@ -164,11 +200,21 @@ func (r *Reporter) Error(err error) {
 	se, ok := errors.AsType[*stack.Error](err)
 	if !ok {
 		if r.o.ErrTTY {
-			r.println(r.err, r.st.Error.Render(markErr)+" "+err.Error())
+			r.println(r.err, r.st.Error.Render(markErr)+" "+Printable(err.Error()))
 		} else {
-			r.println(r.err, "error: "+err.Error())
+			r.println(r.err, "error: "+Printable(err.Error()))
 		}
 		return
+	}
+	// Errors quote git and name files and branches; none of it may reach
+	// the terminal as a control character.
+	se = &stack.Error{Kind: se.Kind, Msg: Printable(se.Msg), Detail: se.Detail, NextSteps: printableAll(se.NextSteps)}
+	if se.Detail != "" {
+		lines := strings.Split(se.Detail, "\n")
+		for i, l := range lines {
+			lines[i] = Printable(l)
+		}
+		se.Detail = strings.Join(lines, "\n")
 	}
 	if r.o.ErrTTY {
 		r.println(r.err, r.st.Error.Render(markErr)+" "+se.Msg)
@@ -265,13 +311,20 @@ func (r *Reporter) Branch(name string) string {
 	return r.st.Current.Render(name)
 }
 
-// SHA styles a commit id for use inside a message.
+// SHA styles a commit id for use inside a message: abbreviated to seven
+// characters and faint.
 func (r *Reporter) SHA(sha string) string {
+	if len(sha) > shortSHA {
+		sha = sha[:shortSHA]
+	}
 	if !r.o.OutTTY {
 		return sha
 	}
 	return r.st.Muted.Render(sha)
 }
+
+// shortSHA is how many characters of a commit id we show.
+const shortSHA = 7
 
 // Ref styles a pull request reference (#123) for a stdout line in the
 // colour of its state (the line's own colour when state is unknown) and
@@ -421,7 +474,8 @@ func (g *gutterWriter) emit(line string) {
 	if r.o.Quiet {
 		return
 	}
-	line = strings.TrimRight(line, "\r")
+	// gh stack's output is relayed, not trusted: no controls reach the terminal.
+	line = Printable(strings.TrimRight(line, "\r"))
 	var out string
 	if r.o.ErrTTY {
 		out = r.st.Muted.Render(markPipe) + " " + line
@@ -434,4 +488,12 @@ func (g *gutterWriter) emit(line string) {
 		return
 	}
 	fmt.Fprintln(r.err, out)
+}
+
+func printableAll(ss []string) []string {
+	out := make([]string, len(ss))
+	for i, s := range ss {
+		out[i] = Printable(s)
+	}
+	return out
 }
