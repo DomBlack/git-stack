@@ -81,11 +81,7 @@ method unless you pass one, or set git config stack.merge.method.`,
 				rep.Warn("%s", note)
 			}
 			if res.Sync != nil {
-				renderSync(rep, *res.Sync)
-				if err != nil {
-					return err
-				}
-				rep.Success("%s", syncSummary(*res.Sync))
+				return reportSync(rep, *res.Sync, err)
 			}
 			return err
 		},

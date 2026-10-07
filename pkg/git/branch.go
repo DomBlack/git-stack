@@ -27,20 +27,25 @@ type Branch struct {
 
 // Branches lists local branches sorted by name.
 func (c *Client) Branches(ctx context.Context, repo Repo) ([]Branch, error) {
-	const format = "%(refname:short)%00%(objectname)%00%(committerdate:unix)%00%(worktreepath)%00%(upstream:short)"
+	// Every field ends in NUL, so a worktree path with a newline in it can't
+	// split a record; for-each-ref still puts a newline after each one,
+	// which lands at the start of the next record's name (ref names can't
+	// contain newlines).
+	const fields = 5
+	const format = "%(refname:short)%00%(objectname)%00%(committerdate:unix)%00%(worktreepath)%00%(upstream:short)%00"
 	res, err := c.gitIn(ctx, repo, "for-each-ref", "--format="+format, "--sort=refname", "refs/heads/")
 	if err != nil {
 		return nil, err
 	}
+	all := strings.Split(string(res.Stdout), "\x00")
+	all = all[:len(all)-1] // after the last NUL there's only the final newline
+	if len(all)%fields != 0 {
+		return nil, fmt.Errorf("for-each-ref: unexpected output %q", res.Stdout)
+	}
 	var out []Branch
-	for line := range strings.SplitSeq(res.Out(), "\n") {
-		if line == "" {
-			continue
-		}
-		f := strings.Split(line, "\x00")
-		if len(f) != 5 {
-			return nil, fmt.Errorf("for-each-ref: unexpected line %q", line)
-		}
+	for i := 0; i < len(all); i += fields {
+		f := all[i : i+fields]
+		f[0] = strings.TrimPrefix(f[0], "\n")
 		b := Branch{Name: f[0], Head: f[1], Worktree: f[3], Upstream: f[4]}
 		if secs, err := strconv.ParseInt(f[2], 10, 64); err == nil {
 			b.CommitTime = time.Unix(secs, 0)
@@ -139,7 +144,9 @@ type Worktree struct {
 
 // Worktrees lists the main checkout and every linked worktree.
 func (c *Client) Worktrees(ctx context.Context, repo Repo) ([]Worktree, error) {
-	res, err := c.gitIn(ctx, repo, "worktree", "list", "--porcelain")
+	// -z (git 2.36+; we need 2.40) ends every attribute in NUL and every
+	// record in an extra NUL, so paths with newlines come through whole.
+	res, err := c.gitIn(ctx, repo, "worktree", "list", "--porcelain", "-z")
 	if err != nil {
 		return nil, err
 	}
@@ -151,7 +158,7 @@ func (c *Client) Worktrees(ctx context.Context, repo Repo) ([]Worktree, error) {
 			cur = nil
 		}
 	}
-	for line := range strings.SplitSeq(res.Out(), "\n") {
+	for line := range strings.SplitSeq(string(res.Stdout), "\x00") {
 		switch {
 		case line == "":
 			flush()

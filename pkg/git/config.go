@@ -59,14 +59,14 @@ func (c *Client) ConfigGet(ctx context.Context, repo Repo, scope Scope, key stri
 
 // ConfigGetAll returns every value of a multi-valued key.
 func (c *Client) ConfigGetAll(ctx context.Context, repo Repo, scope Scope, key string) ([]string, error) {
-	res, err := c.config(ctx, repo, scope, "--get-all", key)
+	res, err := c.config(ctx, repo, scope, "-z", "--get-all", key)
 	if err != nil {
 		if ee, ok := errors.AsType[*exec.ExitError](err); ok && ee.Result.ExitCode == 1 {
 			return nil, nil
 		}
 		return nil, err
 	}
-	return nonEmptyLines(res.Out()), nil
+	return splitNUL(string(res.Stdout)), nil
 }
 
 // ConfigGetRegexp returns every entry whose key matches the regexp.

@@ -4,11 +4,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"path/filepath"
 	"slices"
 	"strings"
 
 	"github.com/DomBlack/git-stack/pkg/forge"
 	"github.com/DomBlack/git-stack/pkg/git"
+	"github.com/DomBlack/git-stack/pkg/shell"
 	"github.com/DomBlack/git-stack/pkg/stack"
 )
 
@@ -32,7 +34,58 @@ const (
 	TrunkDiverged      = "diverged"
 	TrunkDirty         = "dirty"
 	TrunkNoRemote      = "no-remote"
+	// TrunkNotUpdated: the trunk should have moved but its checkout could
+	// not be updated; NotUpdated says why.
+	TrunkNotUpdated = "not-updated"
 )
+
+// Reasons a branch sync meant to move was left where it was.
+const (
+	// NotUpdatedDirty: uncommitted changes in its checkout would be
+	// overwritten (Changed, and Untracked if there are those too). The
+	// user's own work is in the way, so this is a warning, not a failure.
+	NotUpdatedDirty = "dirty"
+	// NotUpdatedUntracked: untracked files in its checkout are where the
+	// update would write (Untracked). Also a warning.
+	NotUpdatedUntracked = "untracked"
+	// NotUpdatedLocked: another git process held a lock the update needed:
+	// the checkout's index lock for longer than the retry budget (LockKind
+	// "index"), or the branch's ref lock (LockKind "ref", never retried in a
+	// checkout and possible for a branch with no checkout). Lock is the file.
+	// Sync fails so it gets run again.
+	NotUpdatedLocked = "locked"
+	// NotUpdatedRefused: git would not move the checkout for any reason
+	// other than the user's files being in the way (those are dirty and
+	// untracked) or a held lock, e.g. a merge in progress there. Sync fails.
+	NotUpdatedRefused = "refused"
+)
+
+// NotUpdated is a branch sync meant to move (a trunk or a branch the remote
+// advanced) that is still where it was.
+type NotUpdated struct {
+	Name     string `json:"name"`
+	Worktree string `json:"worktree,omitempty"`
+	Reason   string `json:"reason"`
+	// Detail is git's one line explanation, for refused.
+	Detail string `json:"detail,omitempty"`
+	// Changed and Untracked are the files in the way, relative to the
+	// checkout, for dirty and untracked; at most maxListedFiles each, with
+	// MoreChanged / MoreUntracked counting the rest.
+	Changed       []string `json:"changed,omitempty"`
+	MoreChanged   int      `json:"moreChanged,omitempty"`
+	Untracked     []string `json:"untracked,omitempty"`
+	MoreUntracked int      `json:"moreUntracked,omitempty"`
+	// Lock is the lock file that was held, for locked, and LockKind says
+	// whose it is: "index" (the checkout's index) or "ref" (a branch's).
+	Lock     string `json:"lock,omitempty"`
+	LockKind string `json:"lockKind,omitempty"`
+}
+
+// Failed reports whether the branch not moving makes the sync fail (as
+// opposed to a notice about the user's own uncommitted changes).
+func (n NotUpdated) Failed() bool {
+	return n.Reason != NotUpdatedDirty && n.Reason != NotUpdatedUntracked
+}
 
 // TrunkSync is what happened to one trunk.
 type TrunkSync struct {
@@ -87,16 +140,28 @@ type SyncResult struct {
 	Restacked []BranchMove    `json:"restacked,omitempty"`
 	Conflicts []Conflict      `json:"conflicts,omitempty"`
 	Behind    []RemoteAhead   `json:"behind,omitempty"`
-	Notices   []string        `json:"notices,omitempty"`
+	// NotUpdated lists branches sync meant to move but couldn't.
+	NotUpdated []NotUpdated `json:"notUpdated,omitempty"`
+	Notices    []string     `json:"notices,omitempty"`
 }
-
-// errDirty says a worktree has uncommitted changes so its checkout can't be moved.
-var errDirty = errors.New("worktree has uncommitted changes")
 
 // errRefused says a checked out branch could not be moved for a reason other
 // than uncommitted changes: git refused to fast forward it, or a reset would
 // overwrite untracked files.
 var errRefused = errors.New("the checkout was left alone")
+
+// blockedError says a checked out branch could not be moved because files
+// in its worktree are in the way: local changes the move would overwrite
+// and untracked files where it would write. Both are the user's own work.
+type blockedError struct{ changed, untracked []string }
+
+func (e *blockedError) Error() string {
+	return fmt.Sprintf("%d changed and %d untracked files are in the way", len(e.changed), len(e.untracked))
+}
+
+// errLocked says a checked out branch could not be moved because another
+// git process held its worktree's index lock throughout the retries.
+var errLocked = errors.New("another git process holds a lock it needs")
 
 // syncState is what the phases share.
 type syncState struct {
@@ -170,8 +235,19 @@ func (a *App) Sync(ctx context.Context, repo git.Repo, o SyncOptions) (SyncResul
 		}
 	}
 
-	if len(res.Conflicts) > 0 || len(failed) > 0 {
+	var stuck []NotUpdated
+	for _, n := range res.NotUpdated {
+		if n.Failed() {
+			stuck = append(stuck, n)
+		}
+	}
+	if len(res.Conflicts) > 0 || len(failed) > 0 || len(stuck) > 0 {
 		var parts, steps []string
+		for _, n := range stuck {
+			part, step := n.explain()
+			parts = append(parts, part)
+			steps = append(steps, step...)
+		}
 		if n := len(res.Conflicts); n > 0 {
 			names := make([]string, n)
 			for i, c := range res.Conflicts {
@@ -184,7 +260,11 @@ func (a *App) Sync(ctx context.Context, repo git.Repo, o SyncOptions) (SyncResul
 			parts = append(parts, fmt.Sprintf("%d %s not restacked (%s)", n, pluralise(n, "stack", "stacks"), joinNames(failed)))
 			steps = append(steps, "see the notes above, then run git stack sync again")
 		}
-		return res, stack.Newf(stack.KindConflict, "%s; everything else is in sync", strings.Join(parts, "; ")).WithSteps(steps...)
+		kind := stack.KindConflict
+		if len(res.Conflicts) == 0 && len(failed) == 0 {
+			kind = stack.KindPartial
+		}
+		return res, stack.Newf(kind, "%s; everything else is in sync", strings.Join(parts, "; ")).WithSteps(steps...)
 	}
 	return res, nil
 }
@@ -238,38 +318,53 @@ func (a *App) gatherSync(ctx context.Context, repo git.Repo) (*syncState, error)
 }
 
 // moveBranch moves a local branch from one tip to another. A branch nobody
-// has checked out moves by ref; one checked out in a clean worktree is fast
-// forwarded there (or reset when reset is set, for a diverged trunk); one
-// checked out in a dirty worktree is left alone with errDirty.
+// has checked out moves by ref; one checked out in a worktree is fast
+// forwarded there, keeping local changes the move doesn't touch (or reset
+// when reset is set, for a diverged trunk, which needs a clean checkout).
+// Files in the way leave it alone with a *blockedError naming them.
 func (a *App) moveBranch(ctx context.Context, st *syncState, name, from, to string, reset bool) error {
 	lb := st.local[name]
 	if lb.Worktree == "" {
 		if err := a.d.Git.UpdateRefs(ctx, st.repo, []git.RefUpdate{{Ref: "refs/heads/" + name, New: to, Old: from}}); err != nil {
+			if git.LockPath(err) != "" {
+				return fmt.Errorf("%w: %w", errLocked, err)
+			}
 			return err
 		}
 	} else {
-		if st.isDirty(ctx, a.d.Git, lb.Worktree) {
-			return errDirty
-		}
 		wt := st.worktreeRepo(lb.Worktree)
 		var err error
 		if reset {
-			files, ferr := a.untrackedInTheWay(ctx, st.repo, lb.Worktree, from, to)
-			if ferr != nil {
-				return ferr
+			// reset --hard throws local changes away, so any of them stops it,
+			// as does an untracked file where the reset would write.
+			changed, cerr := a.d.Git.ChangedFiles(ctx, wt)
+			if cerr != nil {
+				return cerr
 			}
-			if len(files) > 0 {
-				return fmt.Errorf("%w: resetting it would overwrite untracked %s", errRefused, joinNames(files))
+			untracked, uerr := a.untrackedInTheWay(ctx, st.repo, lb.Worktree, from, to)
+			if uerr != nil {
+				return uerr
+			}
+			if len(changed)+len(untracked) > 0 {
+				return &blockedError{changed: changed, untracked: untracked}
 			}
 			err = a.d.Git.ResetHard(ctx, wt, to)
 		} else {
+			// A fast forward keeps local changes it doesn't touch, as git pull
+			// does; git refuses before touching anything when one is in the way.
 			err = a.d.Git.MergeFF(ctx, wt, to)
-			if err != nil {
-				return fmt.Errorf("%w: %w", errRefused, err)
-			}
 		}
-		if err != nil {
-			return err
+		switch {
+		case err == nil:
+		case ctx.Err() != nil:
+			return ctx.Err()
+		case git.LockPath(err) != "":
+			return fmt.Errorf("%w: %w", errLocked, err)
+		default:
+			if oe, ok := errors.AsType[*git.OverwriteError](err); ok {
+				return &blockedError{changed: oe.Changed, untracked: oe.Untracked}
+			}
+			return fmt.Errorf("%w: %w", errRefused, err)
 		}
 	}
 	lb.Head = to
@@ -302,7 +397,89 @@ func (a *App) untrackedInTheWay(ctx context.Context, repo git.Repo, path, from, 
 	return out, nil
 }
 
+// notUpdated classifies why moveBranch left name alone, and false for an
+// error that should stop the sync instead.
+func (a *App) notUpdated(ctx context.Context, st *syncState, name, worktree string, err error) (NotUpdated, bool) {
+	n := NotUpdated{Name: name, Worktree: worktree}
+	if be, ok := errors.AsType[*blockedError](err); ok {
+		n.Reason = NotUpdatedUntracked
+		if len(be.changed) > 0 {
+			n.Reason = NotUpdatedDirty
+		}
+		n.Changed, n.MoreChanged = capFiles(be.changed)
+		n.Untracked, n.MoreUntracked = capFiles(be.untracked)
+		return n, true
+	}
+	switch {
+	case errors.Is(err, errLocked):
+		n.Reason = NotUpdatedLocked
+		n.Lock = git.LockPath(err)
+		n.LockKind = "ref"
+		if errors.Is(err, git.ErrIndexLocked) {
+			n.LockKind = "index"
+		}
+		if !filepath.IsAbs(n.Lock) && worktree != "" {
+			// git names the index lock relative to the worktree it ran in.
+			if lock, lerr := a.d.Git.IndexLockPath(ctx, st.worktreeRepo(worktree)); lerr == nil && errors.Is(err, git.ErrIndexLocked) {
+				n.Lock = lock
+			}
+		}
+	case errors.Is(err, errRefused):
+		n.Reason = NotUpdatedRefused
+		// "the checkout was left alone: fast forward: <git>" -> "fast forward: <git>"
+		n.Detail = strings.TrimPrefix(err.Error(), errRefused.Error()+": ")
+	default:
+		return NotUpdated{}, false
+	}
+	return n, true
+}
+
 // notice appends a formatted notice.
 func (r *SyncResult) notice(format string, args ...any) {
 	r.Notices = append(r.Notices, fmt.Sprintf(format, args...))
+}
+
+// explain is the one line reason a branch wasn't updated, for the error that
+// ends the sync, and what to do about it.
+func (n NotUpdated) explain() (string, []string) {
+	where := ""
+	if n.Worktree != "" {
+		where = " in " + shortPath(n.Worktree)
+	}
+	switch n.Reason {
+	case NotUpdatedLocked:
+		steps := []string{"wait for the other git process (an IDE, a prompt, an agent) to finish, then run git stack sync again"}
+		if n.Lock != "" {
+			if lock, ok := shell.Path(shortPath(n.Lock)); ok {
+				steps = append(steps, "if no git process is running the lock is stale; rm "+lock+", then git stack sync again")
+			} else {
+				steps = append(steps, fmt.Sprintf("if no git process is running the lock is stale; remove the lock file %q by hand, then git stack sync again", n.Lock))
+			}
+		}
+		if n.LockKind == "index" {
+			return fmt.Sprintf("%s is checked out%s and another git process holds its index lock, so %s was not updated", n.Name, where, n.Name), steps
+		}
+		// git takes a branch's lock after it has moved the checkout, so the
+		// checkout can show the incoming files as staged until the next sync
+		// finishes the job.
+		msg := fmt.Sprintf("another git process holds the lock on %s, so %s was not updated", n.Name, n.Name)
+		if n.Worktree != "" {
+			msg += fmt.Sprintf("; until it is, its checkout%s may show the incoming changes as staged", where)
+		}
+		return msg, steps
+	default:
+		return fmt.Sprintf("%s is checked out%s and was not updated (%s)", n.Name, where, n.Detail),
+			[]string{"sort out the checkout" + where + ", then run git stack sync again"}
+	}
+}
+
+// maxListedFiles caps each file list in a NotUpdated, so one huge checkout
+// doesn't flood an agent's context; the count of the rest is kept.
+const maxListedFiles = 20
+
+func capFiles(files []string) ([]string, int) {
+	if len(files) <= maxListedFiles {
+		return files, 0
+	}
+	return files[:maxListedFiles], len(files) - maxListedFiles
 }

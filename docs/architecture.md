@@ -63,8 +63,26 @@ without a TTY so it physically can't enter passthrough mode, which is how we gua
 MCP tool never blocks waiting on a terminal.
 
 `pkg/git` also retries a command that failed because another process held
-`.git/index.lock`, backing off from 25ms up to 400ms for about 2 seconds in total before
-giving up with an error that names the command. IDEs and coding agents take that lock for a
+`.git/index.lock`, backing off from 25ms up to 250ms for about 2 seconds in total before
+giving up with an error that matches `git.ErrIndexLocked` and names the command. A held lock
+is recognised by git's message alone (`index.lock': File exists`), not the exit code: `reset`
+and `add` exit 128 but `merge --ff-only` exits 1, which is how a trunk fast forward in another
+worktree used to skip the retry. Retrying is safe because git fails before touching anything
+when it can't create the index lock, and we never remove a lock ourselves. git adds "Another
+git process seems to be running" for any lock, so only the file it names decides, and never by
+its name: a branch called `index` has a lock called `index.lock` too. A lock is the index lock
+only if it is exactly that worktree's index (`git rev-parse --git-path index`, which follows
+linked worktrees and `GIT_INDEX_FILE`) plus `.lock`, compared as real paths; anything else
+(`refs/heads/main.lock`, `refs/heads/index.lock`) is `git.ErrRefLocked` with that path. The
+path is read greedily up to the last `': File exists`, so an apostrophe or a newline in it
+survives. A ref lock is only waited
+out for `update-ref --stdin`, whose transaction takes every lock before writing anything; in
+a `merge` the branch is updated after the worktree has moved, so there it's reported, not
+retried. Parsers of anything that can hold a path (worktree list, for-each-ref, diff and
+merge-tree name lists, multi-valued config) use git's NUL separated forms, since a path may
+contain a newline and the newline forms C quote odd names. Reads that may run
+against another worktree (the dirty checks) pass `--no-optional-locks` so they never take
+that lock just to refresh stat data; anything we add that reads in the background must too. IDEs and coding agents take that lock for a
 few milliseconds every time they refresh status, and in a big repo a bare `git add -A` lands
 in that window often enough to be annoying; git itself never retries.
 
@@ -233,6 +251,23 @@ trunk is checked out in another worktree leaves HEAD detached at the trunk tip r
 failing. Consent for deletion is `stack.sync.prune` (`always` by default), `-d`, or `-f`;
 with no terminal and `ask`, branches are kept with a notice. Nothing is pushed; `submit`
 does that.
+
+**Sync tells the truth about what it couldn't move.** A trunk or remote advanced branch that
+is checked out somewhere has to be moved in that worktree (`merge --ff-only`, or `reset
+--hard` for a consented reset), and there is no lighter path: updating a checked out branch
+means updating that worktree's index, which needs its `index.lock` (`update-ref` alone is only
+safe for a branch that isn't checked out, which is the path we already take then). So a
+branch can be left where it was. Every such branch goes in the result's `NotUpdated` with a
+reason. The fast forward runs in a dirty checkout too, as `git pull` would, since git refuses
+before touching anything when a local change is in the way; its refusal is parsed
+(`git.OverwriteError`) into the changed and untracked files that block it, and only those are
+named. A consented reset still needs a clean checkout and lists every changed file. Files in
+the way are the user's own work, so the ending is `⚠ Synced, but … was not updated` with the
+files and a `git -C` command right under it, exit 0. A lock that outlasted the
+retry, or git refusing for any other reason, fails the sync the way a restack conflict does:
+everything else still runs, then a `partial` error (exit 1) says which branch, which lock file,
+and to sync again once the other git process has finished. The summary line counts trunk
+moves too, so it never says "nothing to do" when something moved or was left.
 
 **Sync's restack never checks anything out.** Each branch's commits (from the metadata's
 `base` when it is still an ancestor, else the merge base) are replayed onto the new parent

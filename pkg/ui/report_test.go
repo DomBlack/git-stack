@@ -201,3 +201,26 @@ func TestReporterRefLooksLikeEveryOtherLink(t *testing.T) {
 		t.Errorf("piped refs are plain: %q", pout.String())
 	}
 }
+
+func TestReporterPartialAndSHA(t *testing.T) {
+	r, out, _ := newReporter(ReporterOptions{})
+	r.Partial("Synced, but main was not updated")
+	r.Info("main at %s", r.SHA("14ba05688e8bb83932f27db282928a4faf7d7d6a"))
+	if want := "note: Synced, but main was not updated\n  main at 14ba056\n"; out.String() != want {
+		t.Errorf("piped = %q, want %q", out.String(), want)
+	}
+	tr, tout, _ := newReporter(ReporterOptions{OutTTY: true, ErrTTY: true, TerminalStatus: true})
+	_ = tr.Step(context.Background(), app.PhaseSync, "Updating main", func(context.Context) error { return nil })
+	tr.Partial("Synced, but main was not updated")
+	if s := ansi.Strip(tout.String()); s != markWarn+" Synced, but main was not updated\n" {
+		t.Errorf("terminal = %q", s)
+	}
+	// The terminal status ends on the partial line, not a stale success.
+	var e bytes.Buffer
+	tr.err, tr.rawErr = &e, &e
+	tr.term.w = &e
+	tr.Finish(nil)
+	if !strings.Contains(e.String(), programStatus(stateDone, "", "Synced, but main was not updated")) {
+		t.Errorf("status = %q", e.String())
+	}
+}

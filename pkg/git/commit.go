@@ -41,16 +41,19 @@ func (c *Client) Add(ctx context.Context, repo Repo, mode AddMode) error {
 	}
 }
 
-// HasStagedChanges reports whether the index differs from HEAD.
+// HasStagedChanges reports whether the index differs from HEAD. Like every
+// read that may run against another worktree, it passes
+// --no-optional-locks so it never takes (or trips over) that worktree's
+// index lock just to refresh stat data.
 func (c *Client) HasStagedChanges(ctx context.Context, repo Repo) (bool, error) {
-	_, err := c.gitIn(ctx, repo, "diff", "--cached", "--quiet")
+	_, err := c.gitIn(ctx, repo, "--no-optional-locks", "diff", "--cached", "--quiet")
 	return exitOneIsTrue(err)
 }
 
 // HasUnstagedChanges reports whether the working tree has unstaged changes to
 // tracked files.
 func (c *Client) HasUnstagedChanges(ctx context.Context, repo Repo) (bool, error) {
-	_, err := c.gitIn(ctx, repo, "diff", "--quiet")
+	_, err := c.gitIn(ctx, repo, "--no-optional-locks", "diff", "--quiet")
 	return exitOneIsTrue(err)
 }
 

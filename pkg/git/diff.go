@@ -72,11 +72,11 @@ func (c *Client) RebaseInProgress(ctx context.Context, repo Repo) (bool, error) 
 
 // ConflictedFiles lists paths with unresolved merge conflicts.
 func (c *Client) ConflictedFiles(ctx context.Context, repo Repo) ([]string, error) {
-	res, err := c.gitIn(ctx, repo, "diff", "--name-only", "--diff-filter=U")
+	res, err := c.gitIn(ctx, repo, "diff", "--name-only", "-z", "--diff-filter=U")
 	if err != nil {
 		return nil, err
 	}
-	return nonEmptyLines(res.Out()), nil
+	return splitNUL(string(res.Stdout)), nil
 }
 
 func itoa(n int) string {
@@ -147,6 +147,28 @@ func (c *Client) LocalChanges(ctx context.Context, repo Repo) ([]string, error) 
 // from and to.
 func (c *Client) ChangedPaths(ctx context.Context, repo Repo, from, to string) ([]string, error) {
 	res, err := c.gitIn(ctx, repo, "diff", "--name-only", "-z", "--no-renames", from, to, "--")
+	if err != nil {
+		return nil, err
+	}
+	return splitNUL(string(res.Stdout)), nil
+}
+
+// IndexLockPath is where git keeps the index lock for the worktree at repo:
+// .git/index.lock for the main one, .git/worktrees/<name>/index.lock for a
+// linked one. It only names the file; nothing here ever removes it.
+func (c *Client) IndexLockPath(ctx context.Context, repo Repo) (string, error) {
+	res, err := c.gitIn(ctx, repo, "rev-parse", "--path-format=absolute", "--git-path", "index.lock")
+	if err != nil {
+		return "", err
+	}
+	return res.Out(), nil
+}
+
+// ChangedFiles lists tracked files with staged or unstaged changes in the
+// worktree at repo, relative to it. It reads with --no-optional-locks, as
+// it may look at another worktree.
+func (c *Client) ChangedFiles(ctx context.Context, repo Repo) ([]string, error) {
+	res, err := c.gitIn(ctx, repo, "--no-optional-locks", "diff", "--name-only", "-z", "HEAD")
 	if err != nil {
 		return nil, err
 	}

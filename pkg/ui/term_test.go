@@ -9,6 +9,7 @@ import (
 
 	"github.com/DomBlack/git-stack/pkg/app"
 	"github.com/DomBlack/git-stack/pkg/forge"
+	"github.com/DomBlack/git-stack/pkg/stack"
 )
 
 func TestHyperlink(t *testing.T) {
@@ -174,5 +175,45 @@ func TestBusy(t *testing.T) {
 	Busy(&off, false)()
 	if off.Len() != 0 {
 		t.Errorf("disabled Busy must write nothing, got %q", off.String())
+	}
+}
+
+func TestQuoteNameAndPrintable(t *testing.T) {
+	for _, tc := range []struct{ in, quoted, printable string }{
+		{"a.go", "a.go", "a.go"},
+		{"dir/my notes.txt", "dir/my notes.txt", "dir/my notes.txt"},
+		{"café.txt", "café.txt", "café.txt"},
+		{"a\nb.txt", `"a\nb.txt"`, `a\nb.txt`},
+		{"evil\x1b]2;pwned\a.txt", `"evil\x1b]2;pwned\a.txt"`, `evil\x1b]2;pwned\a.txt`},
+		{`say "hi".txt`, `"say \"hi\".txt"`, `say "hi".txt`},
+		{`back\slash`, `"back\\slash"`, `back\slash`},
+		{"cr\r.txt", `"cr\r.txt"`, `cr\r.txt`},
+		{"tab\there", `"tab\there"`, "tab\there"},
+		{"bad\xffbyte", `"bad\xffbyte"`, `bad\xffbyte`},
+		{"c1\u0085x", `"c1\u0085x"`, `c1\u0085x`},
+	} {
+		if got := QuoteName(tc.in); got != tc.quoted {
+			t.Errorf("QuoteName(%q) = %s, want %s", tc.in, got, tc.quoted)
+		}
+		if got := Printable(tc.in); got != tc.printable {
+			t.Errorf("Printable(%q) = %s, want %s", tc.in, got, tc.printable)
+		}
+	}
+}
+
+// Text from outside (git's stderr, gh stack's output, names in notices and
+// errors) never reaches the terminal as a control character.
+func TestReporterNeutralisesControlsInOutsideText(t *testing.T) {
+	r, _, errOut := newReporter(ReporterOptions{ErrTTY: true})
+	r.Warn("%s", "kept a\nb because \x1b]52;c;cGF3bmVk\a")
+	r.Error(stack.New(stack.KindConflict, "conflict in x\x1b[2J").WithDetail("CONFLICT (content): f\x07.go\nsecond").WithSteps("git add \"a\nb\""))
+	_, _ = r.Stream().Write([]byte("Pushing \x1b]0;evil\a done\n"))
+	for _, bad := range []string{"\x1b]52", "\x1b[2J", "\x1b]0;", "f\x07", "a\nb because", "a\nb\""} {
+		if strings.Contains(errOut.String(), bad) {
+			t.Errorf("%q reached the terminal: %q", bad, errOut.String())
+		}
+	}
+	if !strings.Contains(errOut.String(), `\x1b]52;c;cGF3bmVk\a`) || !strings.Contains(errOut.String(), "second") {
+		t.Errorf("the text should still be there, escaped: %q", errOut.String())
 	}
 }

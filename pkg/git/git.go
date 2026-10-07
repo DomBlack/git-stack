@@ -8,6 +8,8 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
 	"time"
@@ -26,6 +28,11 @@ type Client struct {
 
 // Option configures a Client.
 type Option func(*Client)
+
+// maxLockDelay caps the wait between attempts. A status refresh in a big
+// repo holds the lock for a few hundred milliseconds, so short steps catch
+// the gap between two of them.
+const maxLockDelay = 250 * time.Millisecond
 
 // DefaultLockRetryBudget is how long git commands wait for a held index lock
 // before giving up. IDEs and agents take the lock for milliseconds at a time
@@ -85,35 +92,138 @@ var baseEnv = []string{"GIT_TERMINAL_PROMPT=0", "LC_ALL=C"}
 // the user's command.
 func (c *Client) git(ctx context.Context, dir string, args ...string) (exec.Result, error) {
 	cmd := exec.Cmd{Name: "git", Args: args, Dir: dir, Env: baseEnv}
+	// Only this worktree's own index lock is waited out: git takes it before
+	// changing anything. Any other lock (a ref's, another worktree's index)
+	// can come after the worktree has moved (merge updates the branch last),
+	// so it isn't retried, only reported with its path.
+	isIndex := func(lock string) bool { return c.isIndexLockOf(ctx, dir, lock) }
+	return c.retryLocked(ctx, args, isIndex, false, func() (exec.Result, error) { return c.run.Run(ctx, cmd) })
+}
+
+// isIndexLockOf reports whether lock is exactly the index lock of the
+// worktree at dir: git's own idea of its index (rev-parse --git-path index,
+// which follows linked worktrees and GIT_INDEX_FILE) plus ".lock", compared
+// as real paths so a symlinked directory (/tmp on macOS) doesn't matter.
+// It never guesses from the file name; a branch called index has a lock
+// called index.lock too. When git can't say, the answer is no, which only
+// means no retry.
+func (c *Client) isIndexLockOf(ctx context.Context, dir, lock string) bool {
+	res, err := c.run.Run(ctx, exec.Cmd{Name: "git", Args: []string{"rev-parse", "--path-format=absolute", "--git-path", "index"}, Dir: dir, Env: baseEnv})
+	if err != nil {
+		return false
+	}
+	index := strings.TrimSuffix(string(res.Stdout), "\n")
+	if index == "" {
+		return false
+	}
+	if !filepath.IsAbs(lock) {
+		lock = filepath.Join(dir, lock)
+	}
+	return realPath(index+".lock") == realPath(lock)
+}
+
+// realPath resolves symlinks in the directory part of p (the file itself
+// may already be gone) and cleans it.
+func realPath(p string) string {
+	dir, file := filepath.Split(filepath.Clean(p))
+	if real, err := filepath.EvalSymlinks(dir); err == nil {
+		dir = real
+	}
+	return filepath.Join(dir, file)
+}
+
+// retryLocked runs run, and while it fails because another process holds a
+// lock file that retry accepts, runs it again with a short backoff until
+// lockBudget is spent. A lock that's still held, retried or not, comes back
+// as a *lockedError naming the file.
+func (c *Client) retryLocked(ctx context.Context, args []string, isIndex func(lock string) bool, retryAny bool, run func() (exec.Result, error)) (exec.Result, error) {
 	var waited time.Duration
 	delay := 25 * time.Millisecond
 	for {
-		res, err := c.run.Run(ctx, cmd)
-		if err == nil || !isIndexLocked(err) {
+		res, err := run()
+		lock, held := heldLock(err)
+		if !held {
 			return res, err
 		}
-		if waited+delay > c.lockBudget {
-			return res, fmt.Errorf("git %s: the repository index is locked (.git/index.lock) and stayed locked for %s; "+
-				"another git process (an IDE, another agent) is running, or the lock file is stale and can be deleted: %w",
-				strings.Join(args, " "), c.lockBudget, err)
+		index := isIndex(lock)
+		retry := index || retryAny
+		if !retry || waited+delay > c.lockBudget {
+			return res, &lockedError{args: args, lock: lock, index: index, budget: waited, err: err}
 		}
 		if err := c.sleep(ctx, delay); err != nil {
 			return res, err
 		}
 		waited += delay
-		delay = min(delay*2, 400*time.Millisecond)
+		delay = min(delay*2, maxLockDelay)
 	}
 }
 
-// isIndexLocked reports whether err is git refusing to run because
-// .git/index.lock already exists.
-func isIndexLocked(err error) bool {
-	ee, ok := errors.AsType[*exec.ExitError](err)
-	if !ok || ee.Result.ExitCode != 128 {
-		return false
+// ErrIndexLocked matches the error git commands return when another
+// process held a worktree's index lock (index.lock) for longer than the
+// retry budget. git-stack never removes a lock itself.
+var ErrIndexLocked = errors.New("the index is locked by another git process")
+
+// ErrRefLocked matches a command that failed because another process held
+// a ref's lock file (refs/heads/main.lock, packed-refs.lock).
+var ErrRefLocked = errors.New("a ref is locked by another git process")
+
+// lockedError is a command that failed on a lock file someone else held.
+type lockedError struct {
+	args   []string
+	lock   string // the lock file, as git named it
+	index  bool   // lock is the worktree's own index lock
+	budget time.Duration
+	err    error
+}
+
+func (e *lockedError) Error() string {
+	waited := ""
+	if e.budget > 0 {
+		waited = fmt.Sprintf(" and stayed locked for %s", e.budget.Round(time.Millisecond))
 	}
-	stderr := ee.Result.Err()
-	return strings.Contains(stderr, "index.lock") || strings.Contains(stderr, "Another git process seems to be running")
+	return fmt.Sprintf("git %s: %s is held by another git process%s; "+
+		"an IDE or another agent is running git, or the lock file is stale",
+		strings.Join(e.args, " "), e.lock, waited)
+}
+
+// Unwrap exposes ErrIndexLocked or ErrRefLocked, and git's own failure.
+func (e *lockedError) Unwrap() []error {
+	if e.index {
+		return []error{ErrIndexLocked, e.err}
+	}
+	return []error{ErrRefLocked, e.err}
+}
+
+// LockPath is the lock file a command failed on (ErrIndexLocked or
+// ErrRefLocked), or "".
+func LockPath(err error) string {
+	if le, ok := errors.AsType[*lockedError](err); ok {
+		return le.lock
+	}
+	return ""
+}
+
+// lockMessage is git's "Unable to create '<path>.lock': File exists."; the
+// exit code varies by command (reset and add exit 128, merge exits 1), so
+// only the message decides. git adds "Another git process seems to be
+// running" for every kind of lock, so that sentence alone says nothing
+// about which one.
+//
+// The path is taken greedily up to the last "': File exists", across
+// newlines, since a path can hold an apostrophe or a newline itself.
+var lockMessage = regexp.MustCompile(`(?s)Unable to create '(.*\.lock)': File exists`)
+
+// heldLock reports the lock file err says another process holds.
+func heldLock(err error) (string, bool) {
+	ee, ok := errors.AsType[*exec.ExitError](err)
+	if !ok {
+		return "", false
+	}
+	m := lockMessage.FindStringSubmatch(string(ee.Result.Stderr))
+	if m == nil {
+		return "", false
+	}
+	return m[1], true
 }
 
 func sleepCtx(ctx context.Context, d time.Duration) error {
