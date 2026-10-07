@@ -195,3 +195,48 @@ func TestPickerLinksSurviveTheRenderer(t *testing.T) {
 		}
 	}
 }
+
+// Ctrl-C in the picker interrupts the command (context.Canceled, so exit
+// 130 and an idle status); Escape or q only closes the picker.
+func TestPickerCtrlCIsAnInterrupt(t *testing.T) {
+	for _, tc := range []struct {
+		name, keys      string
+		wantInterrupted bool
+	}{
+		{"ctrl+c", "\x03", true},
+		{"q", "q", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			res, err := RunPicker(context.Background(), strings.NewReader(tc.keys), &bytes.Buffer{}, PickerOptions{Rows: sampleRows(), Now: now, Height: 5})
+			if !res.Cancelled || res.Interrupted != tc.wantInterrupted {
+				t.Errorf("result = %+v", res)
+			}
+			if got := errors.Is(err, context.Canceled); got != tc.wantInterrupted {
+				t.Errorf("err = %v, want an interrupt %v", err, tc.wantInterrupted)
+			}
+		})
+	}
+}
+
+func TestPromptCtrlCIsAnInterrupt(t *testing.T) {
+	for _, tc := range []struct {
+		name, keys      string
+		wantInterrupted bool
+	}{
+		{"ctrl+c", "\x03", true},
+		{"q", "q", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			p := Prompter{In: strings.NewReader(tc.keys), Out: &bytes.Buffer{}}
+			_, err := p.Confirm("Delete it?", true)
+			if !errors.Is(err, ErrCancelled) || errors.Is(err, context.Canceled) != tc.wantInterrupted {
+				t.Errorf("Confirm err = %v", err)
+			}
+			p.In = strings.NewReader(tc.keys)
+			_, err = p.Select("Which?", []string{"a", "b"})
+			if !errors.Is(err, ErrCancelled) || errors.Is(err, context.Canceled) != tc.wantInterrupted {
+				t.Errorf("Select err = %v", err)
+			}
+		})
+	}
+}

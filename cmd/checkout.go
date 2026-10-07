@@ -86,7 +86,9 @@ func (c *cli) pickBranch(ctx context.Context, a *app.App, repo git.Repo, o app.V
 			return a.RefreshPRs(ctx, repo)
 		}
 	}
+	done := rt.Report.Waiting("Select a branch")
 	res, err := ui.RunPicker(ctx, rt.Streams.In, rt.Streams.Out, opts)
+	done()
 	if err != nil {
 		return "", err
 	}

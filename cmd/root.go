@@ -149,7 +149,7 @@ func (c *cli) runtime() *Runtime {
 			Log:         newLogger(c.streams.Err, c.globals.Debug),
 			Report: ui.NewReporter(c.streams.In, c.streams.Out, c.streams.Err, ui.ReporterOptions{
 				OutTTY: isTerminal(c.streams.Out), ErrTTY: isTerminal(c.streams.Err), Spinners: interactive, Quiet: c.globals.Quiet,
-				TerminalStatus: os.Getenv(noTerminalStatusEnv) == "",
+				TerminalStatus: os.Getenv(noTerminalStatusEnv) == "", Tmux: os.Getenv("TMUX") != "",
 			}),
 		}
 	})
@@ -198,7 +198,7 @@ func (c *cli) app(ctx context.Context) (*app.App, git.Repo, error) {
 		Progress: rt.Report.Step,
 	}
 	if rt.Interactive {
-		deps.Prompter = ui.Prompter{In: rt.Streams.In, Out: rt.Streams.Err, Ctx: ctx}
+		deps.Prompter = ui.Prompter{In: rt.Streams.In, Out: rt.Streams.Err, Ctx: ctx, Wait: rt.Report.Waiting}
 	}
 	a := app.New(deps)
 	// #123 in any line printed to a terminal links to the pull request.
@@ -343,8 +343,8 @@ func newRootCmd(c *cli) *cobra.Command {
 	return root
 }
 
-// noTerminalStatusEnv switches off the window title (and the terminal
-// status reports) that steps set.
+// noTerminalStatusEnv switches off the window title and the OSC 7501
+// program status that steps and prompts set.
 const noTerminalStatusEnv = "GIT_STACK_NO_TERMINAL_STATUS"
 
 // Execute runs the CLI with the process streams and returns the exit code.
@@ -368,20 +368,20 @@ func Execute() int {
 }
 
 // ownTerminal makes every command in the tree put the terminal back (the
-// window title) when it ends, however it ends: a result, an error, Ctrl-C
-// or SIGTERM (both cancel the context, so the command returns), or a panic,
-// which is let through once the title is restored. Doing it in the commands
-// themselves rather than in Execute means anything that runs the tree from
-// NewRootCmd gets it too.
+// window title, the program status) when it ends, however it ends: a
+// result, an error, Ctrl-C or SIGTERM (both cancel the context, so the
+// command returns), or a panic, which is let through once the terminal is
+// put back. Doing it in the commands themselves rather than in Execute means
+// anything that runs the tree from NewRootCmd gets it too.
 func (c *cli) ownTerminal(cmd *cobra.Command) {
 	if run := cmd.RunE; run != nil {
 		cmd.RunE = func(cmd *cobra.Command, args []string) (err error) {
 			defer func() {
 				if p := recover(); p != nil {
-					c.finishTerminal()
+					c.finishTerminal(fmt.Errorf("panic: %v", p))
 					panic(p)
 				}
-				c.finishTerminal()
+				c.finishTerminal(err)
 			}()
 			return run(cmd, args)
 		}
@@ -391,11 +391,12 @@ func (c *cli) ownTerminal(cmd *cobra.Command) {
 	}
 }
 
-// finishTerminal puts back whatever the command's steps changed about the
-// terminal. Safe to call on any path, any number of times.
-func (c *cli) finishTerminal() {
+// finishTerminal puts back whatever the command's steps and prompts changed
+// about the terminal and reports how it ended (err). Safe to call on any
+// path, any number of times.
+func (c *cli) finishTerminal(err error) {
 	if c.rt != nil {
-		c.rt.Report.Finish()
+		c.rt.Report.Finish(err)
 	}
 }
 

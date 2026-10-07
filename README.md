@@ -178,7 +178,15 @@ lists `hyperlinks`.
 While something slow is running (a restack, a sync, a submit) the window or tab title says what,
 e.g. `git stack: Restacking 3 branches`, and it's put back when the command ends, including on an
 error or Ctrl-C. Under tmux that sets the pane title; the outer window only follows if you have
-`set -g set-titles on`. Set `GIT_STACK_NO_TERMINAL_STATUS=1` to leave your title alone.
+`set -g set-titles on`.
+
+It also reports its status with the [program status protocol](https://www.superlogical.com/rex/docs/build/program-status)
+(OSC 7501), so a terminal that supports it can show which tabs are busy, which are waiting on a
+question from git-stack, and how each finished (done, or an error such as a restack stopping on a
+conflict). Terminals that don't know it ignore it. Under tmux it's sent through tmux's passthrough,
+which needs `set -g allow-passthrough on`.
+
+Set `GIT_STACK_NO_TERMINAL_STATUS=1` to turn off both the title and the status reports.
 
 ## Agents and AI (optional)
 

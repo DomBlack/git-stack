@@ -35,6 +35,8 @@ type Reporter struct {
 	mu     sync.Mutex
 	active *spinnerHandle // running Step, if any
 	gutter gutterWriter
+	// result is the last result line, the outcome Finish reports.
+	result string
 
 	// prs maps pull request numbers to URLs for Linkify: the ones passed
 	// to Ref, then whatever the resolver knows.
@@ -51,9 +53,13 @@ type ReporterOptions struct {
 	Spinners bool
 	// Quiet drops everything but errors.
 	Quiet bool
-	// TerminalStatus lets steps set the window title (and put it back at
-	// Finish). It only takes effect on a terminal stderr without Quiet.
+	// TerminalStatus lets steps and prompts set the window title and the
+	// OSC 7501 program status (put back or finished at Finish). It only
+	// takes effect on a terminal stderr without Quiet.
 	TerminalStatus bool
+	// Tmux says stderr is a tmux pane, so program status reports go
+	// through tmux's passthrough.
+	Tmux bool
 }
 
 // NewReporter builds a Reporter over the given streams. Terminal writers
@@ -68,7 +74,7 @@ func NewReporter(in io.Reader, out, err io.Writer, o ReporterOptions) *Reporter 
 		err = profileWriter(err)
 	}
 	r := &Reporter{in: in, out: out, err: err, rawErr: rawErr, o: o, st: DefaultStyles(),
-		term: newTermStatus(rawErr, o.TerminalStatus && o.ErrTTY && !o.Quiet)}
+		term: newTermStatus(rawErr, o.TerminalStatus && o.ErrTTY && !o.Quiet, o.Tmux)}
 	r.gutter.r = r
 	return r
 }
@@ -113,6 +119,9 @@ func (r *Reporter) Success(format string, args ...any) {
 		return
 	}
 	msg := fmt.Sprintf(format, args...)
+	r.mu.Lock()
+	r.result = msg
+	r.mu.Unlock()
 	if r.o.OutTTY {
 		r.println(r.out, r.st.Success.Render(markOK)+" "+msg)
 		return
@@ -293,7 +302,7 @@ func (r *Reporter) Link(url string) string { return url }
 // spinner on a terminal (the line is replaced by whatever is printed next
 // when fn returns), or the message printed once when piped. The terminal's
 // busy state is set for the duration, and the window title shows the
-// message until the next step or Finish. Output written to Stream while
+// message until the next step or Finish, as does the program status. Output written to Stream while
 // the step runs is shown above the spinner.
 func (r *Reporter) Step(ctx context.Context, phase app.Phase, message string, fn func(ctx context.Context) error) error {
 	if r.o.Quiet {
@@ -334,13 +343,24 @@ func (r *Reporter) Step(ctx context.Context, phase app.Phase, message string, fn
 	return err
 }
 
-// Finish puts back what steps changed about the terminal (the window
-// title). Call it once the command is over, on every exit path; it is safe
-// to call more than once and does nothing if no step ran.
-func (r *Reporter) Finish() {
+// Waiting tells the terminal the command is blocked on the user answering
+// question (a prompt or picker) and returns a function to call once they
+// have.
+func (r *Reporter) Waiting(question string) func() {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	r.term.finish()
+	return r.term.waiting(question)
+}
+
+// Finish puts back what steps and prompts changed about the terminal: it
+// leaves the program status as done, error (err) or idle (interrupted) and
+// restores the window title. Call it once the command is over, on every
+// exit path; it is safe to call more than once and does nothing if no step
+// or prompt ran.
+func (r *Reporter) Finish(err error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.term.finish(err, r.result)
 }
 
 // Stream returns a writer for a subprocess's live output. Each line is shown
