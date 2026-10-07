@@ -15,6 +15,7 @@ func newMergeCmd(c *cli) *cobra.Command {
 		rebase bool
 		merge  bool
 		noSync bool
+		force  bool
 	)
 	cmd := &cobra.Command{
 		Use:   "merge [branch]",
@@ -26,15 +27,21 @@ cleaned up and anything left above them is restacked onto the new trunk. Nothing
 is pushed after that, so run git stack submit to update the PRs that are left.
 
 Every PR being merged has to exist and be ready for review; a draft or closed
-one stops the merge before anything happens. GitHub's own rules still apply
-(required checks, reviews, merge queues). It uses the repo's default merge
-method unless you pass one, or set git config stack.merge.method.`,
+one stops the merge before anything happens. So does a check that failed or is
+still running on any of them, unless you pass --force; if the checks can't be
+read at all, the merge goes ahead with a notice. GitHub's own rules still apply
+(required checks, reviews, merge queues), and --force doesn't get round them.
+It uses the repo's default merge method unless you pass one, or set git config
+stack.merge.method.`,
 		Example: `  # merge every PR up to and including the current branch
   git stack merge
 
   # merge up to billing-webhook-schema, squashing each PR, then push the rest
   git stack merge billing-webhook-schema --squash
-  git ss`,
+  git ss
+
+  # merge even though a check is failing or still running
+  git stack merge --force`,
 		Args:              cobra.MaximumNArgs(1),
 		ValidArgsFunction: c.completeBranches,
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -44,7 +51,7 @@ method unless you pass one, or set git config stack.merge.method.`,
 				return err
 			}
 			rep := c.report()
-			o := app.MergeOptions{NoSync: noSync}
+			o := app.MergeOptions{NoSync: noSync, Force: force}
 			if len(args) == 1 {
 				o.Branch = args[0]
 			}
@@ -58,7 +65,11 @@ method unless you pass one, or set git config stack.merge.method.`,
 			}
 			res, err := a.Merge(ctx, repo, o)
 			if res.Status == "" {
-				// Nothing landed; the error says why.
+				// Nothing landed; the error says why, after anything we
+				// noticed on the way there (checks we couldn't read).
+				for _, note := range res.Notices {
+					rep.Warn("%s", note)
+				}
 				return err
 			}
 			what := prNoun(len(res.PullRequests))
@@ -91,6 +102,7 @@ method unless you pass one, or set git config stack.merge.method.`,
 	cmd.Flags().BoolVar(&merge, "merge", false, "merge with a merge commit")
 	cmd.MarkFlagsMutuallyExclusive("squash", "rebase", "merge")
 	cmd.Flags().BoolVar(&noSync, "no-sync", false, "don't sync afterwards")
+	cmd.Flags().BoolVarP(&force, "force", "f", false, "merge even if a check failed or is still running (GitHub's required checks still apply)")
 	return cmd
 }
 

@@ -211,13 +211,16 @@ func (r *Reporter) Error(err error) {
 	}
 	// Errors quote git and name files and branches; none of it may reach
 	// the terminal as a control character.
-	se = &stack.Error{Kind: se.Kind, Msg: Printable(se.Msg), Detail: se.Detail, NextSteps: printableAll(se.NextSteps)}
+	se = &stack.Error{Kind: se.Kind, Msg: Printable(se.Msg), Detail: se.Detail, NextSteps: printableAll(se.NextSteps), Checks: se.Checks}
 	if se.Detail != "" {
 		lines := strings.Split(se.Detail, "\n")
 		for i, l := range lines {
 			lines[i] = Printable(l)
 		}
 		se.Detail = strings.Join(lines, "\n")
+	}
+	if lines := checkLines(se); len(lines) > 0 {
+		se.Detail = strings.TrimPrefix(se.Detail+"\n"+strings.Join(lines, "\n"), "\n")
 	}
 	if r.o.ErrTTY {
 		r.println(r.err, r.st.Error.Render(markErr)+" "+se.Msg)
@@ -506,6 +509,43 @@ func (g *gutterWriter) emit(line string) {
 		return
 	}
 	fmt.Fprintln(r.err, out)
+}
+
+// maxShownChecks is how many check names a line names before "and N more".
+const maxShownChecks = 3
+
+// checkLines is one line per pull request whose checks stopped a merge:
+// "#201 auth/api: lint, test (ubuntu-latest)", with any checks still running
+// after the failing ones ("; build still running"). When nothing failed the
+// error already says the checks are running, so the names stand alone.
+func checkLines(se *stack.Error) []string {
+	names := func(ns []string) string {
+		more := 0
+		if len(ns) > maxShownChecks {
+			more, ns = len(ns)-maxShownChecks, ns[:maxShownChecks]
+		}
+		s := strings.Join(printableAll(ns), ", ")
+		if more > 0 {
+			s += fmt.Sprintf(" and %d more", more)
+		}
+		return s
+	}
+	lines := make([]string, 0, len(se.Checks))
+	for _, pr := range se.Checks {
+		var parts []string
+		if len(pr.Failing) > 0 {
+			parts = append(parts, names(pr.Failing))
+		}
+		if len(pr.Pending) > 0 {
+			if se.Kind == stack.KindChecksPending {
+				parts = append(parts, names(pr.Pending))
+			} else {
+				parts = append(parts, names(pr.Pending)+" still running")
+			}
+		}
+		lines = append(lines, fmt.Sprintf("#%d %s: %s", pr.Number, Printable(pr.Branch), strings.Join(parts, "; ")))
+	}
+	return lines
 }
 
 func printableAll(ss []string) []string {

@@ -188,6 +188,8 @@ type toolError struct {
 	Files     []string `json:"files,omitempty"`
 	NextSteps []string `json:"next_steps,omitempty"`
 	Detail    string   `json:"detail,omitempty"`
+	// Checks lists the pull requests whose checks stopped stack_merge.
+	Checks []stack.PRChecks `json:"checks,omitempty"`
 }
 
 // jsonError renders as JSON so agents can parse tool errors.
@@ -219,6 +221,11 @@ var cliToTool = []struct{ from, to string }{
 	{"git stack checkout", "stack_navigate {branch: ...}"},
 	{"git stack create", "stack_create"},
 	{"git stack sync", "stack_sync"},
+	{"git stack merge --force", "stack_merge with force: true (only with the user's say so)"},
+	{"git stack merge <branch>", "stack_merge {branch: ...}"},
+	{"git stack merge", "stack_merge"},
+	{"git stack submit --publish", "stack_submit with publish: true"},
+	{"git stack submit", "stack_submit"},
 }
 
 // wrapErr converts any error into a *jsonError.
@@ -232,7 +239,7 @@ func wrapErr(err error) error {
 	}
 	body := toolError{Code: stack.KindUnknown.Code(), Message: err.Error()}
 	if se, ok := errors.AsType[*stack.Error](err); ok {
-		body = toolError{Code: se.Kind.Code(), Message: se.Msg, Branch: se.Branch, Files: se.Files, Detail: se.Detail}
+		body = toolError{Code: se.Kind.Code(), Message: se.Msg, Branch: se.Branch, Files: se.Files, Detail: se.Detail, Checks: se.Checks}
 		for _, step := range se.NextSteps {
 			for _, r := range cliToTool {
 				step = strings.ReplaceAll(step, r.from, r.to)

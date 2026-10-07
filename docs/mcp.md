@@ -28,7 +28,7 @@ path is resolved with `git rev-parse`; anything outside a repository returns `no
 | `stack_navigate` | `up`/`down`/`top`/`bottom` with `steps`, or `branch` | `direction`, `steps`, `branch` | idempotent |
 | `stack_submit` | Push and create/update chained PRs; ready for review by default | `draft`, `publish`, `dry_run`, `pull_requests` `{branch: {title, body}}`, `use_ai`, `force` | destructive, open-world |
 | `stack_sync` | Fetch, update trunk and restack every stack (checked out or not, all worktrees), never pushing; merged branches deleted per `stack.sync.prune` | `prune` (force deletion) | destructive, open-world |
-| `stack_merge` | Merge the stack's PRs up to a branch into trunk, all or nothing, then sync | `branch` (default current), `method` = `merge`/`squash`/`rebase`, `no_sync` | destructive, open-world |
+| `stack_merge` | Merge the stack's PRs up to a branch into trunk, all or nothing, then sync; refuses while a check on any of them failed or is still running | `branch` (default current), `method` = `merge`/`squash`/`rebase`, `no_sync`, `force` (skip the checks check; only with the user's say so) | destructive, open-world |
 
 In `stack_view` each branch's `pr` carries its `title` (from the PR cache; empty when the cache
 predates titles), and `commits` lists the branch's own commits as `{sha, subject}`: those not on
@@ -56,7 +56,21 @@ Tool errors (`isError: true`) carry a JSON object in the text content:
 
 Codes: `not_repo`, `not_in_stack`, `not_at_top`, `conflict`, `partial`, `rebase_active`, `locked`,
 `stacks_unavailable`, `auth_required`, `not_installed`, `unsupported`, `invalid_args`,
-`interaction_required`, `api_failure`, `disambiguate`, `modify_recovery`, `unknown`.
+`interaction_required`, `api_failure`, `disambiguate`, `modify_recovery`, `checks_failing`,
+`checks_pending`, `unknown`.
+`checks_failing` and `checks_pending` come from `stack_merge` when a pull request it would land
+has a check that failed, or (with none failed) one still queued or running, on its head commit.
+Nothing is merged. The error's `checks` lists each held up pull request:
+
+```json
+{"code": "checks_failing", "message": "1 pull request has failing checks; nothing was merged",
+ "checks": [{"number": 201, "branch": "auth/api", "failing": ["lint"], "pending": ["build"]}],
+ "next_steps": ["fix them and run stack_submit, or stack_merge with force: true (only with the user's say so) to merge anyway"]}
+```
+
+Fix the failures and push, or wait for running checks and call again; `force: true` skips the
+check, but GitHub's required checks still apply. If the checks can't be read at all the merge
+goes ahead and the result carries a notice saying so.
 `partial` comes from `stack_sync` when everything else was done but some branches could not
 be updated; the structured result still comes back, and its `notUpdated` lists each one with
 a `reason`: `locked` (another git process held a lock the update needed) or `refused` (git

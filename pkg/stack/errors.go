@@ -45,6 +45,12 @@ const (
 	// could not be done (the result says what); running it again after
 	// following the next steps finishes the job.
 	KindPartial
+	// KindChecksFailing: a merge was refused because checks failed on
+	// pull requests it would land; Checks says which.
+	KindChecksFailing
+	// KindChecksPending: a merge was refused because checks are still
+	// running on pull requests it would land; Checks says which.
+	KindChecksPending
 )
 
 var kindCodes = map[Kind]string{
@@ -65,6 +71,8 @@ var kindCodes = map[Kind]string{
 	KindNotAtTop:            "not_at_top",
 	KindInteractionRequired: "interaction_required",
 	KindPartial:             "partial",
+	KindChecksFailing:       "checks_failing",
+	KindChecksPending:       "checks_pending",
 }
 
 // Code is the stable machine-readable name of the kind.
@@ -88,10 +96,23 @@ type Error struct {
 	Files []string
 	// Branch names the branch involved (e.g. the one being rebased).
 	Branch string
+	// Checks lists the pull requests whose checks stopped a merge, for
+	// KindChecksFailing and KindChecksPending.
+	Checks []PRChecks
 	// Detail carries captured diagnostic output (stderr tail); never stdout.
 	Detail string
 	// Cause is the underlying error, if any.
 	Cause error
+}
+
+// PRChecks names the checks holding up one pull request.
+type PRChecks struct {
+	Number int    `json:"number"`
+	Branch string `json:"branch"`
+	// Failing checks finished without passing.
+	Failing []string `json:"failing,omitempty"`
+	// Pending checks are queued or still running.
+	Pending []string `json:"pending,omitempty"`
 }
 
 // New creates an Error.
