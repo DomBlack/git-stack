@@ -30,6 +30,7 @@ type Reporter struct {
 	rawErr io.Writer
 	o      ReporterOptions
 	st     Styles
+	term   *termStatus
 
 	mu     sync.Mutex
 	active *spinnerHandle // running Step, if any
@@ -50,6 +51,9 @@ type ReporterOptions struct {
 	Spinners bool
 	// Quiet drops everything but errors.
 	Quiet bool
+	// TerminalStatus lets steps set the window title (and put it back at
+	// Finish). It only takes effect on a terminal stderr without Quiet.
+	TerminalStatus bool
 }
 
 // NewReporter builds a Reporter over the given streams. Terminal writers
@@ -63,7 +67,8 @@ func NewReporter(in io.Reader, out, err io.Writer, o ReporterOptions) *Reporter 
 	if o.ErrTTY {
 		err = profileWriter(err)
 	}
-	r := &Reporter{in: in, out: out, err: err, rawErr: rawErr, o: o, st: DefaultStyles()}
+	r := &Reporter{in: in, out: out, err: err, rawErr: rawErr, o: o, st: DefaultStyles(),
+		term: newTermStatus(rawErr, o.TerminalStatus && o.ErrTTY && !o.Quiet)}
 	r.gutter.r = r
 	return r
 }
@@ -287,12 +292,16 @@ func (r *Reporter) Link(url string) string { return url }
 // Step runs fn under a headline for the phase: an emoji, the message and a
 // spinner on a terminal (the line is replaced by whatever is printed next
 // when fn returns), or the message printed once when piped. The terminal's
-// busy state is set for the duration. Output written to Stream while the
-// step runs is shown above the spinner.
+// busy state is set for the duration, and the window title shows the
+// message until the next step or Finish. Output written to Stream while
+// the step runs is shown above the spinner.
 func (r *Reporter) Step(ctx context.Context, phase app.Phase, message string, fn func(ctx context.Context) error) error {
 	if r.o.Quiet {
 		return fn(ctx)
 	}
+	r.mu.Lock()
+	r.term.working(message)
+	r.mu.Unlock()
 	defer Busy(r.err, r.o.ErrTTY)()
 	headline := message
 	if r.o.ErrTTY {
@@ -323,6 +332,15 @@ func (r *Reporter) Step(ctx context.Context, phase app.Phase, message string, fn
 		return ctx.Err()
 	}
 	return err
+}
+
+// Finish puts back what steps changed about the terminal (the window
+// title). Call it once the command is over, on every exit path; it is safe
+// to call more than once and does nothing if no step ran.
+func (r *Reporter) Finish() {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.term.finish()
 }
 
 // Stream returns a writer for a subprocess's live output. Each line is shown

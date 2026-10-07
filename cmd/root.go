@@ -149,6 +149,7 @@ func (c *cli) runtime() *Runtime {
 			Log:         newLogger(c.streams.Err, c.globals.Debug),
 			Report: ui.NewReporter(c.streams.In, c.streams.Out, c.streams.Err, ui.ReporterOptions{
 				OutTTY: isTerminal(c.streams.Out), ErrTTY: isTerminal(c.streams.Err), Spinners: interactive, Quiet: c.globals.Quiet,
+				TerminalStatus: os.Getenv(noTerminalStatusEnv) == "",
 			}),
 		}
 	})
@@ -338,17 +339,24 @@ func newRootCmd(c *cli) *cobra.Command {
 		newVersionCmd(c),
 		newUpdateCmd(c),
 	)
+	c.ownTerminal(root)
 	return root
 }
 
+// noTerminalStatusEnv switches off the window title (and the terminal
+// status reports) that steps set.
+const noTerminalStatusEnv = "GIT_STACK_NO_TERMINAL_STATUS"
+
 // Execute runs the CLI with the process streams and returns the exit code.
 func Execute() int {
+	// Ctrl-C and SIGTERM cancel the context, so the command unwinds and
+	// returns through here like any other error.
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
 	c := &cli{streams: Streams{In: os.Stdin, Out: os.Stdout, Err: os.Stderr}}
-	root := newRootCmd(c)
-	err := root.ExecuteContext(ctx)
+	// The command puts the terminal back itself (see ownTerminal).
+	err := newRootCmd(c).ExecuteContext(ctx)
 	if err != nil {
 		c.errorReporter().Error(err)
 	}
@@ -357,6 +365,38 @@ func Execute() int {
 		return exitCode(err)
 	}
 	return 0
+}
+
+// ownTerminal makes every command in the tree put the terminal back (the
+// window title) when it ends, however it ends: a result, an error, Ctrl-C
+// or SIGTERM (both cancel the context, so the command returns), or a panic,
+// which is let through once the title is restored. Doing it in the commands
+// themselves rather than in Execute means anything that runs the tree from
+// NewRootCmd gets it too.
+func (c *cli) ownTerminal(cmd *cobra.Command) {
+	if run := cmd.RunE; run != nil {
+		cmd.RunE = func(cmd *cobra.Command, args []string) (err error) {
+			defer func() {
+				if p := recover(); p != nil {
+					c.finishTerminal()
+					panic(p)
+				}
+				c.finishTerminal()
+			}()
+			return run(cmd, args)
+		}
+	}
+	for _, sub := range cmd.Commands() {
+		c.ownTerminal(sub)
+	}
+}
+
+// finishTerminal puts back whatever the command's steps changed about the
+// terminal. Safe to call on any path, any number of times.
+func (c *cli) finishTerminal() {
+	if c.rt != nil {
+		c.rt.Report.Finish()
+	}
 }
 
 // errorReporter is the Reporter that prints the command's final error: the

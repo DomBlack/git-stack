@@ -388,6 +388,23 @@ tree and picker columns don't move. tmux strips OSC 8 unless the client terminal
 `hyperlinks` feature, which is the usual reason links "don't work"; the README says how to turn
 it on.
 
+**The window title follows the steps and is put back once.** Each `Reporter.Step` sets the
+title (OSC 2) to `git stack: <headline>` on a terminal stderr (not under `--quiet`, not with
+`GIT_STACK_NO_TERMINAL_STATUS`, never in completion or MCP, which have no Reporter steps). The
+first step pushes the existing title onto the terminal's title stack (XTWINOPS `CSI 22;2 t`),
+later steps just set it, and `Reporter.Finish` writes an empty title then pops (`CSI 23;2 t`).
+The empty title is for Ghostty, which parses the push and pop but doesn't implement them
+(its handler treats both as no-ops); there an empty OSC 2 resets the tab to its default (the
+working directory) rather than leaving our last headline up. Everywhere the stack works
+(xterm, tmux, kitty, WezTerm) the pop then brings the original back. Shells that set the
+title at every prompt (fish does by default) overwrite it anyway. The commands themselves call
+Finish: `newRootCmd` wraps every `RunE` in the tree, so anything that runs the tree from
+`NewRootCmd`, not just `cmd.Execute`, puts the title back on every path; an error, a Ctrl-C
+or SIGTERM (both cancel the context, so the command returns) and a panic, which is recovered
+just long enough to restore the title and then re-raised. A command with no steps never touches
+the title. Under tmux the sequence sets the pane title and the outer terminal only follows
+with `set-titles on`, which is the user's call.
+
 **Prompts and bubbletea's inline renderer.** bubbletea v2.0.10 mispositions a final frame
 that is shorter than the previous one (the question line showed up twice after answering)
 and erases a final frame that has no trailing newline. So the select prompt's final frame
