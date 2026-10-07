@@ -99,6 +99,11 @@ rules hold for every one of them;
 - Every sequence we build ends in ST (`ESC \`), never BEL. (bubbletea's renderer rewrites the
   links it draws with BEL; that's fine, it's the renderer's output, not ours.)
 - Terminals ignore sequences they don't know, so we don't probe for support first.
+- No question while a step is running. A spinner would draw over the prompt and the status
+  would say `working` and `blocked` at once. A use case that needs the user's say so ends its
+  step, asks through the `Prompter` port, then starts a new step for whatever the answer
+  unlocks (sync's diverged trunk: "Updating main", the question, then "Resetting main to
+  origin/main").
 - `GIT_STACK_NO_TERMINAL_STATUS=1` turns off everything that describes what the command is
   doing (the title and the program status); links and the progress state stay.
   `--quiet` turns all of that off too.

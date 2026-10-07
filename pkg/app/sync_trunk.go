@@ -36,6 +36,9 @@ func (a *App) syncTrunks(ctx context.Context, st *syncState, o SyncOptions, res 
 			continue
 		}
 		t.To = remoteTip
+		// A diverged trunk needs the user's say so. The question is asked
+		// between steps, never under one, so no spinner draws over it.
+		diverged, n := false, 0
 		err = a.progress(ctx, PhaseSync, "Updating "+trunk, func(ctx context.Context) error {
 			// Errors here must not read as "diverged": that path can reset the trunk.
 			behind, ahead := false, false
@@ -55,36 +58,36 @@ func (a *App) syncTrunks(ctx context.Context, st *syncState, o SyncOptions, res 
 				t.To = ""
 			case behind:
 				t.Status = TrunkFastForwarded
-				if err := a.moveBranch(ctx, st, trunk, lb.Head, remoteTip, false); err != nil {
-					return err
-				}
+				return a.moveBranch(ctx, st, trunk, lb.Head, remoteTip, false)
 			case ahead:
 				t.Status = TrunkAhead
 				t.To = ""
 			default:
-				n, _ := a.d.Git.CountCommits(ctx, st.repo, remoteRef, trunk)
-				consent := o.Force
-				if !consent && a.d.Prompter != nil {
-					q := fmt.Sprintf("%s has diverged from %s/%s (%d local %s not on the remote). Reset it to the remote?",
-						trunk, st.remote, trunk, n, pluralise(n, "commit", "commits"))
-					consent, err = a.d.Prompter.Confirm(q, false)
-					if err != nil {
-						return err
-					}
-				}
-				if !consent {
-					t.Status = TrunkDiverged
-					res.notice("%s has diverged from %s/%s (%d local %s); run git stack sync -f to reset it to the remote",
-						trunk, st.remote, trunk, n, pluralise(n, "commit", "commits"))
-					return nil
-				}
-				t.Status = TrunkReset
-				if err := a.moveBranch(ctx, st, trunk, lb.Head, remoteTip, true); err != nil {
-					return err
-				}
+				diverged = true
+				n, _ = a.d.Git.CountCommits(ctx, st.repo, remoteRef, trunk)
 			}
 			return nil
 		})
+		if err == nil && diverged {
+			consent := o.Force
+			if !consent && a.d.Prompter != nil {
+				q := fmt.Sprintf("%s has diverged from %s/%s (%d local %s not on the remote). Reset it to the remote?",
+					trunk, st.remote, trunk, n, pluralise(n, "commit", "commits"))
+				if consent, err = a.d.Prompter.Confirm(q, false); err != nil {
+					return err
+				}
+			}
+			if consent {
+				err = a.progress(ctx, PhaseSync, fmt.Sprintf("Resetting %s to %s/%s", trunk, st.remote, trunk), func(ctx context.Context) error {
+					t.Status = TrunkReset
+					return a.moveBranch(ctx, st, trunk, lb.Head, remoteTip, true)
+				})
+			} else {
+				t.Status = TrunkDiverged
+				res.notice("%s has diverged from %s/%s (%d local %s); run git stack sync -f to reset it to the remote",
+					trunk, st.remote, trunk, n, pluralise(n, "commit", "commits"))
+			}
+		}
 		if err != nil {
 			if ctx.Err() != nil {
 				return ctx.Err()
