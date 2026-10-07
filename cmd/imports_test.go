@@ -31,8 +31,13 @@ func TestImportRules(t *testing.T) {
 			return err
 		}
 		if d.IsDir() {
+			// Like the go tool, skip dot dirs (.git, and agent worktrees under
+			// .claude) as well as testdata and build output.
+			if path != root && strings.HasPrefix(d.Name(), ".") {
+				return filepath.SkipDir
+			}
 			switch d.Name() {
-			case ".git", "testdata", "dist":
+			case "testdata", "dist":
 				return filepath.SkipDir
 			}
 			return nil
