@@ -3,7 +3,9 @@ package app
 import (
 	"context"
 	"errors"
+	"runtime"
 	"slices"
+	"sync"
 	"time"
 
 	"github.com/DomBlack/git-stack/pkg/forge"
@@ -22,6 +24,19 @@ type ViewOptions struct {
 	SkipRestackCheck bool
 	// PRs selects how pull-request state is obtained (default: none).
 	PRs PRMode
+	// Commits fills each stacked branch's Row.Commits (one local git read
+	// per branch, run concurrently).
+	Commits bool
+}
+
+// MaxCommits is how many of a branch's own commits a Row carries; the rest
+// are only counted, in Row.MoreCommits.
+const MaxCommits = 10
+
+// Commit is one of a branch's own commits.
+type Commit struct {
+	SHA     string
+	Subject string
 }
 
 // Row is one line of the stack tree, in display order.
@@ -52,6 +67,13 @@ type Row struct {
 	// StackIndex identifies the stack within View.Graph (-1 for trunks and
 	// untracked branches).
 	StackIndex int
+	// Commits are the branch's own commits, newest first: those on it but
+	// not on its parent (trunk for the bottom branch), nor on the parent
+	// tip it was last restacked onto. At most MaxCommits, and only filled
+	// when ViewOptions.Commits asks for them.
+	Commits []Commit
+	// MoreCommits counts the branch's commits beyond Commits.
+	MoreCommits int
 }
 
 // View is the rendered state of the repository's stacks.
@@ -116,6 +138,7 @@ func (a *App) View(ctx context.Context, repo git.Repo, o ViewOptions) (*View, er
 		}
 	}
 
+	var jobs []commitsJob
 	for _, trunk := range trunks {
 		v.Rows = append(v.Rows, a.row(trunk, 0, "", true, current, local, -1))
 		for si := range stacks {
@@ -146,6 +169,14 @@ func (a *App) View(ctx context.Context, repo git.Repo, o ViewOptions) (*View, er
 						}
 					}
 				}
+				if o.Commits {
+					_, hasBranch := local[b.Name]
+					// Without the parent there's nothing to stop at; the
+					// list would run back to the root commit.
+					if _, hasParent := local[parent]; hasBranch && hasParent {
+						jobs = append(jobs, commitsJob{row: len(v.Rows), branch: b.Name, parent: parent, base: b.Base})
+					}
+				}
 				v.Rows = append(v.Rows, row)
 				parent = b.Name
 			}
@@ -159,10 +190,45 @@ func (a *App) View(ctx context.Context, repo git.Repo, o ViewOptions) (*View, er
 			}
 		}
 	}
+	if err := a.fillCommits(ctx, repo, v, jobs); err != nil {
+		return nil, err
+	}
 	if prs := a.loadPRs(ctx, repo, o.PRs); prs != nil {
 		v.ApplyPRs(prs)
 	}
 	return v, nil
+}
+
+// commitsJob is one branch whose commits View lists.
+type commitsJob struct {
+	row                  int
+	branch, parent, base string
+}
+
+// fillCommits lists each job's commits onto its row: one git read per
+// branch, a few at a time.
+func (a *App) fillCommits(ctx context.Context, repo git.Repo, v *View, jobs []commitsJob) error {
+	errs := make([]error, len(jobs))
+	sem := make(chan struct{}, max(1, runtime.NumCPU()))
+	var wg sync.WaitGroup
+	for i, j := range jobs {
+		wg.Go(func() {
+			sem <- struct{}{}
+			defer func() { <-sem }()
+			commits, err := a.d.Git.Commits(ctx, repo, "refs/heads/"+j.branch, "refs/heads/"+j.parent, j.base)
+			if err != nil {
+				errs[i] = err
+				return
+			}
+			r := &v.Rows[j.row]
+			for _, c := range commits[:min(len(commits), MaxCommits)] {
+				r.Commits = append(r.Commits, Commit{SHA: c.SHA, Subject: c.Subject})
+			}
+			r.MoreCommits = len(commits) - len(r.Commits)
+		})
+	}
+	wg.Wait()
+	return errors.Join(errs...)
 }
 
 func (a *App) row(name string, depth int, parent string, tracked bool, current string, local map[string]git.Branch, stackIndex int) Row {

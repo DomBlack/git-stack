@@ -19,7 +19,7 @@ path is resolved with `git rev-parse`; anything outside a repository returns `no
 
 | Tool | Purpose | Key inputs | Annotations |
 |---|---|---|---|
-| `stack_view` | Tree of every stack: branches, parents, PR number/state/URL, `needs_restack`, `needs_push`, current branch, untracked branches | `include_untracked`, `fresh` (default true) | read-only, open-world |
+| `stack_view` | Tree of every stack: branches, parents, PR number/state/URL/title, each branch's own `commits`, `needs_restack`, `needs_push`, current branch, untracked branches | `include_untracked`, `fresh` (default true) | read-only, open-world |
 | `stack_create` | New branch on top of the current one (from trunk: new stack), commit staged changes | `message` (required), `branch`, `staging` = `all`/`update`/`none`, `use_ai` | non-destructive |
 | `stack_modify` | Amend the current branch (or `mode: commit`) and restack everything above | `mode`, `staging`, `message`, `continue`, `abort` | destructive |
 | `stack_continue` | Finish an interrupted restack or modify once the conflicts are resolved and git added | `stage_all` | destructive |
@@ -29,6 +29,12 @@ path is resolved with `git rev-parse`; anything outside a repository returns `no
 | `stack_submit` | Push and create/update chained PRs; ready for review by default | `draft`, `publish`, `dry_run`, `pull_requests` `{branch: {title, body}}`, `use_ai`, `force` | destructive, open-world |
 | `stack_sync` | Fetch, update trunk and restack every stack (checked out or not, all worktrees), never pushing; merged branches deleted per `stack.sync.prune` | `prune` (force deletion) | destructive, open-world |
 | `stack_merge` | Merge the stack's PRs up to a branch into trunk, all or nothing, then sync | `branch` (default current), `method` = `merge`/`squash`/`rebase`, `no_sync` | destructive, open-world |
+
+In `stack_view` each branch's `pr` carries its `title` (from the PR cache; empty when the cache
+predates titles), and `commits` lists the branch's own commits as `{sha, subject}`: those not on
+the branch below it (trunk for the bottom branch), newest first, full ids and subjects exactly as
+git has them. There are at most 10; `more_commits` counts the rest. Both come from local state, so
+they cost no network calls.
 
 Agents write commit messages and PR text themselves; `use_ai` opts into git-stack's own
 Claude Code drafter.

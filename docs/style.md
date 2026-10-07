@@ -95,6 +95,10 @@ the bottom line and the detail scrolls up as it comes in.
   the shell (`shell.Arg` / `shell.Path`); one with a control character can't be pasted safely,
   so it gets directions ("stash them in the checkout at …") instead of a command.
 - Shas are short (seven characters) and faint; `Reporter.SHA` does both.
+- A list of commits (a branch's own commits in `git stack log`) is one per line, newest first: a
+  faint `•`, the faint short sha, ` - ` and the subject, plain and escaped (`• 7ac32ef - Reject
+  expired refresh tokens`). Ten at most, then a muted `• and N more`. On a terminal a subject, like
+  a PR title, is cut short with `…` to fit the width rather than wrapping under the tree.
 - Names and text from outside (file names, git's stderr, gh stack's output) never reach the
   terminal raw. A file name with anything odd in it is shown C quoted (`ui.QuoteName`), and
   the Reporter escapes control characters in notices, errors and gutter lines. Structured

@@ -216,6 +216,15 @@ has moved on from it (new commits, a restack, an amend). It's worked out from lo
 only, so it's as fresh as the last fetch or push, and a remote that's simply ahead of the
 local branch doesn't count; that's sync's job.
 
+**`log` lists each branch's own commits from local git only.** One `git log` per branch, run a
+few at a time, NUL separated and with `--no-optional-locks`, of what's on the branch but not on
+its parent nor on the base gh stack recorded at the last restack. The base is what keeps the
+parent's pre amend commits out of a branch that needs a restack; `--ignore-missing` means a base
+that has been garbage collected is just skipped. A branch whose parent isn't a local branch gets no
+list, since there'd be nothing to stop it running back to the root commit. Only `log` and
+`stack_view` ask for this (`ViewOptions.Commits`), so the picker and completion don't pay for it.
+PR titles come from the same cache as PR state.
+
 **No flags for things gh stack can't do.** If gh stack can't back an option we don't offer
 it, rather than shipping a flag whose only job is to explain why it fails. `sync` has no
 `--all` either: every trunk is synced, so there is nothing for it to select. The one leftover

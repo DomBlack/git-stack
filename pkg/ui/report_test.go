@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"os"
 	"strings"
 	"testing"
 
@@ -17,6 +18,23 @@ import (
 func newReporter(o ReporterOptions) (*Reporter, *bytes.Buffer, *bytes.Buffer) {
 	var out, errOut bytes.Buffer
 	return NewReporter(strings.NewReader(""), &out, &errOut, o), &out, &errOut
+}
+
+// Width is only ever read from a terminal stdout; anything else never cuts.
+func TestReporterWidthNeedsATerminal(t *testing.T) {
+	for _, o := range []ReporterOptions{{}, {OutTTY: true}} {
+		if r, _, _ := newReporter(o); r.Width() != 0 {
+			t.Errorf("%+v: Width = %d, want 0 for a buffer", o, r.Width())
+		}
+	}
+	f, err := os.CreateTemp(t.TempDir(), "out")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = f.Close() })
+	if w := NewReporter(strings.NewReader(""), f, f, ReporterOptions{OutTTY: true}).Width(); w != 0 {
+		t.Errorf("a file that isn't a terminal: Width = %d, want 0", w)
+	}
 }
 
 func TestReporterPipedIsPlainASCII(t *testing.T) {

@@ -11,6 +11,7 @@ import (
 	"sync"
 
 	"github.com/charmbracelet/colorprofile"
+	"github.com/charmbracelet/x/term"
 
 	"github.com/DomBlack/git-stack/pkg/app"
 	"github.com/DomBlack/git-stack/pkg/forge"
@@ -28,6 +29,8 @@ type Reporter struct {
 	// rawErr is stderr before colour profile wrapping. bubbletea programs
 	// (the spinner) need the real file to size the terminal.
 	rawErr io.Writer
+	// rawOut is stdout before colour profile wrapping, for its size.
+	rawOut io.Writer
 	o      ReporterOptions
 	st     Styles
 	term   *termStatus
@@ -66,14 +69,14 @@ type ReporterOptions struct {
 // are wrapped so colour is downsampled to what the terminal supports and
 // dropped under NO_COLOR; hyperlinks and the busy state pass through.
 func NewReporter(in io.Reader, out, err io.Writer, o ReporterOptions) *Reporter {
-	rawErr := err
+	rawErr, rawOut := err, out
 	if o.OutTTY {
 		out = profileWriter(out)
 	}
 	if o.ErrTTY {
 		err = profileWriter(err)
 	}
-	r := &Reporter{in: in, out: out, err: err, rawErr: rawErr, o: o, st: DefaultStyles(),
+	r := &Reporter{in: in, out: out, err: err, rawErr: rawErr, rawOut: rawOut, o: o, st: DefaultStyles(),
 		term: newTermStatus(rawErr, o.TerminalStatus && o.ErrTTY && !o.Quiet, o.Tmux)}
 	r.gutter.r = r
 	return r
@@ -262,6 +265,21 @@ func (r *Reporter) Styles() Styles {
 // rendered elsewhere (the log tree, the picker) that go to stdout; lines
 // printed through the Reporter are linked per stream on their own.
 func (r *Reporter) Links() bool { return r.o.OutTTY }
+
+// Width is how many columns stdout has when it is a terminal, for blocks
+// rendered elsewhere (the log tree) that fit their lines to it; 0 when it
+// isn't one or its size can't be read, meaning lines are never cut.
+func (r *Reporter) Width() int {
+	f, ok := r.rawOut.(*os.File)
+	if !r.o.OutTTY || !ok {
+		return 0
+	}
+	w, _, err := term.GetSize(f.Fd())
+	if err != nil || w <= 0 {
+		return 0
+	}
+	return w
+}
 
 // SetPRResolver sets how a pull request number found in a line (#123) is
 // turned into a URL; it should only use local state, as it runs on the

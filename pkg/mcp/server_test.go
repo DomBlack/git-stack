@@ -233,6 +233,32 @@ func TestToolsAreListedWithAnnotationsAndSchemas(t *testing.T) {
 	}
 }
 
+// stack_view lists each branch's own commits, capped like the log, with
+// subjects exactly as git has them.
+func TestViewCommits(t *testing.T) {
+	h := newHarness(t)
+	defer h.assertNoStdout()
+	odd := "Odd \x1b[31mred\x1b[0m \"quoted\" ünïcode"
+	for i := range 10 {
+		gittest.Run(t, h.dir, "commit", "-q", "--allow-empty", "-m", fmt.Sprintf("more %d", i))
+	}
+	gittest.Run(t, h.dir, "commit", "-q", "--allow-empty", "-m", odd)
+
+	var v viewOutput
+	_, text := h.call("stack_view", map[string]any{"fresh": false}, &v)
+	b := v.Stacks[0].Branches[1]
+	// Twelve commits of its own: the odd one, more 9 to 0, and feat: b.
+	if len(b.Commits) != app.MaxCommits || b.MoreCommits != 2 || b.Commits[0].Subject != odd || b.Commits[9].Subject != "more 1" {
+		t.Errorf("b commits = %+v (+%d)", b.Commits, b.MoreCommits)
+	}
+	if b.Commits[0].SHA != gittest.Run(t, h.dir, "rev-parse", "b") {
+		t.Errorf("commits carry the full id, newest first: %+v", b.Commits[0])
+	}
+	if !strings.Contains(text, `"more_commits":2`) || !strings.Contains(text, `"commits":[{"sha":`) {
+		t.Errorf("field names: %s", text)
+	}
+}
+
 func TestViewCreateModifyNavigate(t *testing.T) {
 	h := newHarness(t)
 	defer h.assertNoStdout()
@@ -246,6 +272,15 @@ func TestViewCreateModifyNavigate(t *testing.T) {
 	if bs[0].Name != "a" || bs[0].Parent != "main" || bs[0].PR == nil || bs[0].PR.Number != 7 || bs[0].PR.State != "open" ||
 		bs[1].Name != "b" || bs[1].Parent != "a" || !bs[1].IsCurrent || bs[1].PR != nil || bs[1].NeedsRestack {
 		t.Errorf("branches = %+v", bs)
+	}
+	if bs[0].PR == nil || bs[0].PR.Title != "A" {
+		t.Errorf("a's PR should carry its title: %+v", bs[0].PR)
+	}
+	for i, name := range []string{"a", "b"} {
+		want := []viewCommit{{SHA: gittest.Run(t, h.dir, "rev-parse", name), Subject: "feat: " + name}}
+		if !slices.Equal(bs[i].Commits, want) || bs[i].MoreCommits != 0 {
+			t.Errorf("%s commits = %+v (+%d), want %+v", name, bs[i].Commits, bs[i].MoreCommits, want)
+		}
 	}
 
 	// create requires a message: the SDK rejects it against the schema.
