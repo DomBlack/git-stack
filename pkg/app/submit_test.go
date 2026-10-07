@@ -342,3 +342,34 @@ func TestSubmitRefusesToOverwriteSomeoneElsesCommits(t *testing.T) {
 func (f *recordingForge) PullRequestURL(_ context.Context, _ git.Repo, n int) (string, error) {
 	return fmt.Sprintf("https://forge.test/o/r/pull/%d", n), nil
 }
+
+// cancelRefresh is a Progress hook that behaves like Ctrl-C on the PR
+// refresh's spinner: it cancels only the step's own context.
+func cancelRefresh(ctx context.Context, phase app.Phase, _ string, fn func(context.Context) error) error {
+	if phase != app.PhaseRefresh {
+		return fn(ctx)
+	}
+	child, cancel := context.WithCancel(ctx)
+	cancel()
+	if err := fn(child); err != nil {
+		return err
+	}
+	return child.Err() // as Reporter.Step does when the spinner saw Ctrl-C
+}
+
+func TestCancelledPRRefreshStopsTheCommand(t *testing.T) {
+	deps, sf, fg, repo, _ := submitFixture(t)
+	deps.Progress = cancelRefresh
+	a := app.New(deps)
+	ctx := context.Background()
+
+	if _, err := a.View(ctx, repo, app.ViewOptions{PRs: app.PRsFresh}); !errors.Is(err, context.Canceled) {
+		t.Errorf("View after a cancelled refresh = %v, want context.Canceled", err)
+	}
+	if _, err := a.Submit(ctx, repo, app.SubmitOptions{NoEdit: true}); !errors.Is(err, context.Canceled) {
+		t.Errorf("Submit after a cancelled refresh = %v, want context.Canceled", err)
+	}
+	if len(sf.opts) != 0 || len(fg.updates) != 0 {
+		t.Errorf("nothing may be submitted after Ctrl-C: submits=%d updates=%d", len(sf.opts), len(fg.updates))
+	}
+}

@@ -103,22 +103,30 @@ func (v *View) ApplyPRs(prs []forge.PullRequest) {
 	}
 }
 
-// loadPRs implements ViewOptions.PRs for View.
-func (a *App) loadPRs(ctx context.Context, repo git.Repo, mode PRMode) []forge.PullRequest {
+// loadPRs implements ViewOptions.PRs for View. A refresh that fails falls
+// back to the cached state, but one cancelled (Ctrl-C on its spinner cancels
+// only the step) is returned, so the command stops instead of carrying on.
+func (a *App) loadPRs(ctx context.Context, repo git.Repo, mode PRMode) ([]forge.PullRequest, error) {
 	if mode == PRsNone {
-		return nil
+		return nil, nil
 	}
 	prs, state, _ := a.CachedPRs(repo)
 	if mode == PRsFresh && state != cache.Fresh && a.d.Forge != nil {
-		fresh, err := a.RefreshPRs(ctx, repo)
+		var fresh []forge.PullRequest
+		err := a.progress(ctx, PhaseRefresh, "Fetching pull requests", func(ctx context.Context) error {
+			var err error
+			fresh, err = a.RefreshPRs(ctx, repo)
+			return err
+		})
 		if err == nil {
-			return fresh
+			return fresh, nil
 		}
-		if !errors.Is(err, context.Canceled) {
-			a.d.Log.Warn("could not refresh pull requests; using cached state", "err", err)
+		if errors.Is(err, context.Canceled) {
+			return nil, err
 		}
+		a.d.Log.Warn("could not refresh pull requests; using cached state", "err", err)
 	}
-	return prs
+	return prs, nil
 }
 
 // PRURLs returns a lookup from pull request number to web URL for

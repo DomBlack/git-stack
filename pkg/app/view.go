@@ -193,7 +193,11 @@ func (a *App) View(ctx context.Context, repo git.Repo, o ViewOptions) (*View, er
 	if err := a.fillCommits(ctx, repo, v, jobs); err != nil {
 		return nil, err
 	}
-	if prs := a.loadPRs(ctx, repo, o.PRs); prs != nil {
+	prs, err := a.loadPRs(ctx, repo, o.PRs)
+	if err != nil {
+		return nil, err
+	}
+	if prs != nil {
 		v.ApplyPRs(prs)
 	}
 	return v, nil
