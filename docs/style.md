@@ -99,6 +99,9 @@ rules hold for every one of them;
 - Every sequence we build ends in ST (`ESC \`), never BEL. (bubbletea's renderer rewrites the
   links it draws with BEL; that's fine, it's the renderer's output, not ours.)
 - Terminals ignore sequences they don't know, so we don't probe for support first.
+- `GIT_STACK_NO_TERMINAL_STATUS=1` turns off everything that describes what the command is
+  doing (the window title); links and the progress state stay.
+  `--quiet` turns all of that off too.
 
 **Links (OSC 8).** Every pull request number (`#123`) and every URL shown to a person is a
 link to it; result lines, notices, errors, the lines relayed from gh stack, the log tree and
@@ -120,6 +123,16 @@ bubbletea redraws in pieces is still one link, and its URI is percent encoded ou
 **Progress (OSC 9;4).** A step sets the indeterminate "busy" state (a pulsing tab in Ghostty,
 the taskbar in Windows Terminal) for exactly as long as its spinner runs, and clears it when
 the step ends, error or not.
+
+**Window title (OSC 2).** Each step sets the title to `git stack: <headline>`, the headline
+without its emoji or ellipsis. The first step pushes the title the terminal had (XTWINOPS
+`CSI 22;2 t`) and later steps only set it; never push or pop per step. `Reporter.Finish` puts
+it back, once, at the end of the process, by writing an empty title and then popping
+(`CSI 23;2 t`); the pop restores it where the title stack works, the empty title resets it
+where the pop is a no-op (Ghostty). Finish runs on every way out, an error, Ctrl-C, SIGTERM
+or a panic, because every command in the tree is wrapped to call it when its `RunE` returns
+(`ownTerminal` in `cmd/root.go`); a new command gets that by being added to the tree. A
+command with no steps doesn't touch the title.
 
 ## When it's not a terminal
 

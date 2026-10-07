@@ -175,6 +175,11 @@ set -as terminal-features ',xterm-ghostty:hyperlinks'
 then restart the tmux server (`tmux kill-server`) and check `tmux display -p '#{client_termfeatures}'`
 lists `hyperlinks`.
 
+While something slow is running (a restack, a sync, a submit) the window or tab title says what,
+e.g. `git stack: Restacking 3 branches`, and it's put back when the command ends, including on an
+error or Ctrl-C. Under tmux that sets the pane title; the outer window only follows if you have
+`set -g set-titles on`. Set `GIT_STACK_NO_TERMINAL_STATUS=1` to leave your title alone.
+
 ## Agents and AI (optional)
 
 None of this is needed to use git-stack, but if you use coding agents;
