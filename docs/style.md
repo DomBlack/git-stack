@@ -68,11 +68,10 @@ read as section markers rather than confetti because they never show up anywhere
 
 Anything that can take longer than a blink gets a spinner; gh stack init and add, restack,
 submit, sync, Claude, the release download. The spinner line is replaced in place by the
-`✔` line when it finishes, so what's left on screen is a clean transcript. The terminal's
-OSC 9;4 "busy" state (Ghostty, Windows Terminal) starts and stops with the spinner, so the
-tab shows something is happening too. Output from gh stack arriving while a spinner runs is
-printed above it in the `│` gutter, i.e. the spinner stays on the bottom line and the detail
-scrolls up as it comes in.
+`✔` line when it finishes, so what's left on screen is a clean transcript (and the tab
+shows it too; see [Terminal integration](#terminal-integration)). Output from gh stack
+arriving while a spinner runs is printed above it in the `│` gutter, i.e. the spinner stays on
+the bottom line and the detail scrolls up as it comes in.
 
 ## Words
 
@@ -83,8 +82,44 @@ scrolls up as it comes in.
 - Errors say what's wrong in one line, then the detail (faint), then `↳` next steps that
   are things you can actually run.
 - Notices are for "it worked but"; a branch left alone because its checkout in another worktree is dirty, a dry run.
-- Branch names are bold cyan, PR refs green and clickable (OSC 8 hyperlinks), shas faint,
-  subjects plain. Semantic colour only; nothing is coloured for decoration.
+- Branch names are bold cyan, PR refs take the colour of their state (green open, faint
+  draft, magenta merged, red closed) when it's known and the line's own colour when it isn't,
+  shas faint, subjects plain. Semantic colour only; nothing is coloured for decoration.
+- Anything clickable is underlined and nothing else is; see links below.
+
+## Terminal integration
+
+Besides the text, git-stack tells the terminal a few things with escape sequences. The same
+rules hold for every one of them;
+
+- Only to a terminal, and only to the stream that is one. A sequence on a stdout line needs
+  stdout to be a terminal, one on stderr needs stderr to be; never decide one from the other.
+- Never from the MCP server (stdout is JSON-RPC and the agent reports its own status) and
+  never from completion. Neither has a Reporter, which is how that's kept true.
+- Every sequence we build ends in ST (`ESC \`), never BEL. (bubbletea's renderer rewrites the
+  links it draws with BEL; that's fine, it's the renderer's output, not ours.)
+- Terminals ignore sequences they don't know, so we don't probe for support first.
+
+**Links (OSC 8).** Every pull request number (`#123`) and every URL shown to a person is a
+link to it; result lines, notices, errors, the lines relayed from gh stack, the log tree and
+the picker. Don't link at the call site; print through the Reporter, which links each line
+as it's written (`ui.Linkify`), and give `Ref` the URL (and the PR's state if you know it)
+so it can be found. Blocks rendered elsewhere (the log tree, the picker) take `Reporter.Links()`
+and `Reporter.PRURL`, the same lookup Linkify uses, so a PR the snapshot only has a number for
+(offline, no URL in gh stack's metadata) is linked there too. PR URLs come from local state through the forge port, never a hard coded
+host. A link is underlined, always, and that's its only cue; its colour stays whatever the
+text already was, so a PR keeps its state colour and a URL the line's colour. `Hyperlink`
+does the underline, so nothing that emits a link can forget it, and it only appears with the
+link, so piped output stays plain ASCII. It keeps the underline across the text's own style
+resets and turns it off with SGR 24 rather than a full reset, so the style around the link
+(a selected row's reverse, say) carries on. Under `NO_COLOR` the underline stays, like bold
+and the marks; it isn't colour. Each link has an `id=` derived from its URL, so a link
+bubbletea redraws in pieces is still one link, and its URI is percent encoded outside bytes
+32 to 126.
+
+**Progress (OSC 9;4).** A step sets the indeterminate "busy" state (a pulsing tab in Ghostty,
+the taskbar in Windows Terminal) for exactly as long as its spinner runs, and clears it when
+the step ends, error or not.
 
 ## When it's not a terminal
 

@@ -359,10 +359,34 @@ restacked.
 (submit, sync) have their stderr relayed to the terminal as it arrives rather than
 dumped at the end; `pkg/exec` tees it through `Cmd.Stream`, `pkg/backend/ghstack` only
 sets that when `cmd/root.go` asks via `WithOutput`, and the result carries a `Streamed`
-flag so nothing is printed twice. PR numbers and URLs are OSC 8 hyperlinks when stdout is a
-terminal (Ghostty, iTerm2, WezTerm make them clickable), and long operations set the OSC 9;4
-"busy" progress state on stderr so the terminal can show something is happening; terminals
-that don't know the sequence ignore it.
+flag so nothing is printed twice. PR numbers and URLs are OSC 8 hyperlinks (see below), and
+long operations set the OSC 9;4 "busy" progress state on stderr so the terminal can show
+something is happening; terminals that don't know the sequence ignore it.
+
+**Hyperlinks are added on the way out, per stream.** `ui.Reporter` runs every line through
+`ui.Linkify` just before writing it, and only when that line's stream is a terminal; stdout
+and stderr are judged separately, so a notice on a terminal stderr is linked even when stdout
+is piped and vice versa. Linkify turns `#123` and bare `http(s)` URLs into OSC 8 links, skips
+anything already inside a link and leaves escape sequences alone, so styled text and
+pre-linked blocks (the log tree, picker rows) pass through untouched. A number becomes a URL
+through `app.PRURLs`, which only looks at local state; the URLs in gh stack's metadata, the PR
+cache, then `forge.Forge.PullRequestURL`, which for GitHub reads the remotes from git config
+(each URL resolved with `git remote get-url`, so `insteadOf` shorthands work; IPv6 hosts
+keep their brackets)
+(whatever `gh repo set-default` chose, either a remote or an explicit OWNER/REPO on
+that remote's host, then upstream, github, origin, as gh does; an http(s) remote keeps its
+port, an ssh one's port is dropped) so a PR gh
+stack has only just created is linked too. The sequences follow egmontkob's OSC 8 spec: ST
+(`ESC \`) terminated like our other sequences, the URI percent encoded outside bytes 32 to
+126, an `id=` derived from the URL, and the text underlined inside the link (the one visual cue
+for a link; `Hyperlink` adds it, so no call site can leave it out). The id matters for bubbletea; its renderer can rewrite
+a link in several pieces as the screen changes, and same URI plus same id is what makes the
+terminal treat those pieces as one link. bubbletea's renderer parses the link into its cells and
+writes it back out itself, keeping the id but ending it in BEL (ultraviolet hard codes that,
+and lipgloss's own hyperlink style goes down the same path), which the spec allows. The escape bytes are zero width to lipgloss, so the
+tree and picker columns don't move. tmux strips OSC 8 unless the client terminal has the
+`hyperlinks` feature, which is the usual reason links "don't work"; the README says how to turn
+it on.
 
 **Prompts and bubbletea's inline renderer.** bubbletea v2.0.10 mispositions a final frame
 that is shorter than the previous one (the question line showed up twice after answering)

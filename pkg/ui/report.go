@@ -13,6 +13,7 @@ import (
 	"github.com/charmbracelet/colorprofile"
 
 	"github.com/DomBlack/git-stack/pkg/app"
+	"github.com/DomBlack/git-stack/pkg/forge"
 	"github.com/DomBlack/git-stack/pkg/stack"
 )
 
@@ -33,6 +34,11 @@ type Reporter struct {
 	mu     sync.Mutex
 	active *spinnerHandle // running Step, if any
 	gutter gutterWriter
+
+	// prs maps pull request numbers to URLs for Linkify: the ones passed
+	// to Ref, then whatever the resolver knows.
+	prs     map[int]string
+	resolve func(int) string
 }
 
 // ReporterOptions describe the streams the Reporter writes to.
@@ -180,7 +186,7 @@ func (r *Reporter) Print(block string) {
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	_, _ = io.WriteString(r.out, block)
+	_, _ = io.WriteString(r.out, r.linkify(r.out, block))
 }
 
 // Styles returns the palette for stdout: the default styles on a terminal,
@@ -192,8 +198,50 @@ func (r *Reporter) Styles() Styles {
 	return Styles{}
 }
 
-// Links reports whether stdout gets OSC 8 hyperlinks.
+// Links reports whether stdout gets OSC 8 hyperlinks. It is for blocks
+// rendered elsewhere (the log tree, the picker) that go to stdout; lines
+// printed through the Reporter are linked per stream on their own.
 func (r *Reporter) Links() bool { return r.o.OutTTY }
+
+// SetPRResolver sets how a pull request number found in a line (#123) is
+// turned into a URL; it should only use local state, as it runs on the
+// output path. Numbers it doesn't know ("") are left as text.
+func (r *Reporter) SetPRResolver(fn func(number int) string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.resolve = fn
+}
+
+// PRURL is the URL of pull request number, or "" if nothing local knows
+// it: the URLs passed to Ref, then the resolver. It's the one lookup every
+// link uses, the log, the tree and the picker included (their options take
+// it), so a PR is linked the same way wherever it's shown.
+func (r *Reporter) PRURL(number int) string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.prURL(number)
+}
+
+// prURL looks a PR number up for Linkify. Callers hold r.mu.
+func (r *Reporter) prURL(n int) string {
+	if u := r.prs[n]; u != "" {
+		return u
+	}
+	if r.resolve != nil {
+		return r.resolve(n)
+	}
+	return ""
+}
+
+// linkify makes the PR references and URLs in a line clickable, but only
+// when the stream it is going to is a terminal. Callers hold r.mu.
+func (r *Reporter) linkify(w io.Writer, line string) string {
+	tty := (w == r.out && r.o.OutTTY) || (w == r.err && r.o.ErrTTY)
+	if !tty {
+		return line
+	}
+	return Linkify(line, r.prURL)
+}
 
 // Branch styles a branch name for use inside a message.
 func (r *Reporter) Branch(name string) string {
@@ -211,19 +259,30 @@ func (r *Reporter) SHA(sha string) string {
 	return r.st.Muted.Render(sha)
 }
 
-// Ref styles a pull request reference (#123) and links it to url.
-func (r *Reporter) Ref(number int, url string) string {
+// Ref styles a pull request reference (#123) for a stdout line in the
+// colour of its state (the line's own colour when state is unknown) and
+// remembers url, so the reference is a link, underlined, wherever it is
+// printed to a terminal.
+func (r *Reporter) Ref(number int, url string, state forge.State) string {
 	label := fmt.Sprintf("#%d", number)
-	if !r.o.OutTTY {
+	if url != "" {
+		r.mu.Lock()
+		if r.prs == nil {
+			r.prs = map[int]string{}
+		}
+		r.prs[number] = url
+		r.mu.Unlock()
+	}
+	if !r.o.OutTTY || state == forge.StateUnknown {
 		return label
 	}
-	return Hyperlink(true, url, r.st.PROpen.Render(label))
+	return prStyle(r.st, state).Render(label)
 }
 
-// Link makes url clickable on a terminal and returns it unchanged otherwise.
-func (r *Reporter) Link(url string) string {
-	return Hyperlink(r.o.OutTTY, url, url)
-}
+// Link returns url for use in a line. Every URL printed through the
+// Reporter becomes a link when its stream is a terminal; this only marks
+// the intent at the call site.
+func (r *Reporter) Link(url string) string { return url }
 
 // Step runs fn under a headline for the phase: an emoji, the message and a
 // spinner on a terminal (the line is replaced by whatever is printed next
@@ -274,6 +333,7 @@ func (r *Reporter) Stream() io.Writer { return &r.gutter }
 func (r *Reporter) println(w io.Writer, line string) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	line = r.linkify(w, line)
 	if r.active != nil && w == r.err {
 		// A spinner owns the last line of stderr; print above it.
 		r.active.Println(line)
@@ -330,6 +390,7 @@ func (g *gutterWriter) emit(line string) {
 	} else {
 		out = "  " + line
 	}
+	out = r.linkify(r.err, out)
 	if r.active != nil {
 		r.active.Println(out)
 		return

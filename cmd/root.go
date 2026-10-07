@@ -199,7 +199,10 @@ func (c *cli) app(ctx context.Context) (*app.App, git.Repo, error) {
 	if rt.Interactive {
 		deps.Prompter = ui.Prompter{In: rt.Streams.In, Out: rt.Streams.Err, Ctx: ctx}
 	}
-	return app.New(deps), repo, nil
+	a := app.New(deps)
+	// #123 in any line printed to a terminal links to the pull request.
+	rt.Report.SetPRResolver(a.PRURLs(ctx, repo))
+	return a, repo, nil
 }
 
 // completionApp wires a read-only App for shell completion: metadata comes
@@ -347,15 +350,25 @@ func Execute() int {
 	root := newRootCmd(c)
 	err := root.ExecuteContext(ctx)
 	if err != nil {
-		ui.NewReporter(os.Stdin, os.Stdout, os.Stderr, ui.ReporterOptions{
-			OutTTY: isTerminal(os.Stdout), ErrTTY: isTerminal(os.Stderr),
-		}).Error(err)
+		c.errorReporter().Error(err)
 	}
 	c.updateNotice()
 	if err != nil {
 		return exitCode(err)
 	}
 	return 0
+}
+
+// errorReporter is the Reporter that prints the command's final error: the
+// command's own once it has one (so pull requests it knows about are links
+// in the message), otherwise a plain one over the process streams.
+func (c *cli) errorReporter() *ui.Reporter {
+	if c.rt != nil {
+		return c.rt.Report
+	}
+	return ui.NewReporter(c.streams.In, c.streams.Out, c.streams.Err, ui.ReporterOptions{
+		OutTTY: isTerminal(c.streams.Out), ErrTTY: isTerminal(c.streams.Err),
+	})
 }
 
 // noUpdateCheckEnv switches the background release check off.

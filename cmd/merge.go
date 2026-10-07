@@ -70,8 +70,12 @@ method unless you pass one, or set git config stack.merge.method.`,
 			default:
 				rep.Success("Merged %s into %s", what, rep.Branch(res.Trunk))
 			}
+			state := forge.StateUnknown
+			if res.Status == forge.MergeMerged {
+				state = forge.StateMerged
+			}
 			for _, pr := range res.PullRequests {
-				rep.Info("%s  %s", rep.Branch(pr.Branch), rep.Ref(pr.Number, pr.URL))
+				rep.Info("%s  %s", rep.Branch(pr.Branch), rep.Ref(pr.Number, pr.URL, state))
 			}
 			for _, note := range res.Notices {
 				rep.Warn("%s", note)

@@ -13,6 +13,10 @@ type LogOptions struct {
 	Now    time.Time
 	// Links makes PR references OSC 8 hyperlinks.
 	Links bool
+	// PRURL finds the URL of a PR the row only has a number for (the forge
+	// couldn't be reached and the stack metadata has no URL); usually
+	// Reporter.PRURL.
+	PRURL func(number int) string
 }
 
 // RenderLog renders every stack the way `gt log` does: trunk at the bottom,
@@ -113,11 +117,7 @@ func logMeta(r app.Row, o LogOptions) string {
 	st := o.Styles
 	var parts []string
 	if r.PR != nil {
-		pr := renderPR(r.PR, st)
-		if o.Links && r.PR.URL != "" {
-			pr = Hyperlink(true, r.PR.URL, pr)
-		}
-		parts = append(parts, pr)
+		parts = append(parts, Hyperlink(o.Links, prURL(o.Links, r.PR, o.PRURL), renderPR(r.PR, st)))
 	} else {
 		parts = append(parts, st.Muted.Render("no PR"))
 	}

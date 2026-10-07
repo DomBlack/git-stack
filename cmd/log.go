@@ -41,7 +41,7 @@ func showLog(ctx context.Context, c *cli) error {
 		return err
 	}
 	rep := c.report()
-	out := ui.RenderLog(v, ui.LogOptions{Styles: rep.Styles(), Now: time.Now(), Links: rep.Links()})
+	out := ui.RenderLog(v, ui.LogOptions{Styles: rep.Styles(), Now: time.Now(), Links: rep.Links(), PRURL: rep.PRURL})
 	if out == "" {
 		// Not even a trunk: no stacks and no default branch to show.
 		rep.Warn("No stacks yet; check out your trunk and run git stack create to start one")

@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"errors"
+	"sync"
 	"time"
 
 	"github.com/DomBlack/git-stack/pkg/cache"
@@ -118,4 +119,55 @@ func (a *App) loadPRs(ctx context.Context, repo git.Repo, mode PRMode) []forge.P
 		}
 	}
 	return prs
+}
+
+// PRURLs returns a lookup from pull request number to web URL for
+// decorating output. It only uses local state: the URLs recorded in the
+// stack metadata and the PR cache, then the forge's own URL scheme for a
+// number neither knows (a PR gh stack has only just created). It never
+// touches the network, and answers "" for a number it can't place.
+func (a *App) PRURLs(ctx context.Context, repo git.Repo) func(number int) string {
+	var (
+		mu    sync.Mutex
+		known map[int]string
+	)
+	load := func() {
+		known = map[int]string{}
+		prs, _, _ := a.CachedPRs(repo)
+		for _, pr := range prs {
+			if pr.URL != "" {
+				known[pr.Number] = pr.URL
+			}
+		}
+		if a.d.Meta != nil {
+			if g, err := a.d.Meta.Load(ctx, repo); err == nil {
+				for _, s := range g.Stacks {
+					for _, b := range s.Branches {
+						if b.PR != nil && b.PR.URL != "" {
+							known[b.PR.Number] = b.PR.URL
+						}
+					}
+				}
+			}
+		}
+	}
+	return func(number int) string {
+		mu.Lock()
+		defer mu.Unlock()
+		if known == nil {
+			load()
+		}
+		if u, ok := known[number]; ok {
+			return u
+		}
+		u := ""
+		if a.d.Forge != nil {
+			var err error
+			if u, err = a.d.Forge.PullRequestURL(ctx, repo, number); err != nil {
+				a.d.Log.Debug("pull request URL", "number", number, "err", err)
+			}
+		}
+		known[number] = u
+		return u
+	}
 }

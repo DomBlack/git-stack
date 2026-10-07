@@ -3,6 +3,7 @@ package mcp
 import (
 	"context"
 	"encoding/json/v2"
+	"fmt"
 	"io"
 	"log/slog"
 	"os"
@@ -517,4 +518,8 @@ func mustAbs(t *testing.T, p string) string {
 		t.Fatal(err)
 	}
 	return a
+}
+
+func (f *fakeForge) PullRequestURL(_ context.Context, _ git.Repo, n int) (string, error) {
+	return fmt.Sprintf("https://forge.test/o/r/pull/%d", n), nil
 }

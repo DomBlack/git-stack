@@ -144,6 +144,11 @@ type RenderOptions struct {
 	Now    time.Time
 	// Selected highlights the row (picker cursor).
 	Selected bool
+	// Links makes PR references OSC 8 hyperlinks.
+	Links bool
+	// PRURL finds the URL of a PR the row only has a number for; usually
+	// Reporter.PRURL.
+	PRURL func(number int) string
 }
 
 // RenderRow renders one tree row: prefix, name, PR, restack marker, age and
@@ -175,7 +180,7 @@ func RenderRow(tr TreeRow, o RenderOptions) string {
 
 	var meta []string
 	if r.PR != nil {
-		meta = append(meta, renderPR(r.PR, st))
+		meta = append(meta, Hyperlink(o.Links, prURL(o.Links, r.PR, o.PRURL), renderPR(r.PR, st)))
 	}
 	if r.NeedsRestack {
 		meta = append(meta, st.Restack.Render("needs restack"))
@@ -205,17 +210,26 @@ func RenderRow(tr TreeRow, o RenderOptions) string {
 
 func renderPR(pr *forge.PullRequest, st Styles) string {
 	label := fmt.Sprintf("#%d", pr.Number)
-	switch pr.State {
-	case forge.StateOpen:
-		return st.PROpen.Render(label + " open")
-	case forge.StateDraft:
-		return st.PRDraft.Render(label + " draft")
-	case forge.StateMerged:
-		return st.PRMerged.Render(label + " merged")
-	case forge.StateClosed:
-		return st.PRClosed.Render(label + " closed")
-	default:
+	if pr.State == forge.StateUnknown {
 		return st.Muted.Render(label)
+	}
+	return prStyle(st, pr.State).Render(label + " " + string(pr.State))
+}
+
+// prStyle is the colour for a pull request in state; the zero style (the
+// line's own colour) when the state isn't known.
+func prStyle(st Styles, state forge.State) lipgloss.Style {
+	switch state {
+	case forge.StateOpen:
+		return st.PROpen
+	case forge.StateDraft:
+		return st.PRDraft
+	case forge.StateMerged:
+		return st.PRMerged
+	case forge.StateClosed:
+		return st.PRClosed
+	default:
+		return lipgloss.NewStyle()
 	}
 }
 
@@ -230,4 +244,13 @@ func RenderTree(rows []TreeRow, o RenderOptions) string {
 		b.WriteString(RenderRow(r, o))
 	}
 	return b.String()
+}
+
+// prURL is the PR's own URL, or what resolve knows for its number; it
+// only looks when the PR is going to be linked.
+func prURL(links bool, pr *forge.PullRequest, resolve func(int) string) string {
+	if !links || pr.URL != "" || resolve == nil {
+		return pr.URL
+	}
+	return resolve(pr.Number)
 }

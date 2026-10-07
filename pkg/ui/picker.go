@@ -25,6 +25,12 @@ type PickerOptions struct {
 	Now    time.Time
 	// Height limits the number of visible rows (0: derive from the terminal).
 	Height int
+	// Links makes PR references OSC 8 hyperlinks; set it when the picker's
+	// output stream is a terminal.
+	Links bool
+	// PRURL finds the URL of a PR a row only has a number for; usually
+	// Reporter.PRURL.
+	PRURL func(number int) string
 }
 
 // PickerResult is the user's choice.
@@ -52,6 +58,8 @@ type Picker struct {
 	ctx     context.Context
 	height  int
 	width   int
+	links   bool
+	prURL   func(int) string
 	status  string
 	result  PickerResult
 }
@@ -79,6 +87,8 @@ func NewPicker(ctx context.Context, o PickerOptions) *Picker {
 		refresh: o.Refresh,
 		ctx:     ctx,
 		height:  o.Height,
+		links:   o.Links,
+		prURL:   o.PRURL,
 	}
 	p.visible = FilterTree(p.all, "")
 	p.cursor = p.indexOfCurrent()
@@ -250,7 +260,7 @@ func (p *Picker) View() tea.View {
 		b.WriteString("\n")
 	}
 	for i := p.offset; i < end; i++ {
-		b.WriteString(RenderRow(p.visible[i], RenderOptions{Styles: st, Now: p.now, Selected: i == p.cursor}))
+		b.WriteString(RenderRow(p.visible[i], RenderOptions{Styles: st, Now: p.now, Selected: i == p.cursor, Links: p.links, PRURL: p.prURL}))
 		b.WriteString("\n")
 	}
 	if len(p.visible) > height {

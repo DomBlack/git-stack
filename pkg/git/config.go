@@ -135,3 +135,14 @@ func nonEmptyLines(s string) []string {
 	}
 	return out
 }
+
+// RemoteURL is the URL git uses to fetch from the named remote, with
+// url.<base>.insteadOf rewriting applied (git remote get-url). It only reads
+// config; nothing touches the network.
+func (c *Client) RemoteURL(ctx context.Context, repo Repo, name string) (string, error) {
+	res, err := c.gitIn(ctx, repo, "remote", "get-url", "--", name)
+	if err != nil {
+		return "", err
+	}
+	return res.Out(), nil
+}

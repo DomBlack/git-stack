@@ -3,6 +3,7 @@ package app_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"testing"
 	"time"
 
@@ -120,4 +121,29 @@ func metaOf(a *app.App, t *testing.T) stack.Metadata {
 	return memMeta{stack.NewGraph([]stack.Stack{{Trunk: "main", Branches: []stack.Branch{
 		{Name: "a"}, {Name: "b", PR: &stack.PRRef{Number: 5, URL: "u"}}, {Name: "c"},
 	}}})}
+}
+
+func (f *fakeForge) PullRequestURL(_ context.Context, _ git.Repo, n int) (string, error) {
+	return fmt.Sprintf("https://forge.test/o/r/pull/%d", n), nil
+}
+
+func TestPRURLsUsesLocalStateThenTheForge(t *testing.T) {
+	a, repo, _ := fixture(t)
+	ff := &fakeForge{}
+	a = app.New(app.Deps{Git: gitClient(), Meta: metaOf(a, t), Forge: ff, Cache: cache.New(repo)})
+	url := a.PRURLs(context.Background(), repo)
+	for _, tc := range []struct {
+		number int
+		want   string
+	}{
+		{5, "u"}, // recorded in the stack metadata
+		{77, "https://forge.test/o/r/pull/77"},
+	} {
+		if got := url(tc.number); got != tc.want {
+			t.Errorf("PR %d: got %q, want %q", tc.number, got, tc.want)
+		}
+	}
+	if ff.calls != 0 {
+		t.Error("PRURLs must never list pull requests from the forge")
+	}
 }

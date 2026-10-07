@@ -97,4 +97,8 @@ type Forge interface {
 	// forge reports the result (or has queued it). A refusal, such as a
 	// draft in the way or a failed check, comes back as a *stack.Error.
 	MergeStack(ctx context.Context, repo git.Repo, number int, method MergeMethod) (MergeOutcome, error)
+	// PullRequestURL is the web address of pull request number, worked out
+	// from local configuration only (never the network), so output can
+	// link a PR the forge hasn't been asked about. "" when it can't tell.
+	PullRequestURL(ctx context.Context, repo git.Repo, number int) (string, error)
 }

@@ -80,7 +80,7 @@ func (c *cli) pickBranch(ctx context.Context, a *app.App, repo git.Repo, o app.V
 	if err != nil {
 		return "", err
 	}
-	opts := ui.PickerOptions{Rows: v.Rows}
+	opts := ui.PickerOptions{Rows: v.Rows, Links: rt.Report.Links(), PRURL: rt.Report.PRURL}
 	if _, state, _ := a.CachedPRs(repo); state != cache.Fresh {
 		opts.Refresh = func(ctx context.Context) ([]forge.PullRequest, error) {
 			return a.RefreshPRs(ctx, repo)
