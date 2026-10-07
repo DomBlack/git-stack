@@ -20,13 +20,24 @@ need either installed; they just see a stack on GitHub.
 ```
 ❯ git stack
 ● billing-webhook-retries
-│  #418 open · needs push · 2h ago
+│  #418 Retry failed billing webhooks with backoff
+│  open · needs push · 2h ago
+│
+│  • 7ac32ef - Give up on a webhook after five attempts
+│  • 4f21abc - Retry failed billing webhooks with backoff
 │
 ○ billing-webhook-schema
-│  #412 open · 1d ago
+│  #412 Version the billing webhook payload
+│  open · 1d ago
+│
+│  • 9b1d2e0 - Version the billing webhook payload
 │
 │ ○ fix-login-timeout
-│ │  #399 draft · needs restack · 3d ago
+│ │  #399 Stop the login form timing out on slow networks
+│ │  draft · needs restack · 3d ago
+│ │
+│ │  • 3c4d5e6 - Raise the login request timeout to 30s
+│ │
 ├─┘
 ■ main  20m ago
 ```
@@ -374,10 +385,18 @@ already moved, metadata included.
 Bare `git stack` runs this.
 
 Shows every stack in the repo as a tree (like the example at the top of this page); trunk at the
-bottom, each stack rising out of it, the current branch marked, and each branch's PR, age and
-whether it needs a restack or a push (i.e. you've changed it since it was last pushed, so the PR is
-behind until the next `git ss`). PR state comes from a local cache and is refreshed when it goes
-stale.
+bottom, each stack rising out of it and the current branch marked. Under each branch you get;
+
+- its PR number and title (`no PR` if it hasn't got one yet), with the title cut short to fit the
+  terminal
+- the PR's state, whether the branch needs a restack or a push (i.e. you've changed it since it was
+  last pushed, so the PR is behind until the next `git ss`), its age and the worktree it's checked
+  out in, if that isn't this one
+- the branch's own commits, newest first; the ones that aren't on the branch below it (trunk for
+  the bottom branch). After ten it just says how many more there are.
+
+PR state and titles come from a local cache that's refreshed when it goes stale, and the commits
+come from local git, so it stays quick.
 
 ### `git stack merge [branch]`
 

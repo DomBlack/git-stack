@@ -119,6 +119,62 @@ func TestView(t *testing.T) {
 	}
 }
 
+func TestViewCommits(t *testing.T) {
+	a, repo, dir := fixture(t)
+	ctx := context.Background()
+	subjects := func(r app.Row) []string {
+		var s []string
+		for _, c := range r.Commits {
+			if len(c.SHA) != 40 {
+				t.Errorf("%s: sha %q", r.Name, c.SHA)
+			}
+			s = append(s, c.Subject)
+		}
+		return s
+	}
+
+	v, err := a.View(ctx, repo, app.ViewOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, r := range v.Rows {
+		if r.Commits != nil || r.MoreCommits != 0 {
+			t.Errorf("%s: commits listed without being asked for: %+v", r.Name, r.Commits)
+		}
+	}
+
+	// c still sits on b's old tip, so against b alone the old b commit
+	// counts as c's own.
+	v, err = a.View(ctx, repo, app.ViewOptions{Commits: true, IncludeUntracked: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, want := range map[string][]string{"main": nil, "a": {"a"}, "b": {"b amended"}, "c": {"c", "b"}, "loose": nil} {
+		if r, _ := v.Row(name); !slices.Equal(subjects(r), want) || r.MoreCommits != 0 {
+			t.Errorf("%s: commits = %q (+%d), want %q", name, subjects(r), r.MoreCommits, want)
+		}
+	}
+
+	// With the base gh stack recorded at c's last restack, it doesn't.
+	v.Graph.Stacks[0].Branches[2].Base = gittest.Run(t, dir, "rev-parse", "c^")
+	// Twelve commits on a: ten listed, newest first, and the rest counted.
+	gittest.Run(t, dir, "switch", "-q", "a")
+	for i := range 11 {
+		gittest.Run(t, dir, "commit", "-q", "--allow-empty", "-m", "more "+string(rune('a'+i)))
+	}
+	v, err = a.View(ctx, repo, app.ViewOptions{Commits: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r, _ := v.Row("c"); !slices.Equal(subjects(r), []string{"c"}) {
+		t.Errorf("c with its base: %q", subjects(r))
+	}
+	r, _ := v.Row("a")
+	if got := subjects(r); len(got) != app.MaxCommits || got[0] != "more k" || got[9] != "more b" || r.MoreCommits != 2 {
+		t.Errorf("a: %q (+%d)", got, r.MoreCommits)
+	}
+}
+
 func TestNavigateAndCheckout(t *testing.T) {
 	a, repo, dir := fixture(t)
 	ctx := context.Background()

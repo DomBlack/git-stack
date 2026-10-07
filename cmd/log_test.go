@@ -24,7 +24,8 @@ func TestBareGitStackShowsTheLog(t *testing.T) {
 	if err != nil {
 		t.Fatalf("bare git stack: %v\n%s", err, errOut)
 	}
-	for _, want := range []string{"○ c\n", "● b\n", "○ a\n", "#41", "■ main"} {
+	aSHA := gittest.Run(t, dir, "rev-parse", "--short=7", "a")
+	for _, want := range []string{"○ c\n", "● b\n", "○ a\n", "#41", "■ main", "│  • " + aSHA + " - a\n"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("log output missing %q:\n%s", want, out)
 		}

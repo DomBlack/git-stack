@@ -37,15 +37,22 @@ type prInfo struct {
 }
 
 type viewBranch struct {
-	Name         string  `json:"name"`
-	Parent       string  `json:"parent"`
-	Head         string  `json:"head,omitempty"`
-	PR           *prInfo `json:"pr,omitempty"`
-	NeedsRestack bool    `json:"needs_restack" jsonschema:"true when the parent's tip is not in this branch's history"`
-	NeedsPush    bool    `json:"needs_push" jsonschema:"true when the local branch has moved on from what was pushed, so its PR is behind until stack_submit"`
-	IsCurrent    bool    `json:"is_current"`
-	Merged       bool    `json:"merged"`
-	Worktree     string  `json:"worktree,omitempty" jsonschema:"path of another worktree the branch is checked out in"`
+	Name         string       `json:"name"`
+	Parent       string       `json:"parent"`
+	Head         string       `json:"head,omitempty"`
+	PR           *prInfo      `json:"pr,omitempty"`
+	NeedsRestack bool         `json:"needs_restack" jsonschema:"true when the parent's tip is not in this branch's history"`
+	NeedsPush    bool         `json:"needs_push" jsonschema:"true when the local branch has moved on from what was pushed, so its PR is behind until stack_submit"`
+	IsCurrent    bool         `json:"is_current"`
+	Merged       bool         `json:"merged"`
+	Worktree     string       `json:"worktree,omitempty" jsonschema:"path of another worktree the branch is checked out in"`
+	Commits      []viewCommit `json:"commits,omitempty" jsonschema:"the branch's own commits (not on its parent), newest first, at most 10"`
+	MoreCommits  int          `json:"more_commits,omitempty" jsonschema:"how many more of the branch's own commits there are beyond commits"`
+}
+
+type viewCommit struct {
+	SHA     string `json:"sha"`
+	Subject string `json:"subject"`
 }
 
 type viewStack struct {
@@ -70,7 +77,7 @@ func (s *Server) view(ctx context.Context, req *mcp.CallToolRequest, in viewInpu
 	if in.Fresh != nil && !*in.Fresh {
 		mode = app.PRsCached
 	}
-	v, err := a.View(ctx, repo, app.ViewOptions{IncludeUntracked: in.IncludeUntracked, PRs: mode})
+	v, err := a.View(ctx, repo, app.ViewOptions{IncludeUntracked: in.IncludeUntracked, PRs: mode, Commits: true})
 	if err != nil {
 		return nil, viewOutput{}, wrapErr(err)
 	}
@@ -94,6 +101,10 @@ func (s *Server) view(ctx context.Context, req *mcp.CallToolRequest, in viewInpu
 				if r.PR != nil {
 					vb.PR = &prInfo{Number: r.PR.Number, State: string(r.PR.State), URL: r.PR.URL, Title: r.PR.Title}
 				}
+				for _, c := range r.Commits {
+					vb.Commits = append(vb.Commits, viewCommit{SHA: c.SHA, Subject: c.Subject})
+				}
+				vb.MoreCommits = r.MoreCommits
 			}
 			vs.Branches = append(vs.Branches, vb)
 			parent = b.Name
@@ -417,7 +428,7 @@ func (s *Server) registerTools() {
 	mcp.AddTool(s.mcp, &mcp.Tool{
 		Name:        "stack_view",
 		Title:       "View stacks",
-		Description: "Show every stack in the repository as a tree: trunks, branches with their parent, pull request number/state/URL, whether each branch needs a restack, the current branch and (optionally) untracked branches. Read-only; may refresh PR state from GitHub.",
+		Description: "Show every stack in the repository as a tree: trunks, branches with their parent, pull request number/state/URL/title, each branch's own commits (newest first, at most 10), whether each branch needs a restack, the current branch and (optionally) untracked branches. Read-only; may refresh PR state from GitHub.",
 		Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true, OpenWorldHint: boolp(true), IdempotentHint: true},
 	}, s.view)
 	mcp.AddTool(s.mcp, &mcp.Tool{
