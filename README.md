@@ -158,6 +158,23 @@ request to the GitHub releases API and the answer is cached in your OS cache dir
 one line note after the command's own output. Nothing ever waits on it, it only runs on a terminal
 (never for scripts, agents or the MCP server) and `GIT_STACK_NO_UPDATE_CHECK=1` turns it off.
 
+### In the terminal
+
+PR numbers (`#418`) and PR links are clickable wherever git-stack prints them to a terminal; the
+log, the checkout picker, submit and merge results, notices, errors and the lines relayed from gh
+stack. They're underlined OSC 8 hyperlinks, which Ghostty, iTerm2, WezTerm, kitty and most other modern
+terminals understand. Piped output never has them.
+
+Under tmux they only work once tmux knows your terminal can do hyperlinks, otherwise it quietly
+strips them. Add the `hyperlinks` feature for your terminal, e.g. for Ghostty;
+
+```tmux
+set -as terminal-features ',xterm-ghostty:hyperlinks'
+```
+
+then restart the tmux server (`tmux kill-server`) and check `tmux display -p '#{client_termfeatures}'`
+lists `hyperlinks`.
+
 ## Agents and AI (optional)
 
 None of this is needed to use git-stack, but if you use coding agents;

@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"regexp"
+	"strings"
 	"testing"
 	"time"
 
@@ -12,6 +14,7 @@ import (
 	"github.com/charmbracelet/x/ansi"
 	"github.com/charmbracelet/x/exp/teatest/v2"
 
+	"github.com/DomBlack/git-stack/pkg/app"
 	"github.com/DomBlack/git-stack/pkg/forge"
 )
 
@@ -159,4 +162,36 @@ func TestPickerGolden(t *testing.T) {
 	// Snapshot the last frame as plain text: the inline program clears its
 	// view on exit, so the raw output stream is not a useful golden.
 	teatest.RequireEqualOutput(t, []byte(ansi.Strip(p.View().Content)))
+}
+
+// The picker's PR references are links, and they survive bubbletea's cell
+// renderer with their id, so the terminal sees one link per PR however
+// the frame is redrawn.
+func TestPickerLinksSurviveTheRenderer(t *testing.T) {
+	url := "https://github.com/o/r/pull/12"
+	rows := []app.Row{{Name: "main", IsTrunk: true, Tracked: true}, {Name: "feat-a", Depth: 1, Tracked: true, IsCurrent: true,
+		PR: &forge.PullRequest{Number: 12, URL: url}}}
+	for _, links := range []bool{true, false} {
+		m := NewPicker(context.Background(), PickerOptions{Rows: rows, Links: links, Now: now, Height: 5})
+		if got := strings.Contains(m.View().Content, hyperlinkOpen(url)); got != links {
+			t.Errorf("Links %v: view linked = %v", links, got)
+		}
+		var out bytes.Buffer
+		p := tea.NewProgram(m, tea.WithInput(strings.NewReader("")), tea.WithOutput(&out),
+			tea.WithColorProfile(colorprofile.TrueColor), tea.WithWindowSize(100, 24))
+		go func() { time.Sleep(200 * time.Millisecond); p.Quit() }()
+		if _, err := p.Run(); err != nil {
+			t.Fatal(err)
+		}
+		// The renderer re-emits the link itself, BEL terminated, keeping
+		// our id.
+		emitted := ansi.SetHyperlink(url, "id="+linkID(url)) + "#12"
+		if got := strings.Contains(out.String(), emitted); got != links {
+			t.Errorf("Links %v: rendered linked = %v: %q", links, got, out.String())
+		}
+		// The link cells keep their underline, and it stops with the link.
+		if links && !regexp.MustCompile(`\x1b\[[0-9;]*\b4m`+regexp.QuoteMeta(emitted)+`\x1b\[(m|24m)`).MatchString(out.String()) {
+			t.Errorf("rendered link should be underlined and nothing after it: %q", out.String())
+		}
+	}
 }

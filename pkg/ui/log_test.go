@@ -82,7 +82,7 @@ func TestRenderLogEmptyAndLinks(t *testing.T) {
 		{Name: "a", Depth: 1, Tracked: true, PR: &forge.PullRequest{Number: 5, State: forge.StateOpen, URL: "https://x/5"}},
 	}
 	out := RenderLog(&app.View{Rows: rows}, LogOptions{Links: true})
-	if !strings.Contains(out, "\x1b]8;;https://x/5") {
+	if !strings.Contains(out, hyperlinkOpen("https://x/5")+underlineOn+"#5 open") || !strings.Contains(out, hyperlinkClose) {
 		t.Errorf("PR should be a hyperlink when Links is on:\n%q", out)
 	}
 }
@@ -95,5 +95,40 @@ func TestRenderLogNeedsPush(t *testing.T) {
 	out := RenderLog(&app.View{Rows: rows}, LogOptions{Now: now})
 	if !strings.Contains(out, "#12 open · needs push") {
 		t.Errorf("RenderLog =\n%s", out)
+	}
+}
+
+// A PR the snapshot only has a number for (offline, and gh stack's
+// metadata without a URL) is still linked, through the shared resolver,
+// in the log, the tree and the picker alike.
+func TestPRWithoutURLIsLinkedEverywhere(t *testing.T) {
+	resolve := func(n int) string {
+		if n == 5 {
+			return "https://forge.test/o/r/pull/5"
+		}
+		return ""
+	}
+	link := hyperlinkOpen("https://forge.test/o/r/pull/5")
+	rows := []app.Row{
+		{Name: "main", IsTrunk: true, Tracked: true},
+		{Name: "a", Depth: 1, Tracked: true, IsCurrent: true, PR: &forge.PullRequest{Number: 5}},
+		{Name: "b", Depth: 2, Tracked: true, PR: &forge.PullRequest{Number: 9}},
+	}
+	st := DefaultStyles()
+	for name, out := range map[string]string{
+		"log":    RenderLog(&app.View{Rows: rows}, LogOptions{Styles: st, Links: true, PRURL: resolve}),
+		"tree":   RenderTree(BuildTree(rows), RenderOptions{Styles: st, Links: true, PRURL: resolve}),
+		"picker": NewPicker(t.Context(), PickerOptions{Rows: rows, Links: true, PRURL: resolve, Height: 5}).View().Content,
+	} {
+		if !strings.Contains(out, link) {
+			t.Errorf("%s: #5 should be linked through the resolver:\n%q", name, out)
+		}
+		if strings.Count(out, "]8;id=") != 1 {
+			t.Errorf("%s: #9 has no URL anywhere and must stay text:\n%q", name, out)
+		}
+	}
+	// Without Links, the resolver isn't even asked.
+	if out := RenderLog(&app.View{Rows: rows}, LogOptions{PRURL: func(int) string { t.Error("asked"); return "" }}); strings.Contains(out, "]8;") {
+		t.Errorf("no links when Links is off: %q", out)
 	}
 }

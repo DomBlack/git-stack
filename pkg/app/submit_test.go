@@ -3,6 +3,7 @@ package app_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"slices"
 	"strings"
 	"testing"
@@ -326,4 +327,8 @@ func TestSubmitRefusesToOverwriteSomeoneElsesCommits(t *testing.T) {
 	if len(sf.opts) != 1 {
 		t.Errorf("--force should submit, got %d submits", len(sf.opts))
 	}
+}
+
+func (f *recordingForge) PullRequestURL(_ context.Context, _ git.Repo, n int) (string, error) {
+	return fmt.Sprintf("https://forge.test/o/r/pull/%d", n), nil
 }

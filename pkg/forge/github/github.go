@@ -9,6 +9,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/DomBlack/git-stack/pkg/exec"
@@ -22,6 +23,9 @@ type Forge struct {
 	run exec.Runner
 	// poll is the wait between status checks of an asynchronous merge.
 	poll time.Duration
+
+	mu       sync.Mutex
+	repoURLs map[string]string // TopLevel -> https://host/owner/repo
 }
 
 // New returns a Forge using r to run gh.

@@ -95,7 +95,7 @@ really do want them gone.`,
 					if res.DryRun {
 						marker = "update"
 					}
-					rep.Info("%s  %s %s %s", rep.Branch(pr.Branch), rep.Ref(pr.Number, pr.URL), marker, rep.Link(pr.URL))
+					rep.Info("%s  %s %s %s", rep.Branch(pr.Branch), rep.Ref(pr.Number, pr.URL, pr.State), marker, rep.Link(pr.URL))
 				default:
 					rep.Info("%s", rep.Branch(pr.Branch))
 				}
