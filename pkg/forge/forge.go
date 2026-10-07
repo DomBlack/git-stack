@@ -85,6 +85,19 @@ type MergeOutcome struct {
 	Message string
 }
 
+// CheckSummary is where the checks on a pull request's head commit stand,
+// by name. Checks that passed, or were skipped or neutral, aren't listed.
+type CheckSummary struct {
+	// Failing checks finished without passing (failed, errored, timed
+	// out, cancelled, needing action).
+	Failing []string `json:"failing,omitempty"`
+	// Pending checks are queued, waiting or still running.
+	Pending []string `json:"pending,omitempty"`
+}
+
+// Clean reports whether nothing is failing or still running.
+func (c CheckSummary) Clean() bool { return len(c.Failing) == 0 && len(c.Pending) == 0 }
+
 // Forge performs pull-request operations for the repository's remote.
 type Forge interface {
 	// ListPRs returns every pull request whose head is a branch of this
@@ -97,6 +110,11 @@ type Forge interface {
 	// forge reports the result (or has queued it). A refusal, such as a
 	// draft in the way or a failed check, comes back as a *stack.Error.
 	MergeStack(ctx context.Context, repo git.Repo, number int, method MergeMethod) (MergeOutcome, error)
+	// Checks reports the checks on the current head commit of each pull
+	// request in numbers, asking the forge about all of them together
+	// rather than one at a time. A pull request with no checks at all may
+	// be missing from the map.
+	Checks(ctx context.Context, repo git.Repo, numbers []int) (map[int]CheckSummary, error)
 	// PullRequestURL is the web address of pull request number, worked out
 	// from local configuration only (never the network), so output can
 	// link a PR the forge hasn't been asked about. "" when it can't tell.

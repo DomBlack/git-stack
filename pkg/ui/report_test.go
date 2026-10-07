@@ -39,6 +39,52 @@ func TestReporterPipedIsPlainASCII(t *testing.T) {
 	}
 }
 
+func TestReporterErrorListsChecks(t *testing.T) {
+	failing := stack.New(stack.KindChecksFailing, "2 pull requests have failing checks; nothing was merged").
+		WithSteps("fix them and run git stack submit, or git stack merge --force to merge anyway")
+	failing.Checks = []stack.PRChecks{
+		{Number: 201, Branch: "auth/api", Failing: []string{"lint", "test (ubuntu-latest)"}},
+		{Number: 202, Branch: "auth/core", Pending: []string{"build"}},
+		{Number: 203, Branch: "auth/ui", Failing: []string{"test (macos-latest)"}, Pending: []string{"build", "e2e"}},
+		{Number: 204, Branch: "auth/\x1bdocs", Failing: []string{"a", "b", "c", "d", "e"}},
+	}
+	pending := stack.New(stack.KindChecksPending, "1 pull request still has checks running; nothing was merged").
+		WithSteps("wait for them to finish and run git stack merge again, or git stack merge --force to merge anyway")
+	pending.Checks = []stack.PRChecks{{Number: 204, Branch: "auth/docs", Pending: []string{"build", "test (macos-latest)"}}}
+
+	r, _, errOut := newReporter(ReporterOptions{})
+	r.Error(failing)
+	r.Error(pending)
+	want := `error: 2 pull requests have failing checks; nothing was merged
+  #201 auth/api: lint, test (ubuntu-latest)
+  #202 auth/core: build still running
+  #203 auth/ui: test (macos-latest); build, e2e still running
+  #204 auth/\x1bdocs: a, b, c and 2 more
+  - fix them and run git stack submit, or git stack merge --force to merge anyway
+error: 1 pull request still has checks running; nothing was merged
+  #204 auth/docs: build, test (macos-latest)
+  - wait for them to finish and run git stack merge again, or git stack merge --force to merge anyway
+`
+	if errOut.String() != want {
+		t.Errorf("stderr =\n%s\nwant\n%s", errOut.String(), want)
+	}
+
+	r, _, errOut = newReporter(ReporterOptions{OutTTY: true, ErrTTY: true})
+	r.Error(failing)
+	r.Error(pending)
+	e := ansi.Strip(errOut.String())
+	for _, line := range []string{
+		markErr + " 2 pull requests have failing checks; nothing was merged\n  #201 auth/api: lint, test (ubuntu-latest)\n",
+		"  " + markStep + " fix them and run git stack submit, or git stack merge --force to merge anyway\n",
+		markErr + " 1 pull request still has checks running; nothing was merged\n  #204 auth/docs: build, test (macos-latest)\n",
+	} {
+		if !strings.Contains(e, line) {
+			t.Errorf("stderr lacks %q:\n%s", line, e)
+		}
+	}
+	t.Logf("terminal rendering:\n%s", e)
+}
+
 func TestReporterTerminalUsesMarks(t *testing.T) {
 	r, out, errOut := newReporter(ReporterOptions{OutTTY: true, ErrTTY: true})
 	r.Success("Synced")

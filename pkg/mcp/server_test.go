@@ -30,6 +30,11 @@ type fakeForge struct {
 	prs     []forge.PullRequest
 	updates map[int]forge.UpdatePR
 	merged  []int
+	checks  map[int]forge.CheckSummary
+}
+
+func (f *fakeForge) Checks(context.Context, git.Repo, []int) (map[int]forge.CheckSummary, error) {
+	return f.checks, nil
 }
 
 func (f *fakeForge) MergeStack(_ context.Context, _ git.Repo, n int, _ forge.MergeMethod) (forge.MergeOutcome, error) {
@@ -406,6 +411,55 @@ func TestMerge(t *testing.T) {
 	}
 	if len(h.forge.merged) != 1 {
 		t.Errorf("refused merges must not reach the forge: %v", h.forge.merged)
+	}
+}
+
+func TestMergeChecks(t *testing.T) {
+	h := newHarness(t)
+	defer h.assertNoStdout()
+	h.forge.prs = append(h.forge.prs, forge.PullRequest{Number: 8, Head: "b", Base: "a", State: forge.StateOpen, URL: "u/8"})
+	h.forge.checks = map[int]forge.CheckSummary{
+		7: {Failing: []string{"lint"}, Pending: []string{"build"}},
+		8: {Pending: []string{"test (macos-latest)"}},
+	}
+
+	// A failing check refuses with the checks spelt out, and nothing merges.
+	res, text := h.call("stack_merge", map[string]any{"no_sync": true}, nil)
+	var te toolError
+	if !res.IsError || json.Unmarshal([]byte(text), &te) != nil {
+		t.Fatalf("want a tool error, got %v %q", res.IsError, text)
+	}
+	want := []stack.PRChecks{
+		{Number: 7, Branch: "a", Failing: []string{"lint"}, Pending: []string{"build"}},
+		{Number: 8, Branch: "b", Pending: []string{"test (macos-latest)"}},
+	}
+	if te.Code != "checks_failing" || !slices.EqualFunc(te.Checks, want, func(a, b stack.PRChecks) bool {
+		return a.Number == b.Number && a.Branch == b.Branch && slices.Equal(a.Failing, b.Failing) && slices.Equal(a.Pending, b.Pending)
+	}) {
+		t.Errorf("error = %s", text)
+	}
+	if len(te.NextSteps) != 1 || !strings.Contains(te.NextSteps[0], "stack_merge with force: true") || strings.Contains(te.NextSteps[0], "git stack") {
+		t.Errorf("next steps should name tools: %q", te.NextSteps)
+	}
+	if !strings.Contains(text, `"failing":["lint"]`) {
+		t.Errorf("checks should be plain JSON fields: %s", text)
+	}
+
+	// Only running checks: a different code, so agents know to wait.
+	h.forge.checks = map[int]forge.CheckSummary{8: {Pending: []string{"build"}}}
+	res, text = h.call("stack_merge", map[string]any{"no_sync": true}, nil)
+	if !res.IsError || json.Unmarshal([]byte(text), &te) != nil || te.Code != "checks_pending" {
+		t.Errorf("pending: %q", text)
+	}
+	if len(h.forge.merged) != 0 {
+		t.Fatalf("refused merges must not reach the forge: %v", h.forge.merged)
+	}
+
+	// force merges anyway.
+	var mr app.MergeResult
+	h.call("stack_merge", map[string]any{"no_sync": true, "force": true}, &mr)
+	if mr.Status != forge.MergeMerged || len(h.forge.merged) != 1 {
+		t.Errorf("forced merge = %+v, forge merged %v", mr, h.forge.merged)
 	}
 }
 

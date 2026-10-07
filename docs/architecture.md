@@ -388,6 +388,19 @@ checks every PR in the way is open and ready first, since GitHub reports those o
 and with less context, then runs the normal sync so the merged branches go and the rest is
 restacked.
 
+**Merge checks CI first, in one request.** Branch protection only blocks on *required* checks,
+and many repos have none, so a red build would merge happily. Before the merge request (inside
+the same progress step), the use case asks the forge port's `Checks` for every PR in the range;
+the GitHub adapter sends one `gh api graphql` query with an aliased `pullRequest` per number and
+reads `statusCheckRollup` on each PR's last commit, about 0.7 to 0.9 seconds for a stack of six,
+most of it gh starting up. Owner and name come from gh's own `{owner}`/`{repo}` placeholders, so
+it reads the same repository `merge-async` writes to. A PR with more than 100 contexts gets the
+rest in follow up queries, one per page for all the PRs that still have more, using `after`
+cursors. Any failing check refuses with `checks_failing`, otherwise any queued or running one
+with `checks_pending`; `--force` skips it. If the query itself fails we merge anyway with a
+notice: GitHub's rules still guard the branch, and our check shouldn't be what makes merging
+impossible when the API is having a bad day.
+
 **How the CLI talks is one thing, in one place.** Every command prints through `ui.Reporter` (marks, emoji headlines, spinners on a terminal; `ok:`/`note:`/`error:` when piped) and the rules are written down in [`style.md`](style.md). `pkg/app` decides where a phase starts and ends through the `Progress` hook and only names the phase; the reporter owns the look.
 
 **Terminal niceties live in the CLI, never the MCP server.** Long gh stack commands

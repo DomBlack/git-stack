@@ -66,6 +66,16 @@ type recordingForge struct {
 	merges []mergeCall
 	// mergeErr, when set, is what MergeStack returns.
 	mergeErr error
+	// checks is what Checks reports, and checksErr what it fails with;
+	// checked records the numbers of every Checks call.
+	checks    map[int]forge.CheckSummary
+	checksErr error
+	checked   [][]int
+}
+
+func (f *recordingForge) Checks(_ context.Context, _ git.Repo, numbers []int) (map[int]forge.CheckSummary, error) {
+	f.checked = append(f.checked, slices.Clone(numbers))
+	return f.checks, f.checksErr
 }
 
 type mergeCall struct {

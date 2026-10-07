@@ -360,6 +360,7 @@ type mergeInput struct {
 	Branch string `json:"branch,omitempty" jsonschema:"the highest branch to merge; every branch below it in the stack goes too (default: the current branch)"`
 	Method string `json:"method,omitempty" jsonschema:"merge, squash or rebase; default: git config stack.merge.method, else the repository's default"`
 	NoSync bool   `json:"no_sync,omitempty" jsonschema:"skip the sync that normally follows (deleting merged branches, restacking the rest)"`
+	Force  bool   `json:"force,omitempty" jsonschema:"merge even when a pull request has a check that failed or is still running; GitHub's required checks still apply. Fix the checks or wait for them instead, and only pass this with the user's say so"`
 }
 
 func (s *Server) merge(ctx context.Context, req *mcp.CallToolRequest, in mergeInput) (*mcp.CallToolResult, app.MergeResult, error) {
@@ -375,7 +376,7 @@ func (s *Server) merge(ctx context.Context, req *mcp.CallToolRequest, in mergeIn
 	default:
 		return nil, app.MergeResult{}, wrapErr(stack.Newf(stack.KindInvalidArgs, "method %q is not one of merge, squash, rebase", in.Method))
 	}
-	res, err := a.Merge(ctx, repo, app.MergeOptions{Branch: in.Branch, Method: method, NoSync: in.NoSync})
+	res, err := a.Merge(ctx, repo, app.MergeOptions{Branch: in.Branch, Method: method, NoSync: in.NoSync, Force: in.Force})
 	if err != nil && res.Status != "" {
 		// The merge landed and the sync afterwards hit a conflict: keep both.
 		return &mcp.CallToolResult{IsError: true, Content: []mcp.Content{&mcp.TextContent{Text: wrapErr(err).Error()}}}, res, nil
@@ -465,7 +466,7 @@ func (s *Server) registerTools() {
 	mcp.AddTool(s.mcp, &mcp.Tool{
 		Name:        "stack_merge",
 		Title:       "Merge the stack",
-		Description: "Merge the pull requests of the current stack up to and including branch (default: the current branch) into trunk, all or nothing, then sync so merged branches are deleted and the rest restacked. Every PR in the way must be open and ready for review; publish drafts with stack_submit first. method is merge, squash or rebase.",
+		Description: "Merge the pull requests of the current stack up to and including branch (default: the current branch) into trunk, all or nothing, then sync so merged branches are deleted and the rest restacked. Every PR in the way must be open and ready for review; publish drafts with stack_submit first. Nothing is merged while any of them has a check that failed (code checks_failing) or is still running (code checks_pending); the error's checks field lists each PR's failing and pending check names. Fix the failures and push with stack_submit, or wait and call again; pass force only with the user's say so. If the checks can't be read the merge goes ahead with a notice. method is merge, squash or rebase.",
 		Annotations: &mcp.ToolAnnotations{DestructiveHint: boolp(true), OpenWorldHint: boolp(true)},
 	}, s.merge)
 	mcp.AddTool(s.mcp, &mcp.Tool{

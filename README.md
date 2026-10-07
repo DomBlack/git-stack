@@ -389,8 +389,21 @@ then runs a sync, so the merged branches get cleaned up and anything left above 
 onto the new trunk. Nothing is pushed after that, so run `git ss` to update the PRs that are left.
 
 Every PR being merged has to exist and be ready for review; a draft or closed one stops the merge
-before anything happens. GitHub's own rules still apply (required checks, reviews, merge queues).
-It uses the repo's default merge method unless you pass one, or set `git config stack.merge.method`.
+before anything happens. So does a check that failed or is still running on any of those PRs'
+head commits; they're all looked up in one request first, and if that request fails the merge
+goes ahead with a notice rather than being blocked by our own check. `--force` skips it. GitHub's
+own rules still apply either way (required checks, reviews, merge queues), so `--force` can't get
+a PR past a required check. It uses the repo's default merge method unless you pass one, or set
+`git config stack.merge.method`.
+
+```
+❯ git stack merge
+🔀 Merging 3 pull requests into main…
+✖ 2 pull requests have failing checks; nothing was merged
+  #201 auth/api: lint, test (ubuntu-latest)
+  #203 auth/ui: test (macos-latest); build still running
+  ↳ fix them and run git stack submit, or git stack merge --force to merge anyway
+```
 
 ```
 ❯ git stack merge
@@ -405,6 +418,7 @@ It uses the repo's default merge method unless you pass one, or set `git config 
 ```
 
 Flags:
+- `-f` / `--force` merge even if a check failed or is still running
 - `--no-sync` don't sync afterwards
 - `--merge` merge with a merge commit
 - `--rebase` rebase the commits onto trunk as they are
