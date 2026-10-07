@@ -100,7 +100,7 @@ rules hold for every one of them;
   links it draws with BEL; that's fine, it's the renderer's output, not ours.)
 - Terminals ignore sequences they don't know, so we don't probe for support first.
 - `GIT_STACK_NO_TERMINAL_STATUS=1` turns off everything that describes what the command is
-  doing (the window title); links and the progress state stay.
+  doing (the title and the program status); links and the progress state stay.
   `--quiet` turns all of that off too.
 
 **Links (OSC 8).** Every pull request number (`#123`) and every URL shown to a person is a
@@ -133,6 +133,28 @@ where the pop is a no-op (Ghostty). Finish runs on every way out, an error, Ctrl
 or a panic, because every command in the tree is wrapped to call it when its `RunE` returns
 (`ownTerminal` in `cmd/root.go`); a new command gets that by being added to the tree. A
 command with no steps doesn't touch the title.
+
+**Program status (OSC 7501).** Sent alongside the title, with `app=git-stack` on every report
+(a report replaces the whole record) and `msg` as one clean line of text, base64 encoded.
+
+| When | State |
+|---|---|
+| a step starts | `working`, the headline as `msg` |
+| a prompt or picker is waiting on the user | `blocked`, `kind=question`, the question as `msg` |
+| the question is answered | `working` again |
+| the command succeeded | `done`, the last result line as `msg` |
+| it failed (a restack conflict included) | `error`, the error's one line message |
+| Ctrl-C (in a step, a prompt or the picker) or SIGTERM | `idle`, exit 130 |
+| it only ever waited on the picker, closed with Escape or a choice | `clear` |
+
+The last four come from `Reporter.Finish`, on the same exit paths as the title. Anything that
+waits on the user goes through `Reporter.Waiting` (the `Prompter` does this for you) so it
+shows as `blocked`.
+
+**tmux.** Only OSC 7501 is wrapped in tmux's passthrough (`ESC P tmux; … ESC \` with every
+`ESC` inside doubled), because tmux doesn't know it and would drop it. Links, the progress
+state and the title go out bare; tmux handles each of those itself (its `hyperlinks`
+feature, its progress bar and the pane title), and wrapping them would skip that.
 
 ## When it's not a terminal
 

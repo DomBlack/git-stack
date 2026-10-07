@@ -16,13 +16,23 @@ type Prompter struct {
 	In  io.Reader
 	Out io.Writer
 	Ctx context.Context
+	// Wait, when set, is told a question is waiting on the user; the
+	// function it returns is called once it has been answered. The CLI
+	// passes Reporter.Waiting so the terminal can show it.
+	Wait func(question string) func()
 }
 
-// ErrCancelled is returned when the user dismisses a prompt.
+// ErrCancelled is returned when the user dismisses a prompt. Dismissing it
+// with Ctrl-C also matches context.Canceled, so the command ends as
+// interrupted (exit 130), like any other Ctrl-C.
 var ErrCancelled = fmt.Errorf("cancelled")
+
+// errInterrupted is a prompt dismissed with Ctrl-C.
+var errInterrupted = fmt.Errorf("%w: %w", ErrCancelled, context.Canceled)
 
 // Confirm asks a yes/no question.
 func (p Prompter) Confirm(question string, defaultYes bool) (bool, error) {
+	defer p.waiting(question)()
 	m := &confirmModel{question: question, value: defaultYes, styles: DefaultStyles()}
 	final, err := tea.NewProgram(m, tea.WithInput(p.In), tea.WithOutput(p.Out), tea.WithContext(p.ctx())).Run()
 	if err != nil {
@@ -38,13 +48,14 @@ func (p Prompter) Confirm(question string, defaultYes bool) (bool, error) {
 	}
 	p.summary(question, answer)
 	if fm.cancelled {
-		return false, ErrCancelled
+		return false, fm.cancelErr()
 	}
 	return fm.value, nil
 }
 
 // Select asks the user to pick one option and returns its index.
 func (p Prompter) Select(question string, options []string) (int, error) {
+	defer p.waiting(question)()
 	m := &selectModel{question: question, options: options, styles: DefaultStyles()}
 	final, err := tea.NewProgram(m, tea.WithInput(p.In), tea.WithOutput(p.Out), tea.WithContext(p.ctx())).Run()
 	if err != nil {
@@ -56,7 +67,7 @@ func (p Prompter) Select(question string, options []string) (int, error) {
 	// move up to the line after the summary and erase the padding.
 	fmt.Fprint(p.Out, ansi.CursorUp(len(options))+ansi.EraseScreenBelow)
 	if fm.cancelled {
-		return -1, ErrCancelled
+		return -1, fm.cancelErr()
 	}
 	return fm.cursor, nil
 }
@@ -68,6 +79,13 @@ func (p Prompter) Select(question string, options []string) (int, error) {
 func (p Prompter) summary(question, answer string) {
 	s := DefaultStyles()
 	fmt.Fprintln(p.Out, s.Title.Render("? ")+question+" "+s.Muted.Render(answer))
+}
+
+func (p Prompter) waiting(question string) func() {
+	if p.Wait == nil {
+		return func() {}
+	}
+	return p.Wait(question)
 }
 
 func (p Prompter) ctx() context.Context {
@@ -82,7 +100,9 @@ type confirmModel struct {
 	value     bool
 	done      bool
 	cancelled bool
-	styles    Styles
+	// interrupted: cancelled with Ctrl-C rather than Escape or q.
+	interrupted bool
+	styles      Styles
 }
 
 func (m *confirmModel) Init() tea.Cmd { return nil }
@@ -102,7 +122,10 @@ func (m *confirmModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case "enter":
 		m.done = true
 		return m, tea.Quit
-	case "esc", "ctrl+c", "q":
+	case "ctrl+c":
+		m.cancelled, m.interrupted, m.done = true, true, true
+		return m, tea.Quit
+	case "esc", "q":
 		m.cancelled, m.done = true, true
 		return m, tea.Quit
 	}
@@ -126,7 +149,9 @@ type selectModel struct {
 	cursor    int
 	done      bool
 	cancelled bool
-	styles    Styles
+	// interrupted: cancelled with Ctrl-C rather than Escape or q.
+	interrupted bool
+	styles      Styles
 }
 
 func (m *selectModel) Init() tea.Cmd { return nil }
@@ -144,7 +169,10 @@ func (m *selectModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case "enter":
 		m.done = true
 		return m, tea.Quit
-	case "esc", "ctrl+c", "q":
+	case "ctrl+c":
+		m.cancelled, m.interrupted, m.done = true, true, true
+		return m, tea.Quit
+	case "esc", "q":
 		m.cancelled, m.done = true, true
 		return m, tea.Quit
 	default:
@@ -183,4 +211,17 @@ func (m *selectModel) View() tea.View {
 	}
 	b.WriteString(m.styles.Help.Render("↑/↓ move · enter select · esc cancel"))
 	return tea.NewView(b.String())
+}
+
+// cancelErr is what a dismissed prompt returns: an interrupt for Ctrl-C,
+// otherwise a plain cancel.
+func (m *confirmModel) cancelErr() error { return cancelErr(m.interrupted) }
+
+func (m *selectModel) cancelErr() error { return cancelErr(m.interrupted) }
+
+func cancelErr(interrupted bool) error {
+	if interrupted {
+		return errInterrupted
+	}
+	return ErrCancelled
 }

@@ -405,6 +405,35 @@ just long enough to restore the title and then re-raised. A command with no step
 the title. Under tmux the sequence sets the pane title and the outer terminal only follows
 with `set-titles on`, which is the user's call.
 
+**Program status (OSC 7501) rides along with the title.** The same `termStatus` in `pkg/ui`
+that owns the title sends [program status](https://www.superlogical.com/rex/docs/build/program-status)
+reports with `app=git-stack`; `working` with the headline as `msg` on every step, `blocked`
+with `kind=question` while a prompt or the checkout picker waits on the user (back to
+`working` afterwards if a step is running), and a final report from `Reporter.Finish`. The
+spec says a program that exits as soon as it finishes should leave `done` or `error` behind
+and report `idle` when the user interrupts it, so that's what we do: `done` with the last
+result line, `error` with the error's one line message (a restack conflict included, since
+it needs the user), `idle` on Ctrl-C or SIGTERM. A run that only ever waited on the picker
+had no result anyone missed, so it sends `clear` instead of leaving a `done` behind. `msg` is
+one sanitised line, base64 encoded, capped at the spec's 2048 bytes.
+
+We don't query for support (`OSC 7501 ; ?`). The spec makes the query the only reliable
+detection but doesn't require it before reporting, and says a missing `Pst` terminfo entry
+mustn't be read as "unsupported"; the query means reading the reply off the tty, which would
+fight the prompts and spinners for stdin and doesn't make it back through tmux reliably.
+Unknown OSC strings are swallowed whole by every terminal we care about, which is the same
+bet OSC 9;4 already makes, so reports go out unconditionally whenever the title would (a
+terminal stderr, no `--quiet`, no `GIT_STACK_NO_TERMINAL_STATUS`). Nothing reachable from
+`pkg/mcp` can send one: the server has no Reporter, and its client reports its own status.
+
+tmux 3.7 doesn't know OSC 7501 and drops it, so with `$TMUX` set the report is wrapped in
+tmux's passthrough (`ESC P tmux; <report with every ESC doubled> ESC \`), which needs
+`allow-passthrough on`; with it off tmux drops the wrapper, which is no worse. OSC 9;4, the
+title and OSC 8 are never wrapped, because tmux handles those itself (its `progressbar`
+feature, pane titles, and the `hyperlinks` feature respectively). At the time of writing
+libghostty's parser understands OSC 7501, but the Ghostty app's own stream handler still
+ignores the reports.
+
 **Prompts and bubbletea's inline renderer.** bubbletea v2.0.10 mispositions a final frame
 that is shorter than the previous one (the question line showed up twice after answering)
 and erases a final frame that has no trailing newline. So the select prompt's final frame

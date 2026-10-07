@@ -22,11 +22,13 @@ func TestTerminalIsRestoredOnEveryExitPath(t *testing.T) {
 		body func(ctx context.Context) error
 		// panics is true when execute must re-panic after restoring.
 		panics bool
+		// status is the program status the run ends on.
+		status string
 	}{
-		{"success", func(context.Context) error { return nil }, false},
-		{"error", func(context.Context) error { return errors.New("conflict") }, false},
-		{"interrupted", func(ctx context.Context) error { <-ctx.Done(); return ctx.Err() }, false},
-		{"panic", func(context.Context) error { panic("boom") }, true},
+		{"success", func(context.Context) error { return nil }, false, "state=done:app=git-stack\x1b\\"},
+		{"error", func(context.Context) error { return errors.New("conflict") }, false, "state=error:app=git-stack:msg=Y29uZmxpY3Q=\x1b\\"},
+		{"interrupted", func(ctx context.Context) error { <-ctx.Done(); return ctx.Err() }, false, "state=idle:app=git-stack:msg=SW50ZXJydXB0ZWQ=\x1b\\"},
+		{"panic", func(context.Context) error { panic("boom") }, true, "state=error:app=git-stack:msg=cGFuaWM6IGJvb20=\x1b\\"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			var errOut bytes.Buffer
@@ -57,8 +59,8 @@ func TestTerminalIsRestoredOnEveryExitPath(t *testing.T) {
 			if !strings.Contains(e, "\x1b]2;git stack: Restacking 2 branches\x1b\\") {
 				t.Errorf("the step should have set the title: %q", e)
 			}
-			if !strings.HasSuffix(e, restore) || strings.Count(e, "\x1b[23;2t") != 1 {
-				t.Errorf("the title must be restored exactly once, last: %q", e)
+			if !strings.HasSuffix(e, "\x1b]7501;"+tc.status+restore) || strings.Count(e, "\x1b[23;2t") != 1 {
+				t.Errorf("want the status to end %q and the title restored exactly once, last: %q", tc.status, e)
 			}
 		})
 	}
@@ -80,5 +82,19 @@ func TestRootCommandTreeOwnsTerminalCleanup(t *testing.T) {
 	}
 	if !strings.HasSuffix(errOut.String(), "\x1b]2;\x1b\\\x1b[23;2t") {
 		t.Errorf("running a command from NewRootCmd must restore the title: %q", errOut.String())
+	}
+}
+
+// Ctrl-C in the picker or a prompt exits like every other interrupt.
+func TestPickerAndPromptInterruptsExit130(t *testing.T) {
+	_, pickErr := ui.RunPicker(context.Background(), strings.NewReader("\x03"), &bytes.Buffer{}, ui.PickerOptions{Height: 3})
+	_, promptErr := ui.Prompter{In: strings.NewReader("\x03"), Out: &bytes.Buffer{}}.Confirm("Delete it?", true)
+	for _, err := range []error{pickErr, promptErr} {
+		if exitCode(err) != 130 {
+			t.Errorf("exitCode(%v) = %d, want 130", err, exitCode(err))
+		}
+	}
+	if _, err := (ui.Prompter{In: strings.NewReader("q"), Out: &bytes.Buffer{}}).Confirm("Delete it?", true); exitCode(err) != 1 {
+		t.Errorf("dismissing with q is a cancel, not an interrupt: exit %d", exitCode(err))
 	}
 }

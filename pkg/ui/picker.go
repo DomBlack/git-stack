@@ -37,6 +37,9 @@ type PickerOptions struct {
 type PickerResult struct {
 	Branch    string
 	Cancelled bool
+	// Interrupted is set too when it was Ctrl-C rather than Escape or q:
+	// the user wants the whole command stopped, not just the picker shut.
+	Interrupted bool
 }
 
 // prsRefreshedMsg carries background forge results.
@@ -152,7 +155,10 @@ func (p *Picker) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 func (p *Picker) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	filterEmpty := p.filter.Value() == ""
 	switch key := msg.String(); key {
-	case "ctrl+c", "esc":
+	case "ctrl+c":
+		p.result = PickerResult{Cancelled: true, Interrupted: true}
+		return p, tea.Quit
+	case "esc":
 		p.result = PickerResult{Cancelled: true}
 		return p, tea.Quit
 	case "q":
@@ -277,16 +283,26 @@ func (p *Picker) View() tea.View {
 // Result returns the choice once the program has finished.
 func (p *Picker) Result() PickerResult { return p.result }
 
-// RunPicker runs the picker on the given terminal streams.
+// RunPicker runs the picker on the given terminal streams. Ctrl-C (or the
+// context being cancelled, e.g. SIGTERM) is an interrupt and comes back as
+// context.Canceled, like every other interrupted command; Escape is just a
+// cancel and returns no error.
 func RunPicker(ctx context.Context, in io.Reader, out io.Writer, o PickerOptions) (PickerResult, error) {
 	m := NewPicker(ctx, o)
 	prog := tea.NewProgram(m, tea.WithInput(in), tea.WithOutput(out), tea.WithContext(ctx))
 	final, err := prog.Run()
 	if err != nil {
-		return PickerResult{Cancelled: true}, err
+		if ctx.Err() != nil {
+			err = ctx.Err()
+		}
+		return PickerResult{Cancelled: true, Interrupted: true}, err
 	}
+	res := m.Result()
 	if fp, ok := final.(*Picker); ok {
-		return fp.Result(), nil
+		res = fp.Result()
 	}
-	return m.Result(), nil
+	if res.Interrupted {
+		return res, context.Canceled
+	}
+	return res, nil
 }
