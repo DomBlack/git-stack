@@ -213,6 +213,26 @@ func TestSyncDivergedTrunk(t *testing.T) {
 			t.Errorf("question = %v", ap.asked)
 		}
 	})
+	t.Run("the question is never asked under a step", func(t *testing.T) {
+		for _, answer := range []bool{true, false} {
+			f, _, _ := setup(t)
+			g := &stepGuard{t: t, answer: answer}
+			f.deps.Prompter, f.deps.Progress = g, g.progress
+			if _, err := f.sync(t, app.SyncOptions{NoRestack: true}); err != nil {
+				t.Fatal(err)
+			}
+			want := []string{"step Updating main", "end", "ask", "step Resetting main to origin/main", "end"}
+			if !answer {
+				want = want[:3]
+			}
+			got := slices.DeleteFunc(slices.Clone(g.events), func(e string) bool {
+				return strings.HasPrefix(e, "step ") && !strings.Contains(e, "main") || e == "end-other"
+			})
+			if !slices.Equal(got[:len(want)], want) {
+				t.Errorf("answer %v: events = %q, want %q first", answer, got, want)
+			}
+		}
+	})
 	t.Run("no at the prompt leaves it", func(t *testing.T) {
 		f, local, _ := setup(t)
 		f.deps.Prompter = &askPrompter{answer: false}
@@ -289,4 +309,43 @@ func TestSyncAsksTheForgeOnceWhateverTheCache(t *testing.T) {
 	if f.forge.lists != 1 {
 		t.Errorf("forge listed %d times, want 1", f.forge.lists)
 	}
+}
+
+// stepGuard is a Progress hook and a Prompter that fails the test if a
+// question is asked while a step is running, which would put a spinner
+// over the prompt.
+type stepGuard struct {
+	t      *testing.T
+	answer bool
+	active int
+	events []string
+}
+
+func (g *stepGuard) progress(ctx context.Context, _ app.Phase, msg string, fn func(context.Context) error) error {
+	g.active++
+	g.events = append(g.events, "step "+msg)
+	defer func() {
+		g.active--
+		if strings.Contains(msg, "main") {
+			g.events = append(g.events, "end")
+		} else {
+			g.events = append(g.events, "end-other")
+		}
+	}()
+	return fn(ctx)
+}
+
+func (g *stepGuard) Confirm(q string, _ bool) (bool, error) {
+	if g.active > 0 {
+		g.t.Errorf("asked %q while a step was running", q)
+	}
+	g.events = append(g.events, "ask")
+	return g.answer, nil
+}
+
+func (g *stepGuard) Select(q string, _ []string) (int, error) {
+	if g.active > 0 {
+		g.t.Errorf("asked %q while a step was running", q)
+	}
+	return 0, nil
 }
