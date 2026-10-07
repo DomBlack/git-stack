@@ -62,6 +62,7 @@ read as section markers rather than confetti because they never show up anywhere
 | Claude | 🤖 | Drafting pull request for feat-a… |
 | update | 📦 | Checking for updates… |
 | merge | 🔀 | Merging 3 pull requests into main… |
+| refresh | 📥 | Fetching pull requests… (only when the PR cache is stale) |
 | install | 🔧 | (install prints a report, no spinner) |
 
 ## Spinners

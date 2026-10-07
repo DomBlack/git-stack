@@ -103,7 +103,11 @@ func (a *App) Submit(ctx context.Context, repo git.Repo, o SubmitOptions) (Submi
 	}
 
 	// Existing PRs decide which branches are new.
-	before := PRsFor(a.loadPRs(ctx, repo, PRsFresh))
+	known, err := a.loadPRs(ctx, repo, PRsFresh)
+	if err != nil {
+		return SubmitResult{}, err
+	}
+	before := PRsFor(known)
 	var newBranches []string
 	for _, b := range s.Branches {
 		if b.Merged() {

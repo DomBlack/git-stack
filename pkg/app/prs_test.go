@@ -150,3 +150,36 @@ func TestPRURLsUsesLocalStateThenTheForge(t *testing.T) {
 		t.Error("PRURLs must never list pull requests from the forge")
 	}
 }
+
+func TestViewRefreshRunsAsAStep(t *testing.T) {
+	a, repo, _ := fixture(t)
+	ff := &fakeForge{prs: []forge.PullRequest{{Number: 5, Head: "b", State: forge.StateOpen}}}
+	cfg := config.Defaults()
+	cfg.CacheTTL = time.Hour
+	var steps []string
+	progress := func(ctx context.Context, phase app.Phase, msg string, fn func(context.Context) error) error {
+		steps = append(steps, fmt.Sprintf("%s: %s", phase, msg))
+		return fn(ctx)
+	}
+	a = app.New(app.Deps{Git: gitClient(), Meta: metaOf(a, t), Forge: ff, Cache: cache.New(repo), Config: cfg, Progress: progress})
+	ctx := context.Background()
+
+	// A stale (here missing) cache fetches under a step, so the CLI can show
+	// a spinner while the forge is asked.
+	if _, err := a.View(ctx, repo, app.ViewOptions{PRs: app.PRsFresh}); err != nil {
+		t.Fatal(err)
+	}
+	if len(steps) != 1 || steps[0] != "refresh: Fetching pull requests" {
+		t.Fatalf("steps = %q", steps)
+	}
+
+	// A fresh cache, or cached mode, never starts a step.
+	for _, mode := range []app.PRMode{app.PRsFresh, app.PRsCached} {
+		if _, err := a.View(ctx, repo, app.ViewOptions{PRs: mode}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if len(steps) != 1 {
+		t.Errorf("no further steps expected, got %q", steps)
+	}
+}
