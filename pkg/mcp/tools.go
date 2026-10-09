@@ -435,7 +435,7 @@ func (s *Server) registerTools() {
 	mcp.AddTool(s.mcp, &mcp.Tool{
 		Name:        "stack_create",
 		Title:       "Create a stacked branch",
-		Description: "Create a new branch on top of the current branch, commit staged changes with the given message, and register it in the stack. From the trunk this starts a new stack. Fails with not_at_top when the current branch is not the top of its stack.",
+		Description: "Create a new branch on top of the current branch, commit staged changes with the given message, and register it in the stack. From the trunk this starts a new stack. Fails with not_at_top when the current branch is not the top of its stack. If the commit fails (signing_failed, a hook) the branch is removed again and the changes stay staged, so fix the cause and call it again; should removing it fail too, next_steps says what was left behind and how to commit on it.",
 		Annotations: &mcp.ToolAnnotations{DestructiveHint: boolp(false), OpenWorldHint: boolp(false)},
 	}, s.create)
 	mcp.AddTool(s.mcp, &mcp.Tool{

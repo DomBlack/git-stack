@@ -3,9 +3,12 @@ package app_test
 import (
 	"context"
 	"errors"
+	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/DomBlack/git-stack/pkg/ai"
 	"github.com/DomBlack/git-stack/pkg/app"
@@ -21,11 +24,16 @@ import (
 type fakeBackend struct {
 	git   *git.Client
 	graph *stack.Graph
+	// updateErr makes Update fail, for the paths that undo a change.
+	updateErr error
 }
 
 func (f *fakeBackend) Load(context.Context, git.Repo) (*stack.Graph, error) { return f.graph, nil }
 
 func (f *fakeBackend) Update(_ context.Context, _ git.Repo, fn func(*stack.Graph) error) error {
+	if f.updateErr != nil {
+		return f.updateErr
+	}
 	if err := fn(f.graph); err != nil {
 		return err
 	}
@@ -381,5 +389,119 @@ func TestCreateExplainsSigningFailure(t *testing.T) {
 				t.Error("Detail should carry git's stderr")
 			}
 		})
+	}
+}
+
+// rejectCommits installs a pre-commit hook that fails every commit.
+func rejectCommits(t *testing.T, dir string) {
+	t.Helper()
+	hooks := filepath.Join(dir, ".git", "hooks")
+	if err := os.MkdirAll(hooks, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(hooks, "pre-commit"), []byte("#!/bin/sh\necho nope >&2\nexit 1\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestCreateUndoesTheBranchWhenTheCommitFails(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("on top of a stack", func(t *testing.T) {
+		a, fb, repo, dir, _ := mutFixture(t)
+		rejectCommits(t, dir)
+		gittest.WriteFile(t, dir, "b.txt", "b")
+		gittest.Run(t, dir, "add", "b.txt")
+
+		_, err := a.Create(ctx, repo, app.CreateOptions{Name: "feat/b", Message: []string{"Add b"}})
+		se, ok := errors.AsType[*stack.Error](err)
+		if !ok || !strings.Contains(se.Detail+se.Msg, "nope") {
+			t.Fatalf("err = %v, want the hook's output", err)
+		}
+		if !slices.ContainsFunc(se.NextSteps, func(s string) bool { return strings.Contains(s, "git stack create") }) {
+			t.Errorf("next steps %q should say to run create again", se.NextSteps)
+		}
+		if cur := gittest.Run(t, dir, "branch", "--show-current"); cur != "a" {
+			t.Errorf("on %s, want back on a", cur)
+		}
+		if exists, _ := fb.git.BranchExists(ctx, repo, "feat/b"); exists {
+			t.Error("feat/b should have been deleted")
+		}
+		if names := fb.graph.Stacks[0].Names(); !slices.Equal(names, []string{"a"}) {
+			t.Errorf("stack = %v, want feat/b forgotten", names)
+		}
+		if out := gittest.Run(t, dir, "diff", "--cached", "--name-only"); out != "b.txt" {
+			t.Errorf("staged = %q, want b.txt still staged", out)
+		}
+	})
+
+	t.Run("new stack from trunk", func(t *testing.T) {
+		a, fb, repo, dir, _ := mutFixture(t)
+		gittest.Run(t, dir, "switch", "-q", "main")
+		fb.graph = stack.NewGraph(nil)
+		rejectCommits(t, dir)
+		gittest.WriteFile(t, dir, "b.txt", "b")
+		gittest.Run(t, dir, "add", "b.txt")
+
+		if _, err := a.Create(ctx, repo, app.CreateOptions{Name: "feat/b", Message: []string{"Add b"}}); err == nil {
+			t.Fatal("expected the commit to fail")
+		}
+		if cur := gittest.Run(t, dir, "branch", "--show-current"); cur != "main" {
+			t.Errorf("on %s, want back on main", cur)
+		}
+		if len(fb.graph.Stacks) != 0 {
+			t.Errorf("stacks = %+v, want the empty stack gone", fb.graph.Stacks)
+		}
+	})
+
+	t.Run("undo fails", func(t *testing.T) {
+		a, fb, repo, dir, _ := mutFixture(t)
+		rejectCommits(t, dir)
+		fb.updateErr = errors.New("metadata locked")
+		gittest.WriteFile(t, dir, "b.txt", "b")
+		gittest.Run(t, dir, "add", "b.txt")
+
+		_, err := a.Create(ctx, repo, app.CreateOptions{Name: "feat/b", Message: []string{"Add b"}})
+		se, ok := errors.AsType[*stack.Error](err)
+		if !ok {
+			t.Fatalf("err = %v, want *stack.Error", err)
+		}
+		if steps := strings.Join(se.NextSteps, "\n"); !strings.Contains(steps, "feat/b was left behind") || !strings.Contains(steps, "git stack modify") {
+			t.Errorf("next steps %q should say feat/b is left behind and how to commit on it", se.NextSteps)
+		}
+		if cur := gittest.Run(t, dir, "branch", "--show-current"); cur != "feat/b" {
+			t.Errorf("on %s, want still on feat/b", cur)
+		}
+	})
+}
+
+func TestCreateUndoesTheBranchWhenTheCommitIsCancelled(t *testing.T) {
+	a, fb, repo, dir, _ := mutFixture(t)
+	// A hook that outlives the deadline: the commit fails with the
+	// context's error, and the undo must still run on a context of its own.
+	hooks := filepath.Join(dir, ".git", "hooks")
+	if err := os.MkdirAll(hooks, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(hooks, "pre-commit"), []byte("#!/bin/sh\nsleep 5\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	gittest.WriteFile(t, dir, "b.txt", "b")
+	gittest.Run(t, dir, "add", "b.txt")
+
+	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
+	defer cancel()
+	_, err := a.Create(ctx, repo, app.CreateOptions{Name: "feat/b", Message: []string{"Add b"}})
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("err = %v, want the deadline", err)
+	}
+	if cur := gittest.Run(t, dir, "branch", "--show-current"); cur != "a" {
+		t.Errorf("on %s, want back on a", cur)
+	}
+	if exists, _ := fb.git.BranchExists(context.Background(), repo, "feat/b"); exists {
+		t.Error("feat/b should have been deleted")
+	}
+	if names := fb.graph.Stacks[0].Names(); !slices.Equal(names, []string{"a"}) {
+		t.Errorf("stack = %v, want feat/b forgotten", names)
 	}
 }

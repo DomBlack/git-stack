@@ -4,7 +4,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
+	"time"
 
 	"github.com/DomBlack/git-stack/pkg/ai"
 	"github.com/DomBlack/git-stack/pkg/git"
@@ -35,6 +37,10 @@ type CreateResult struct {
 
 // recentSubjectsCount is how many trunk subjects feed the AI prompt.
 const recentSubjectsCount = 10
+
+// undoTimeout bounds the undo of a failed create, which runs even when the
+// command's own context was cancelled.
+const undoTimeout = 30 * time.Second
 
 // Create stages, creates a branch on top of the current one, commits and
 // registers the branch with the backend.
@@ -96,11 +102,63 @@ func (a *App) Create(ctx context.Context, repo git.Repo, o CreateOptions) (Creat
 	}
 	sha, err := a.d.Git.Commit(ctx, repo, git.CommitOptions{Message: message, NoVerify: o.NoVerify})
 	if err != nil {
-		return res, commitError(err, "pass -m <message> (the branch was created; commit with git commit)")
+		return CreateResult{}, a.undoCreate(ctx, repo, name, current, commitError(err, "pass -m <message>"))
 	}
 	info := a.commitInfo(ctx, repo, sha)
 	res.Commit = &info
 	return res, nil
+}
+
+// undoCreate makes a failed create all or nothing: the branch was already
+// created, checked out and registered before the commit failed (a locked
+// signing key, a hook saying no), so forget it, go back to the parent and
+// delete it. The staged changes survive, both branches point at the same
+// commit. The error says to run create again, or, when undoing failed too,
+// what was left behind and how to commit on it instead.
+func (a *App) undoCreate(ctx context.Context, repo git.Repo, name, parent string, cause error) error {
+	err := asStackError(cause)
+	// The commit may have failed because ctx was cancelled; the undo still
+	// has to run, so give it its own bounded context.
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), undoTimeout)
+	defer cancel()
+	// Commit can fail after git has actually committed (reading HEAD back
+	// under a cancelled context, say). Then the branch holds the commit
+	// and must stay: deleting it would orphan the work.
+	if tip, ok, terr := a.d.Git.Tip(ctx, repo, name); terr == nil && ok {
+		if parentTip, _, perr := a.d.Git.Tip(ctx, repo, parent); perr == nil && tip != parentTip {
+			return err.WithSteps(fmt.Sprintf("%s has a commit after all, so it was kept and is tracked; check `git stack log`", name))
+		}
+	}
+	undo := func() error {
+		if err := a.d.Meta.Update(ctx, repo, func(g *stack.Graph) error {
+			for i := range g.Stacks {
+				g.Stacks[i].Branches = slices.DeleteFunc(g.Stacks[i].Branches, func(b stack.Branch) bool { return b.Name == name })
+			}
+			return nil
+		}); err != nil {
+			return fmt.Errorf("forget %s: %w", name, err)
+		}
+		if err := a.d.Git.Switch(ctx, repo, parent); err != nil {
+			return err
+		}
+		return a.d.Git.DeleteBranch(ctx, repo, name)
+	}
+	if undoErr := undo(); undoErr != nil {
+		a.d.Log.Debug("undo create", "branch", name, "err", undoErr)
+		return err.WithSteps(
+			fmt.Sprintf("%s was left behind with no commit of its own (undoing it failed: %v)", name, undoErr),
+			"check `git stack log`; if it is still tracked, commit on it with `git stack modify -c -m <message>`, otherwise delete it")
+	}
+	return err.WithSteps("nothing was created; run `git stack create` again once that is sorted")
+}
+
+// asStackError returns err as a *stack.Error, wrapping anything else as
+// KindUnknown so next steps can be attached.
+func asStackError(err error) *stack.Error {
+	if se, ok := errors.AsType[*stack.Error](err); ok {
+		return se
+	}
+	return stack.New(stack.KindUnknown, err.Error()).WithCause(err)
 }
 
 // isDefaultBranch reports whether name is the repository's default branch
