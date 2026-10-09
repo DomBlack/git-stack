@@ -83,8 +83,10 @@ func (c *Client) MergeTree(ctx context.Context, repo Repo, base, ours, theirs st
 }
 
 // CommitTree creates a commit of tree on parent with info's author, author
-// date and message. The committer is the current user and signing follows
-// the user's commit.gpgsign, as commit-tree honours both.
+// date and message. The committer is the current user. The commit is not
+// signed: unlike commit and rebase, commit-tree ignores commit.gpgsign and
+// only signs when asked with -S, which we don't pass, so a replay never
+// needs the signing key.
 func (c *Client) CommitTree(ctx context.Context, repo Repo, tree, parent string, info CommitInfo) (string, error) {
 	env := []string{"GIT_AUTHOR_NAME=" + info.Author, "GIT_AUTHOR_EMAIL=" + info.Email, "GIT_AUTHOR_DATE=" + info.Date}
 	res, err := c.gitInput(ctx, repo, strings.NewReader(info.Message+"\n"), env, "commit-tree", tree, "-p", parent, "-F", "-")

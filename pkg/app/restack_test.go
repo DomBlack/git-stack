@@ -963,3 +963,52 @@ func TestRestackAbortSkipsDirtyOtherWorktree(t *testing.T) {
 		t.Error("b stays where the restack put it and the state is cleared")
 	}
 }
+
+// signingOff turns commit signing off again once a test has shown the failure.
+func signingOff(t *testing.T, dir string) {
+	t.Helper()
+	gittest.Run(t, dir, "config", "commit.gpgsign", "false")
+}
+
+// failSigning makes every signature fail, as a locked SSH key does without a
+// terminal to ask for its passphrase.
+func failSigning(t *testing.T, dir string) {
+	t.Helper()
+	gittest.Run(t, dir, "config", "gpg.format", "ssh")
+	gittest.Run(t, dir, "config", "gpg.ssh.program", "false")
+	gittest.Run(t, dir, "config", "user.signingkey", "/keys/id_ed25519.pub")
+	gittest.Run(t, dir, "config", "commit.gpgsign", "true")
+}
+
+func TestRestackConflictRebaseSigningFailureSaysContinue(t *testing.T) {
+	f := conflictFixture(t)
+	ctx := context.Background()
+	failSigning(t, f.dir)
+
+	_, err := f.app.Restack(ctx, f.repo, app.RestackOptions{})
+	var se *stack.Error
+	if !errors.As(err, &se) || se.Kind != stack.KindSigningFailed {
+		t.Fatalf("err = %+v, want signing_failed", err)
+	}
+	steps := strings.Join(se.NextSteps, "\n")
+	for _, want := range []string{"ssh-add /keys/id_ed25519", "git stack continue", "git stack abort"} {
+		if !strings.Contains(steps, want) {
+			t.Errorf("steps %q should mention %q", se.NextSteps, want)
+		}
+	}
+	if !f.rebaseActive(t) || !f.stateExists() {
+		t.Fatal("the rebase of b should be in progress with our state saved")
+	}
+	// Still failing: continue explains it again rather than claiming a conflict.
+	if _, err = f.app.Restack(ctx, f.repo, app.RestackOptions{Continue: true}); !errors.As(err, &se) || se.Kind != stack.KindSigningFailed {
+		t.Errorf("continue while still failing = %v, want signing_failed", err)
+	}
+	// Signing sorted: continue reaches the real conflict.
+	signingOff(t, f.dir)
+	if _, err = f.app.Restack(ctx, f.repo, app.RestackOptions{Continue: true}); !errors.As(err, &se) || se.Kind != stack.KindConflict || !slices.Equal(se.Files, []string{"shared.txt"}) {
+		t.Errorf("continue after fixing signing = %+v, want the shared.txt conflict", err)
+	}
+	if res, err := f.app.Restack(ctx, f.repo, app.RestackOptions{Abort: true}); err != nil || f.rebaseActive(t) || f.stateExists() {
+		t.Errorf("abort = %+v %v", res, err)
+	}
+}

@@ -148,7 +148,10 @@ func (c *Client) Commit(ctx context.Context, repo Repo, o CommitOptions) (string
 const signingFailedMarker = "failed to write commit object"
 
 // SigningError reports that git could not sign a commit. Nothing was
-// committed and the index is untouched.
+// committed. From Commit the index is untouched; from a rebase (RebaseOnto,
+// RebaseContinue) the rebase is left in progress with the failed pick's
+// changes staged, for RebaseContinue to commit once signing works or
+// RebaseAbort to drop.
 type SigningError struct {
 	// Format is gpg.format: ssh, openpgp (the default) or x509.
 	Format string

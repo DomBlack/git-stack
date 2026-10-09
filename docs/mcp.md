@@ -59,8 +59,12 @@ Codes: `not_repo`, `not_in_stack`, `not_at_top`, `conflict`, `partial`, `rebase_
 `interaction_required`, `api_failure`, `disambiguate`, `modify_recovery`, `checks_failing`,
 `checks_pending`, `signing_failed`, `unknown`.
 `signing_failed` comes from `stack_create` and `stack_modify` when git could not sign the commit,
-most often an SSH signing key whose passphrase nobody can type in (the server has no terminal);
-nothing was committed and `next_steps` says which key to `ssh-add`, or how to turn signing off.
+and from `stack_restack`, `stack_modify` and `stack_continue` when the git rebase a conflict
+needs could not sign a replayed commit; most often an SSH signing key whose passphrase nobody
+can type in (the server has no terminal). For a commit nothing was committed; for a rebase it is
+left in progress with the commit rescheduled, so `stack_continue` carries on once signing works
+and `stack_abort` still puts everything back. `next_steps` says which key to `ssh-add`, or how to
+turn signing off.
 `checks_failing` and `checks_pending` come from `stack_merge` when a pull request it would land
 has a check that failed, or (with none failed) one still queued or running, on its head commit.
 Nothing is merged. The error's `checks` lists each held up pull request:
