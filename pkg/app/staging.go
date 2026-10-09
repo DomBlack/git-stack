@@ -139,6 +139,6 @@ func signingError(se *git.SigningError) error {
 		e = stack.New(stack.KindSigningFailed, "commit signing failed: gpg could not sign the commit (its agent may need a terminal to ask for the passphrase)").
 			WithSteps("check that gpg can sign without a prompt: echo test | gpg --batch --clearsign")
 	}
-	return e.WithSteps("or turn signing off for this repository: git config commit.gpgsign false", "then run the command again").
+	return e.WithSteps("or turn signing off for this repository: git config commit.gpgsign false").
 		WithDetail(se.Detail).WithCause(se)
 }

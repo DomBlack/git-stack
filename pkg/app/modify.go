@@ -104,7 +104,11 @@ func (a *App) Modify(ctx context.Context, repo git.Repo, o ModifyOptions) (Modif
 	}
 	sha, err := a.d.Git.Commit(ctx, repo, co)
 	if err != nil {
-		return ModifyResult{}, commitError(err, "pass -m <message> or --no-edit")
+		err = commitError(err, "pass -m <message> or --no-edit")
+		if errors.Is(err, &stack.Error{Kind: stack.KindSigningFailed}) {
+			err = asStackError(err).WithSteps("then run `git stack modify` again; the branch is untouched")
+		}
+		return ModifyResult{}, err
 	}
 	res.Commit = a.commitInfo(ctx, repo, sha)
 

@@ -188,7 +188,11 @@ rather than a confusing git error.
 **`create` from trunk runs `gh stack init`, from the top runs `gh stack add`, and we
 always commit natively.** This sidesteps both `add` quirks above. From the middle of a
 stack you get a `not_at_top` error with next steps; from an untracked branch you get told
-the branch isn't in a stack.
+the branch isn't in a stack. The branch is created, checked out and registered before the
+commit, so when the commit fails (a signing key that isn't unlocked, a hook saying no) create
+undoes all of that, forgetting the branch through `Update`, switching back and deleting it,
+and the staged changes are still staged; the error says to run it again. If the undo itself
+fails the error says what was left behind and that `modify -c` commits on it.
 
 **`modify` amends natively, then runs the native restack upstack.** Conflicts come back as
 a `conflict` error listing the files and the `git stack continue` / `git stack abort`
