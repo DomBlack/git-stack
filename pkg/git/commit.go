@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/DomBlack/git-stack/pkg/exec"
@@ -126,11 +128,80 @@ func (c *Client) Commit(ctx context.Context, repo Repo, o CommitOptions) (string
 	}
 	if err != nil {
 		if ee, ok := errors.AsType[*exec.ExitError](err); ok {
-			return "", fmt.Errorf("git commit: %s", strings.TrimSpace(ee.Result.Err()))
+			stderr := strings.TrimSpace(ee.Result.Err())
+			if strings.Contains(stderr, signingFailedMarker) {
+				if se := c.signingError(ctx, repo, stderr); se != nil {
+					return "", se
+				}
+			}
+			return "", fmt.Errorf("git commit: %s", stderr)
 		}
 		return "", err
 	}
 	return c.RevParse(ctx, repo, "HEAD")
+}
+
+// signingFailedMarker is what git prints when the signing program fails,
+// whatever gpg.format is; the program's own output comes before it. Git
+// prints the same line when it can't write the object at all (a read only
+// object store), so it only means signing when signing is turned on.
+const signingFailedMarker = "failed to write commit object"
+
+// SigningError reports that git could not sign a commit. Nothing was
+// committed and the index is untouched.
+type SigningError struct {
+	// Format is gpg.format: ssh, openpgp (the default) or x509.
+	Format string
+	// Key is user.signingkey as configured, which for ssh is usually the
+	// path of the public key file; empty when unset.
+	Key string
+	// Detail is git's stderr, including the signing program's output.
+	Detail string
+}
+
+func (e *SigningError) Error() string {
+	return "git commit: signing failed: " + lastLine(e.Detail)
+}
+
+// signingError builds a SigningError from git's stderr, reading the signing
+// configuration so the caller can say which key to unlock. It returns nil
+// when signing is off, as then the failure was writing the object itself.
+func (c *Client) signingError(ctx context.Context, repo Repo, stderr string) error {
+	// Let git read the boolean: it takes yes/on/1 and a bare `gpgsign`
+	// with no value as true. Unset exits 1, which is false here too.
+	if res, err := c.config(ctx, repo, ScopeMerged, "--type=bool", "--get", "commit.gpgsign"); err != nil || res.Out() != "true" {
+		return nil
+	}
+	e := &SigningError{Format: "openpgp", Detail: stderr}
+	if v, ok, err := c.ConfigGet(ctx, repo, ScopeMerged, "gpg.format"); err == nil && ok && v != "" {
+		e.Format = v
+	}
+	if v, ok, err := c.ConfigGet(ctx, repo, ScopeMerged, "user.signingkey"); err == nil && ok {
+		e.Key = v
+		// For ssh the value is a key file when one exists at that path,
+		// relative to the repository where git runs the signer, and a
+		// literal key otherwise. Resolve a file so the path means the
+		// same from wherever the user is.
+		if e.Format == "ssh" && v != "" && !filepath.IsAbs(v) {
+			if p := filepath.Join(repo.TopLevel, v); fileExists(p) {
+				e.Key = p
+			}
+		}
+	}
+	return e
+}
+
+func fileExists(p string) bool {
+	st, err := os.Stat(p)
+	return err == nil && !st.IsDir()
+}
+
+func lastLine(s string) string {
+	s = strings.TrimSpace(s)
+	if i := strings.LastIndex(s, "\n"); i >= 0 {
+		return strings.TrimSpace(s[i+1:])
+	}
+	return s
 }
 
 // Subject returns the first line of the commit message of rev.

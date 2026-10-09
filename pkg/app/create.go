@@ -96,7 +96,7 @@ func (a *App) Create(ctx context.Context, repo git.Repo, o CreateOptions) (Creat
 	}
 	sha, err := a.d.Git.Commit(ctx, repo, git.CommitOptions{Message: message, NoVerify: o.NoVerify})
 	if err != nil {
-		return res, editorError(err, "pass -m <message> (the branch was created; commit with git commit)")
+		return res, commitError(err, "pass -m <message> (the branch was created; commit with git commit)")
 	}
 	info := a.commitInfo(ctx, repo, sha)
 	res.Commit = &info

@@ -3,9 +3,12 @@ package app
 import (
 	"context"
 	"errors"
+	"path/filepath"
+	"strings"
 
 	"github.com/DomBlack/git-stack/pkg/exec"
 	"github.com/DomBlack/git-stack/pkg/git"
+	"github.com/DomBlack/git-stack/pkg/shell"
 	"github.com/DomBlack/git-stack/pkg/stack"
 )
 
@@ -86,11 +89,56 @@ func (a *App) commitInfo(ctx context.Context, repo git.Repo, sha string) CommitI
 	return CommitInfo{SHA: sha, Subject: subject}
 }
 
-// editorError maps a missing TTY for an editor-backed commit.
-func editorError(err error, hint string) error {
+// commitError maps the ways git commit fails that the user can act on: a
+// missing TTY for an editor-backed commit (editorHint says how to pass the
+// message instead) and a signing failure.
+func commitError(err error, editorHint string) error {
 	if errors.Is(err, exec.ErrTTYUnavailable) {
 		return stack.New(stack.KindInteractionRequired, "a commit message editor is needed but no terminal is available").
-			WithSteps(hint)
+			WithSteps(editorHint)
+	}
+	if se, ok := errors.AsType[*git.SigningError](err); ok {
+		return signingError(se)
 	}
 	return err
+}
+
+// signingError explains a signing failure. The common cause with an SSH key
+// is a passphrase protected key that isn't in ssh-agent: without a terminal
+// (the MCP server, a script) nothing can answer the passphrase prompt, so
+// git fails instead. With gpg it is usually an agent whose pinentry can't
+// prompt either.
+func signingError(se *git.SigningError) error {
+	var e *stack.Error
+	switch se.Format {
+	case "ssh":
+		if se.Key == "" {
+			e = stack.New(stack.KindSigningFailed, "commit signing failed: gpg.format is ssh but user.signingkey is not set").
+				WithSteps("set user.signingkey to the public key file to sign with")
+		} else {
+			// The private key sits next to the configured .pub; quote it
+			// so the line can be pasted (a path a shell can't take, one
+			// with a control character, gets described instead).
+			// git resolved a key file to an absolute path (or ~); anything
+			// else is a literal key, which can't be ssh-added by name.
+			step := "load the signing key into ssh-agent with ssh-add"
+			if filepath.IsAbs(se.Key) || strings.HasPrefix(se.Key, "~") {
+				if q, ok := shell.Path(strings.TrimSuffix(se.Key, ".pub")); ok {
+					step = "load the key into ssh-agent: ssh-add " + q
+				} else {
+					step = "load the private key next to " + se.Key + " into ssh-agent with ssh-add"
+				}
+			}
+			e = stack.Newf(stack.KindSigningFailed, "commit signing failed: the SSH key %s could not be used (is it unlocked in ssh-agent?)", se.Key).
+				WithSteps(step)
+		}
+	case "x509":
+		e = stack.New(stack.KindSigningFailed, "commit signing failed: the X.509 signer could not sign the commit (it may need a terminal to ask for the passphrase)").
+			WithSteps("check that the signer (gpg.x509.program, gpgsm by default) can sign without a prompt")
+	default:
+		e = stack.New(stack.KindSigningFailed, "commit signing failed: gpg could not sign the commit (its agent may need a terminal to ask for the passphrase)").
+			WithSteps("check that gpg can sign without a prompt: echo test | gpg --batch --clearsign")
+	}
+	return e.WithSteps("or turn signing off for this repository: git config commit.gpgsign false", "then run the command again").
+		WithDetail(se.Detail).WithCause(se)
 }

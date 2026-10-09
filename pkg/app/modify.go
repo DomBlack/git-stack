@@ -104,7 +104,7 @@ func (a *App) Modify(ctx context.Context, repo git.Repo, o ModifyOptions) (Modif
 	}
 	sha, err := a.d.Git.Commit(ctx, repo, co)
 	if err != nil {
-		return ModifyResult{}, editorError(err, "pass -m <message> or --no-edit")
+		return ModifyResult{}, commitError(err, "pass -m <message> or --no-edit")
 	}
 	res.Commit = a.commitInfo(ctx, repo, sha)
 
