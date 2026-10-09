@@ -50,4 +50,4 @@ git-stack is a CLI (`git stack <cmd>`) and stdio MCP server for GitHub's native 
 ## Workflow
 - Small, focused commits; each leaves the tree green.
 - Update `README.md` (command table) and `docs/` in the same change as behaviour changes.
-- Don't push, create remotes, or open PRs.
+- Pushing a stack and opening or updating its PRs (`git stack submit` / `stack_submit`) is fine. Never merge a PR or a stack (`git stack merge` / `stack_merge`, `gh pr merge`) unless Dom has said so for that stack, and don't create remotes.
