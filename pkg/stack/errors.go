@@ -51,6 +51,9 @@ const (
 	// KindChecksPending: a merge was refused because checks are still
 	// running on pull requests it would land; Checks says which.
 	KindChecksPending
+	// KindSigningFailed: git could not sign a commit (a locked SSH key, a
+	// gpg agent that can't prompt); nothing was committed.
+	KindSigningFailed
 )
 
 var kindCodes = map[Kind]string{
@@ -73,6 +76,7 @@ var kindCodes = map[Kind]string{
 	KindPartial:             "partial",
 	KindChecksFailing:       "checks_failing",
 	KindChecksPending:       "checks_pending",
+	KindSigningFailed:       "signing_failed",
 }
 
 // Code is the stable machine-readable name of the kind.

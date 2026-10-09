@@ -336,3 +336,50 @@ func TestRestack(t *testing.T) {
 		t.Errorf("restack: %+v %v", res, err)
 	}
 }
+
+func TestCreateExplainsSigningFailure(t *testing.T) {
+	cases := []struct {
+		name   string
+		config [][]string
+		want   string
+	}{
+		{"ssh key file", [][]string{{"gpg.format", "ssh"}, {"gpg.ssh.program", "false"}, {"user.signingkey", "KEYDIR/id_ed25519.pub"}}, "ssh-add KEYDIR/id_ed25519"},
+		{"ssh key file with a space", [][]string{{"gpg.format", "ssh"}, {"gpg.ssh.program", "false"}, {"user.signingkey", "KEYDIR/my keys/id_ed25519.pub"}}, "ssh-add 'KEYDIR/my keys/id_ed25519'"},
+		{"ssh literal key", [][]string{{"gpg.format", "ssh"}, {"gpg.ssh.program", "false"}, {"user.signingkey", "key::ssh-ed25519 AAAAC3Nza"}}, "ssh-add"},
+		{"ssh literal key without key::", [][]string{{"gpg.format", "ssh"}, {"gpg.ssh.program", "false"}, {"user.signingkey", "ssh-ed25519 AAAAC3Nza"}}, "with ssh-add"},
+		{"ssh relative key file", [][]string{{"gpg.format", "ssh"}, {"gpg.ssh.program", "false"}, {"user.signingkey", "keys/id_ed25519.pub"}}, "ssh-add REPO/keys/id_ed25519"},
+		{"gpg", [][]string{{"gpg.program", "false"}}, "gpg"},
+		{"x509", [][]string{{"gpg.format", "x509"}, {"gpg.x509.program", "false"}}, "gpgsm"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			a, _, repo, dir, _ := mutFixture(t)
+			keyDir := t.TempDir()
+			gittest.WriteFile(t, keyDir, "id_ed25519.pub", "ssh-ed25519 AAAAC3Nza test\n")
+			gittest.WriteFile(t, keyDir, "my keys/id_ed25519.pub", "ssh-ed25519 AAAAC3Nza test\n")
+			gittest.WriteFile(t, dir, "keys/id_ed25519.pub", "ssh-ed25519 AAAAC3Nza test\n")
+			gittest.Run(t, dir, "config", "commit.gpgsign", "true")
+			for _, kv := range tc.config {
+				gittest.Run(t, dir, "config", kv[0], strings.ReplaceAll(kv[1], "KEYDIR", keyDir))
+			}
+			gittest.WriteFile(t, dir, "b.txt", "b")
+			gittest.Run(t, dir, "add", "b.txt")
+
+			_, err := a.Create(context.Background(), repo, app.CreateOptions{Name: "feat/b", Message: []string{"Add b"}})
+			se, ok := errors.AsType[*stack.Error](err)
+			if !ok || se.Kind != stack.KindSigningFailed {
+				t.Fatalf("err = %v, want signing_failed", err)
+			}
+			want := strings.NewReplacer("KEYDIR", keyDir, "REPO", repo.TopLevel).Replace(tc.want)
+			if !slices.ContainsFunc(se.NextSteps, func(s string) bool { return strings.Contains(s, want) }) {
+				t.Errorf("next steps %q do not mention %q", se.NextSteps, want)
+			}
+			if !slices.ContainsFunc(se.NextSteps, func(s string) bool { return strings.Contains(s, "commit.gpgsign false") }) {
+				t.Errorf("next steps %q do not offer turning signing off", se.NextSteps)
+			}
+			if se.Detail == "" {
+				t.Error("Detail should carry git's stderr")
+			}
+		})
+	}
+}
