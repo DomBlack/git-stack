@@ -225,7 +225,7 @@ func (a *App) startConflictRebase(ctx context.Context, run *restackRun, p *resta
 	}
 	stopped, err := a.d.Git.RebaseOnto(ctx, run.repo, p.conflictNewBase, p.conflictFrom, c.Branch)
 	if err != nil {
-		return err // the state stays so --abort can still put the moved branches back
+		return rebaseError(err) // the state stays so --abort can still put the moved branches back
 	}
 	if stopped {
 		files, ferr := a.d.Git.ConflictedFiles(ctx, run.repo)
@@ -465,7 +465,7 @@ func (a *App) restackContinue(ctx context.Context, repo git.Repo, stageAll bool)
 		}
 		stopped, err := a.d.Git.RebaseContinue(ctx, repo)
 		if err != nil {
-			return res, err
+			return res, rebaseError(err)
 		}
 		if stopped {
 			files, _ := a.d.Git.ConflictedFiles(ctx, repo)

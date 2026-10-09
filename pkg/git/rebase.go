@@ -129,8 +129,26 @@ func (c *Client) RebaseOnto(ctx context.Context, repo Repo, onto, upstream, bran
 // failure is an error.
 func (c *Client) RebaseContinue(ctx context.Context, repo Repo) (stopped bool, err error) {
 	_, err = c.gitInput(ctx, repo, nil, rebaseEnv, "rebase", "--continue")
+	if ee, ok := errors.AsType[*exec.ExitError](err); ok && strings.Contains(ee.Result.Err(), stagedChangesMarker) {
+		// A pick whose commit failed (signing, say) is left staged and git
+		// refuses to continue over it, telling you to commit it yourself.
+		// Do that: git takes the author and message from its own rebase
+		// state, and the rebase then drops the rescheduled pick as already
+		// applied. --no-verify skips pre-commit and commit-msg, the two
+		// hooks a pick skips too (both run prepare-commit-msg and
+		// post-commit), so the commit sees the same hooks the pick would
+		// have. Signing failing again comes back as a SigningError.
+		if _, cerr := c.Commit(ctx, repo, CommitOptions{NoEdit: true, NoVerify: true}); cerr != nil {
+			return false, cerr
+		}
+		_, err = c.gitInput(ctx, repo, nil, rebaseEnv, "rebase", "--continue")
+	}
 	return c.rebaseOutcome(ctx, repo, err)
 }
+
+// stagedChangesMarker is git rebase --continue's refusal when the previous
+// pick was applied but never committed.
+const stagedChangesMarker = "you have staged changes in your working tree"
 
 // RebaseAbort abandons a rebase in progress; git puts the branch it was
 // rebasing back and checks it out.
@@ -151,6 +169,18 @@ func (c *Client) rebaseOutcome(ctx context.Context, repo Repo, err error) (bool,
 	ee, ok := errors.AsType[*exec.ExitError](err)
 	if !ok {
 		return false, err
+	}
+	// A commit git could not sign stops the rebase too, with the pick
+	// rescheduled and nothing unmerged, so it is a rebase in progress that
+	// no amount of resolving would move on. Report the real cause; continue
+	// picks it up again once signing works, and abort still puts it back.
+	if stderr := strings.TrimSpace(ee.Result.Err()); strings.Contains(stderr, signingFailedMarker) {
+		// Only a signing failure when signing is on; git prints the same
+		// line when it can't write the object at all, which is a stop or
+		// an error like any other below.
+		if se := c.signingError(ctx, repo, stderr); se != nil {
+			return false, se
+		}
 	}
 	active, aerr := c.RebaseInProgress(ctx, repo)
 	if aerr != nil {

@@ -505,3 +505,33 @@ func TestCreateUndoesTheBranchWhenTheCommitIsCancelled(t *testing.T) {
 		t.Errorf("stack = %v, want feat/b forgotten", names)
 	}
 }
+
+func TestModifyExplainsSigningFailure(t *testing.T) {
+	a, _, repo, dir, _ := mutFixture(t)
+	ctx := context.Background()
+	gittest.Run(t, dir, "config", "gpg.format", "ssh")
+	gittest.Run(t, dir, "config", "gpg.ssh.program", "false")
+	gittest.Run(t, dir, "config", "user.signingkey", "/keys/id_ed25519.pub")
+	gittest.Run(t, dir, "config", "commit.gpgsign", "true")
+	before := gittest.Run(t, dir, "rev-parse", "HEAD")
+	gittest.WriteFile(t, dir, "a.txt", "a2")
+	gittest.Run(t, dir, "add", "a.txt")
+
+	for _, newCommit := range []bool{false, true} {
+		_, err := a.Modify(ctx, repo, app.ModifyOptions{NewCommit: newCommit, Message: []string{"amended"}})
+		se, ok := errors.AsType[*stack.Error](err)
+		if !ok || se.Kind != stack.KindSigningFailed {
+			t.Fatalf("new commit %v: err = %v, want signing_failed", newCommit, err)
+		}
+		steps := strings.Join(se.NextSteps, "\n")
+		if !strings.Contains(steps, "ssh-add /keys/id_ed25519") || !strings.Contains(steps, "git stack modify") {
+			t.Errorf("steps = %q", se.NextSteps)
+		}
+	}
+	if gittest.Run(t, dir, "rev-parse", "HEAD") != before {
+		t.Error("the branch must be untouched")
+	}
+	if out := gittest.Run(t, dir, "diff", "--cached", "--name-only"); out != "a.txt" {
+		t.Errorf("staged = %q, want a.txt still staged", out)
+	}
+}

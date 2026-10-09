@@ -103,6 +103,18 @@ func commitError(err error, editorHint string) error {
 	return err
 }
 
+// rebaseError maps a failed git rebase from a restack. A signing failure
+// leaves the rebase in progress with the commit rescheduled, so the next
+// steps are the usual continue and abort once signing works.
+func rebaseError(err error) error {
+	if se, ok := errors.AsType[*git.SigningError](err); ok {
+		return asStackError(signingError(se)).WithSteps(
+			"then `git stack continue` to carry on the restack",
+			"or `git stack abort` to put the moved branches back")
+	}
+	return err
+}
+
 // signingError explains a signing failure. The common cause with an SSH key
 // is a passphrase protected key that isn't in ssh-agent: without a terminal
 // (the MCP server, a script) nothing can answer the passphrase prompt, so

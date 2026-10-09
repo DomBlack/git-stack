@@ -130,3 +130,80 @@ func TestCommitBareGpgsignKeyIsSigning(t *testing.T) {
 		t.Errorf("Key = %q, want %q", se.Key, want)
 	}
 }
+
+// TestRebaseWithFailingSignerIsASigningError covers the conflict path of a
+// restack: git rebase signs every commit it replays, so a key it can't use
+// stops the rebase on the first pick (rescheduled, no conflicts). That
+// must come back as a SigningError rather than a conflict stop, with the
+// rebase left in progress so continue and abort still work.
+func TestRebaseWithFailingSignerIsASigningError(t *testing.T) {
+	gittest.Isolate(t)
+	dir := gittest.InitRepo(t)
+	gittest.Run(t, dir, "switch", "-q", "-c", "feat")
+	gittest.Commit(t, dir, "f1", "1", "f1")
+	gittest.Run(t, dir, "switch", "-q", "main")
+	gittest.Commit(t, dir, "m1", "1", "m1")
+	gittest.Run(t, dir, "config", "gpg.format", "ssh")
+	gittest.Run(t, dir, "config", "gpg.ssh.program", "false")
+	gittest.Run(t, dir, "config", "user.signingkey", "/nowhere/id_ed25519.pub")
+	gittest.Run(t, dir, "config", "commit.gpgsign", "true")
+
+	c := newClient()
+	ctx := context.Background()
+	repo, _ := c.Discover(ctx, dir)
+	stopped, err := c.RebaseOnto(ctx, repo, "main", "main", "feat")
+	se, ok := errors.AsType[*git.SigningError](err)
+	if !ok || stopped {
+		t.Fatalf("RebaseOnto = %v, %v; want a *git.SigningError", stopped, err)
+	}
+	if se.Format != "ssh" || se.Key != "/nowhere/id_ed25519.pub" {
+		t.Errorf("SigningError = %+v", se)
+	}
+	if active, _ := c.RebaseInProgress(ctx, repo); !active {
+		t.Fatal("the rebase should be left in progress for continue or abort")
+	}
+	// Still locked: continue fails the same way.
+	if stopped, err = c.RebaseContinue(ctx, repo); !errors.As(err, &se) || stopped {
+		t.Errorf("RebaseContinue = %v, %v; want a *git.SigningError", stopped, err)
+	}
+	// Signing sorted: continue finishes the rebase.
+	gittest.Run(t, dir, "config", "commit.gpgsign", "false")
+	if stopped, err = c.RebaseContinue(ctx, repo); err != nil || stopped {
+		t.Fatalf("RebaseContinue after fixing signing = %v, %v", stopped, err)
+	}
+	if gittest.Run(t, dir, "rev-parse", "feat~1") != gittest.Run(t, dir, "rev-parse", "main") {
+		t.Error("feat should now sit on main")
+	}
+}
+
+// TestRebaseObjectWriteFailureIsNotSigning: git's sequencer prints the same
+// "failed to write commit object" line when it can't write the object at
+// all. With signing off that must not be mistaken for a signing failure,
+// and above all must not look like a rebase that finished.
+func TestRebaseObjectWriteFailureIsNotSigning(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root can write to a read only directory")
+	}
+	gittest.Isolate(t)
+	dir := gittest.InitRepo(t)
+	gittest.Run(t, dir, "switch", "-q", "-c", "feat")
+	gittest.Commit(t, dir, "f1", "1", "f1")
+	gittest.Run(t, dir, "switch", "-q", "main")
+	gittest.Commit(t, dir, "m1", "1", "m1")
+	objects := filepath.Join(dir, ".git", "objects")
+	if err := os.Chmod(objects, 0o555); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(objects, 0o755) })
+
+	c := newClient()
+	ctx := context.Background()
+	repo, _ := c.Discover(ctx, dir)
+	stopped, err := c.RebaseOnto(ctx, repo, "main", "main", "feat")
+	if !stopped && err == nil {
+		t.Fatal("a rebase that could not write its commit was reported as finished")
+	}
+	if _, ok := errors.AsType[*git.SigningError](err); ok {
+		t.Errorf("err = %v, classified as a signing failure", err)
+	}
+}
