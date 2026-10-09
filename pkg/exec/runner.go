@@ -6,6 +6,13 @@
 // whatever the caller supplies (never the parent's stdin). Passthrough mode
 // attaches the real terminal and is only available to runners built with
 // WithTTY; the MCP server never constructs such a runner.
+//
+// A runner without a TTY also keeps its children away from the terminal the
+// process happens to have been started from: they run in their own session
+// (no controlling terminal, so /dev/tty cannot be opened), git's terminal
+// prompts are disabled and GPG_TTY is dropped. Otherwise a passphrase or
+// credential prompt from ssh-keygen, gpg or git would wait on a terminal
+// nobody is watching, which is how the MCP server used to hang.
 package exec
 
 import (
@@ -139,6 +146,15 @@ func WithTTY(t TTY) Option {
 // context is cancelled before killing it.
 const waitDelay = 2 * time.Second
 
+// noPromptEnv and noPromptUnset apply to every child of a runner without a
+// TTY. GIT_TERMINAL_PROMPT=0 makes git fail a credential prompt outright
+// rather than look for a terminal; dropping GPG_TTY stops gpg pointing its
+// pinentry at the terminal this process inherited.
+var (
+	noPromptEnv   = []string{"GIT_TERMINAL_PROMPT=0"}
+	noPromptUnset = []string{"GPG_TTY"}
+)
+
 type runner struct {
 	debug io.Writer
 	tty   *TTY
@@ -161,6 +177,10 @@ func (r *runner) Run(ctx context.Context, c Cmd) (Result, error) {
 	cmd := osexec.CommandContext(ctx, c.Name, c.Args...)
 	cmd.Dir = c.Dir
 	cmd.Env = BuildEnv(os.Environ(), c.Env, c.Unset)
+	if r.tty == nil {
+		cmd.Env = BuildEnv(cmd.Env, noPromptEnv, noPromptUnset)
+		cmd.SysProcAttr = detached()
+	}
 	cmd.WaitDelay = waitDelay
 	cmd.Cancel = func() error {
 		// Give the child a chance to clean up (e.g. git rebase state) before

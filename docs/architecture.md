@@ -59,8 +59,17 @@ and nothing outside `pkg/exec` touches `os/exec`.
 Everything goes through `pkg/exec.Runner`. Capture is the default. Passthrough (a real
 TTY handed to the child) is opt in, only exists on the CLI runner, and is only used for
 `git add -p`, editors, and `gh stack submit`'s interactive editor. The MCP runner is built
-without a TTY so it physically can't enter passthrough mode, which is how we guarantee an
-MCP tool never blocks waiting on a terminal.
+without a TTY so it physically can't enter passthrough mode.
+
+That alone wasn't enough to keep an MCP tool from blocking on a terminal. Capture mode
+hands the child a closed stdin, but ssh-keygen, gpg and git's credential code prompt on
+`/dev/tty`, the controlling terminal, which every child inherits from the terminal the MCP
+server was started in; a `stack_create` with `commit.gpgsign` and a locked SSH key sat on a
+passphrase prompt nobody could see. So a runner without a TTY starts each child in its own
+session (`setsid`, so there is no controlling terminal and `/dev/tty` fails to open), sets
+`GIT_TERMINAL_PROMPT=0` and drops `GPG_TTY`. The prompt turns into an immediate error that
+the use case can explain. A CLI runner with a terminal does none of this: its user can
+answer the prompt.
 
 `pkg/git` also retries a command that failed because another process held
 `.git/index.lock`, backing off from 25ms up to 250ms for about 2 seconds in total before

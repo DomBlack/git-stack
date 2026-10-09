@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"os"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -118,5 +120,69 @@ func TestBuildEnv(t *testing.T) {
 	want := []string{"A=1", "B=9"}
 	if strings.Join(got, ",") != strings.Join(want, ",") {
 		t.Errorf("BuildEnv = %v, want %v", got, want)
+	}
+}
+
+// hasControllingTerminal reports whether this test process can open
+// /dev/tty, which is what ssh-keygen and gpg do to prompt for a passphrase.
+func hasControllingTerminal(t *testing.T) bool {
+	t.Helper()
+	if runtime.GOOS == "windows" {
+		t.Skip("no /dev/tty on windows")
+	}
+	_, err := exec.New(exec.WithTTY(exec.TTY{In: os.Stdin, Out: os.Stdout, Err: os.Stderr})).
+		Run(context.Background(), exec.Cmd{Name: "sh", Args: []string{"-c", "exec 3</dev/tty"}})
+	return err == nil
+}
+
+func TestCaptureWithoutTTYDetachesFromTerminal(t *testing.T) {
+	hadTTY := hasControllingTerminal(t)
+	// A child of a runner with no TTY must not reach the terminal the
+	// process was started from, even when there is one: the MCP server's
+	// git would otherwise block on a passphrase prompt nobody can answer.
+	res, err := exec.New().Run(context.Background(), exec.Cmd{Name: "sh", Args: []string{"-c", "exec 3</dev/tty"}})
+	if err == nil {
+		t.Errorf("child of a TTY-less runner opened /dev/tty (test has terminal: %v)", hadTTY)
+	} else if _, ok := errors.AsType[*exec.ExitError](err); !ok {
+		t.Errorf("err = %v (%T), want *exec.ExitError from the failed open; stderr %q", err, err, res.Err())
+	}
+	// That check is vacuous where the test itself has no terminal (CI), so
+	// also check the mechanism: a child started in its own session leads
+	// its own process group, so its pgid is its pid. One that merely
+	// inherited ours is in our group instead.
+	pgid := func(r exec.Runner) string {
+		t.Helper()
+		res, err := r.Run(context.Background(), exec.Cmd{Name: "sh", Args: []string{"-c", `[ "$(ps -o pgid= -p $$ | tr -d ' ')" = "$$" ] && echo leader || echo inherited`}})
+		if err != nil {
+			t.Fatalf("ps: %v: %s", err, res.Err())
+		}
+		return res.Out()
+	}
+	if got := pgid(exec.New()); got != "leader" {
+		t.Errorf("child of a TTY-less runner is %s, want its own session leader", got)
+	}
+	if got := pgid(exec.New(exec.WithTTY(exec.TTY{In: os.Stdin, Out: os.Stdout, Err: os.Stderr}))); got != "inherited" {
+		t.Errorf("child of a TTY runner is %s, want to inherit our process group", got)
+	}
+}
+
+func TestCaptureWithoutTTYDisablesPrompts(t *testing.T) {
+	t.Setenv("GPG_TTY", "/dev/ttys000")
+	script := `echo "${GIT_TERMINAL_PROMPT:-unset}|${GPG_TTY:-unset}"`
+	res, err := exec.New().Run(context.Background(), exec.Cmd{Name: "sh", Args: []string{"-c", script}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := res.Out(), "0|unset"; got != want {
+		t.Errorf("TTY-less env = %q, want %q", got, want)
+	}
+	// A runner with a terminal leaves prompts alone: the CLI user can answer them.
+	r := exec.New(exec.WithTTY(exec.TTY{In: os.Stdin, Out: os.Stdout, Err: os.Stderr}))
+	res, err = r.Run(context.Background(), exec.Cmd{Name: "sh", Args: []string{"-c", script}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := res.Out(), "unset|/dev/ttys000"; got != want {
+		t.Errorf("TTY env = %q, want %q", got, want)
 	}
 }
