@@ -3,6 +3,7 @@ package git_test
 import (
 	"context"
 	"errors"
+	"os"
 	"path/filepath"
 	"testing"
 
@@ -39,6 +40,47 @@ func TestWorktrees(t *testing.T) {
 	}
 	if wts[2].Path != realPath(t, detached) || !wts[2].Detached || wts[2].Branch != "" {
 		t.Errorf("detached worktree = %+v", wts[2])
+	}
+}
+
+func TestWorktreesMarksMissingDirectoriesPrunable(t *testing.T) {
+	gittest.Isolate(t)
+	dir := gittest.InitRepo(t)
+	c := newClient()
+	ctx := context.Background()
+	repo, err := c.Discover(ctx, dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	gone := filepath.Join(t.TempDir(), "gone")
+	gittest.Run(t, dir, "worktree", "add", "-q", "-b", "gone", gone)
+	locked := filepath.Join(t.TempDir(), "locked")
+	gittest.Run(t, dir, "worktree", "add", "-q", "-b", "locked", locked)
+	gittest.Run(t, dir, "worktree", "lock", "--reason", "on a usb stick", locked)
+	for _, p := range []string{gone, locked} {
+		if err := os.RemoveAll(p); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	wts, err := c.Worktrees(ctx, repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// git never offers a locked worktree for pruning, gone or not.
+	if len(wts) != 3 || wts[0].Prunable || !wts[1].Prunable || wts[1].Locked || wts[2].Prunable || !wts[2].Locked {
+		t.Fatalf("worktrees = %+v", wts)
+	}
+
+	if err := c.PruneWorktrees(ctx, repo); err != nil {
+		t.Fatal(err)
+	}
+	wts, err = c.Worktrees(ctx, repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(wts) != 2 || wts[1].Branch != "locked" {
+		t.Errorf("after prune = %+v; want the locked one kept", wts)
 	}
 }
 

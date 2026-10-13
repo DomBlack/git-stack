@@ -193,6 +193,9 @@ func (a *App) Sync(ctx context.Context, repo git.Repo, o SyncOptions) (SyncResul
 		return res, err
 	}
 	res.Remote = st.remote
+	if err := a.syncPruneWorktrees(ctx, st, &res); err != nil {
+		return res, err
+	}
 
 	// Listing pull requests is a forge round trip that can take longer than
 	// the fetch itself on a busy repository, so it runs alongside the fetch
@@ -290,7 +293,7 @@ func (a *App) gatherSync(ctx context.Context, repo git.Repo) (*syncState, error)
 	if err != nil {
 		return nil, err
 	}
-	st := &syncState{repo: repo, graph: graph, dirty: newDirtyCache(), local: map[string]git.Branch{}}
+	st := &syncState{repo: repo, graph: graph, dirty: newDirtyCache()}
 	st.trunks = graph.Trunks
 	if len(st.trunks) == 0 {
 		def, ok, err := a.d.Git.DefaultBranch(ctx, repo)
@@ -304,17 +307,25 @@ func (a *App) gatherSync(ctx context.Context, repo git.Repo) (*syncState, error)
 		st.trunks = []string{def}
 	}
 	st.remote = a.d.Git.RemoteFor(ctx, repo, st.trunks[0])
-	branches, err := a.d.Git.Branches(ctx, repo)
-	if err != nil {
-		return nil, err
-	}
-	for _, b := range branches {
-		st.local[b.Name] = b
-	}
-	if st.worktrees, err = a.d.Git.Worktrees(ctx, repo); err != nil {
+	if err := a.loadCheckouts(ctx, st); err != nil {
 		return nil, err
 	}
 	return st, nil
+}
+
+// loadCheckouts reads every local branch, with its tip and where it is
+// checked out, and the worktrees.
+func (a *App) loadCheckouts(ctx context.Context, st *syncState) error {
+	branches, err := a.d.Git.Branches(ctx, st.repo)
+	if err != nil {
+		return err
+	}
+	st.local = make(map[string]git.Branch, len(branches))
+	for _, b := range branches {
+		st.local[b.Name] = b
+	}
+	st.worktrees, err = a.d.Git.Worktrees(ctx, st.repo)
+	return err
 }
 
 // moveBranch moves a local branch from one tip to another. A branch nobody

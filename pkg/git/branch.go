@@ -137,6 +137,19 @@ func (c *Client) SwitchDetached(ctx context.Context, repo Repo, rev string) erro
 	return nil
 }
 
+// PruneWorktrees forgets every worktree whose directory is gone, the way
+// git worktree prune does. Locked ones are left alone.
+func (c *Client) PruneWorktrees(ctx context.Context, repo Repo) error {
+	_, err := c.gitIn(ctx, repo, "worktree", "prune")
+	if err != nil {
+		if ee, ok := errors.AsType[*exec.ExitError](err); ok {
+			return fmt.Errorf("worktree prune: %s", ee.Result.Err())
+		}
+		return err
+	}
+	return nil
+}
+
 // Worktree is one entry of `git worktree list`.
 type Worktree struct {
 	// Path is the working tree root.
@@ -146,6 +159,11 @@ type Worktree struct {
 	Branch   string
 	Detached bool
 	Bare     bool
+	// Prunable is set when git would prune the entry, usually because its
+	// directory has been deleted.
+	Prunable bool
+	// Locked is set when the entry is locked against pruning.
+	Locked bool
 }
 
 // Worktrees lists the main checkout and every linked worktree.
@@ -180,6 +198,10 @@ func (c *Client) Worktrees(ctx context.Context, repo Repo) ([]Worktree, error) {
 			cur.Detached = true
 		case line == "bare":
 			cur.Bare = true
+		case line == "prunable" || strings.HasPrefix(line, "prunable "):
+			cur.Prunable = true
+		case line == "locked" || strings.HasPrefix(line, "locked "):
+			cur.Locked = true
 		}
 	}
 	flush()

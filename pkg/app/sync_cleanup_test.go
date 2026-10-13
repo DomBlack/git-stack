@@ -2,6 +2,7 @@ package app_test
 
 import (
 	"context"
+	"os"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -412,6 +413,52 @@ func TestSyncKeepsDeletedBranchWhenSwitchWouldOverwriteChanges(t *testing.T) {
 		t.Errorf("on %s, want a", cur)
 	}
 	if !strings.Contains(strings.Join(res.Notices, "\n"), "would overwrite your changes to a.txt") {
+		t.Errorf("notices = %v", res.Notices)
+	}
+}
+
+func TestSyncPrunesWorktreeWhoseDirectoryIsGone(t *testing.T) {
+	f := newSyncFixture(t)
+	gittest.Run(t, f.dir, "switch", "-q", "main")
+	wt := filepath.Join(t.TempDir(), "wt")
+	gittest.Run(t, f.dir, "worktree", "add", "-q", wt, "a")
+	if err := os.RemoveAll(wt); err != nil {
+		t.Fatal(err)
+	}
+	f.mergeOnRemote(t, "a", 0)
+	res, err := f.sync(t, app.SyncOptions{NoRestack: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := deleted(res, "a"); !ok || branchExists(t, f.dir, "a") {
+		t.Errorf("a should be deleted once its dead worktree is pruned: deleted = %+v kept = %+v", res.Deleted, res.Kept)
+	}
+	if n := len(strings.Split(gittest.Run(t, f.dir, "worktree", "list"), "\n")); n != 1 {
+		t.Errorf("%d worktrees left, want just the main one", n)
+	}
+	if !strings.Contains(strings.Join(res.Notices, "\n"), "its directory is gone") {
+		t.Errorf("notices = %v", res.Notices)
+	}
+}
+
+func TestSyncLeavesLockedWorktreeWhoseDirectoryIsGone(t *testing.T) {
+	f := newSyncFixture(t)
+	gittest.Run(t, f.dir, "switch", "-q", "main")
+	wt := filepath.Join(t.TempDir(), "wt")
+	gittest.Run(t, f.dir, "worktree", "add", "-q", wt, "a")
+	gittest.Run(t, f.dir, "worktree", "lock", wt)
+	if err := os.RemoveAll(wt); err != nil {
+		t.Fatal(err)
+	}
+	f.mergeOnRemote(t, "a", 0)
+	res, err := f.sync(t, app.SyncOptions{NoRestack: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if k, ok := kept(res, "a"); !ok || k.Reason != app.KeptOtherWorktree || !branchExists(t, f.dir, "a") {
+		t.Errorf("kept = %+v", res.Kept)
+	}
+	if !strings.Contains(strings.Join(res.Notices, "\n"), "git worktree unlock") {
 		t.Errorf("notices = %v", res.Notices)
 	}
 }
