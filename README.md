@@ -341,7 +341,9 @@ git may already have updated the checkout. It never deletes a lock itself.
 
 If the branch being deleted is the one you're on, sync switches you to its trunk first, and like
 `git switch` your uncommitted changes come along. It only keeps the branch when git says the
-switch would overwrite them, and then names the files.
+switch would overwrite them, and then names the files. A worktree whose directory you deleted
+by hand (rather than with `git worktree remove`) is forgotten at the start of the sync, so its
+branches can be cleaned up like any other; a locked one is left alone with a notice.
 
 Flags:
 - `-d` / `--delete-all` delete merged or closed branches without asking
