@@ -339,6 +339,10 @@ lock on the branch itself (`.git/refs/heads/main.lock`, which can happen whether
 checked out) is reported straight away with its path rather than waited on, because by then
 git may already have updated the checkout. It never deletes a lock itself.
 
+If the branch being deleted is the one you're on, sync switches you to its trunk first, and like
+`git switch` your uncommitted changes come along. It only keeps the branch when git says the
+switch would overwrite them, and then names the files.
+
 Flags:
 - `-d` / `--delete-all` delete merged or closed branches without asking
 - `-f` / `--force` like `-d`, and also reset a diverged trunk to the remote

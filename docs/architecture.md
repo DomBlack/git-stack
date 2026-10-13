@@ -270,7 +270,9 @@ A branch recorded in two worktrees' metadata files is read from the first; once 
 deleted the stale record in the other file shows up as gone on the next sync and is
 dropped then, so it heals over two syncs. A candidate checked out in the current worktree whose
 trunk is checked out in another worktree leaves HEAD detached at the trunk tip rather than
-failing. Consent for deletion is `stack.sync.prune` (`always` by default), `-d`, or `-f`;
+failing. Moving the current checkout off a branch being deleted is a plain `git switch`, so
+uncommitted changes git can carry come along; only git's "would be overwritten" refusal keeps
+the branch (as `dirty`, files named); any other failure stops the sync as before. Consent for deletion is `stack.sync.prune` (`always` by default), `-d`, or `-f`;
 with no terminal and `ask`, branches are kept with a notice. Nothing is pushed; `submit`
 does that.
 

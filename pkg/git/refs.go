@@ -103,8 +103,8 @@ func (c *Client) MergeFF(ctx context.Context, repo Repo, rev string) error {
 	_, err := c.gitIn(ctx, repo, "merge", "--ff-only", "--quiet", rev)
 	if err != nil {
 		if ee, ok := errors.AsType[*exec.ExitError](err); ok && LockPath(err) == "" {
-			if changed, untracked := parseOverwrite(ee.Result.Err()); len(changed)+len(untracked) > 0 {
-				return &OverwriteError{Changed: changed, Untracked: untracked}
+			if oe := overwriteError(ee); oe != nil {
+				return oe
 			}
 			return fmt.Errorf("fast forward: %s", firstLine(ee.Result.Err()))
 		}
@@ -197,7 +197,16 @@ func (e *OverwriteError) Error() string {
 	if n := len(e.Untracked); n > 0 {
 		parts = append(parts, fmt.Sprintf("%d untracked", n))
 	}
-	return "fast forward would overwrite " + strings.Join(parts, " and ") + " files"
+	return "moving the checkout would overwrite " + strings.Join(parts, " and ") + " files"
+}
+
+// overwriteError is the *OverwriteError in a git failure, or nil when git
+// failed for some other reason.
+func overwriteError(ee *exec.ExitError) *OverwriteError {
+	if changed, untracked := parseOverwrite(ee.Result.Err()); len(changed)+len(untracked) > 0 {
+		return &OverwriteError{Changed: changed, Untracked: untracked}
+	}
+	return nil
 }
 
 // parseOverwrite reads the file lists out of git's "would be overwritten"
