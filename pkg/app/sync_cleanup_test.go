@@ -336,10 +336,70 @@ func TestSyncMovesCurrentWorktreeOffDeletedBranch(t *testing.T) {
 	}
 }
 
-func TestSyncKeepsDeletedBranchWhenCurrentTreeIsDirty(t *testing.T) {
+func TestSyncCarriesUncommittedChangesToTrunk(t *testing.T) {
 	f := newSyncFixture(t)
 	gittest.Run(t, f.dir, "switch", "-q", "a")
 	f.mergeOnRemote(t, "a", 0)
+	// a.txt is the same on a and on the merged main, so git can carry the edit over.
+	gittest.WriteFile(t, f.dir, "a.txt", "edited")
+	res, err := f.sync(t, app.SyncOptions{NoRestack: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := deleted(res, "a"); !ok || branchExists(t, f.dir, "a") {
+		t.Fatalf("a should be deleted: deleted = %+v kept = %+v", res.Deleted, res.Kept)
+	}
+	if cur := gittest.Run(t, f.dir, "branch", "--show-current"); cur != "main" {
+		t.Errorf("on %s, want main", cur)
+	}
+	if got := gittest.Run(t, f.dir, "status", "--porcelain"); got != "M a.txt" {
+		t.Errorf("status = %q; the edit should have come along", got)
+	}
+	if !strings.Contains(strings.Join(res.Notices, "\n"), "uncommitted changes came along") {
+		t.Errorf("notices = %v", res.Notices)
+	}
+}
+
+func TestSyncSaysWhenOnlyUntrackedFilesCameAlong(t *testing.T) {
+	f := newSyncFixture(t)
+	gittest.Run(t, f.dir, "switch", "-q", "a")
+	f.mergeOnRemote(t, "a", 0)
+	gittest.WriteFile(t, f.dir, "notes.txt", "mine")
+	res, err := f.sync(t, app.SyncOptions{NoRestack: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := deleted(res, "a"); !ok {
+		t.Fatalf("a should be deleted: kept = %+v", res.Kept)
+	}
+	if !strings.Contains(strings.Join(res.Notices, "\n"), "uncommitted changes came along") {
+		t.Errorf("notices = %v", res.Notices)
+	}
+}
+
+func TestSyncKeepsDeletedBranchWhenSwitchWouldOverwriteUntrackedFiles(t *testing.T) {
+	f := newSyncFixture(t)
+	gittest.Run(t, f.dir, "switch", "-q", "a")
+	f.mergeOnRemote(t, "a", 0)
+	f.advanceRemote(t, "main", "new.txt") // main gains a file a doesn't have
+	gittest.WriteFile(t, f.dir, "new.txt", "mine")
+	res, err := f.sync(t, app.SyncOptions{NoRestack: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if k, ok := kept(res, "a"); !ok || k.Reason != app.KeptDirty {
+		t.Errorf("kept = %+v", res.Kept)
+	}
+	if n := strings.Join(res.Notices, "\n"); !strings.Contains(n, "untracked new.txt") || !strings.Contains(n, "--include-untracked") {
+		t.Errorf("notices = %v", res.Notices)
+	}
+}
+
+func TestSyncKeepsDeletedBranchWhenSwitchWouldOverwriteChanges(t *testing.T) {
+	f := newSyncFixture(t)
+	gittest.Run(t, f.dir, "switch", "-q", "a")
+	f.mergeOnRemote(t, "a", 0)
+	f.advanceRemote(t, "main", "a.txt") // now a.txt differs between a and main
 	gittest.WriteFile(t, f.dir, "a.txt", "edited")
 	res, err := f.sync(t, app.SyncOptions{NoRestack: true})
 	if err != nil {
@@ -347,6 +407,12 @@ func TestSyncKeepsDeletedBranchWhenCurrentTreeIsDirty(t *testing.T) {
 	}
 	if k, ok := kept(res, "a"); !ok || k.Reason != app.KeptDirty || !branchExists(t, f.dir, "a") {
 		t.Errorf("kept = %+v", res.Kept)
+	}
+	if cur := gittest.Run(t, f.dir, "branch", "--show-current"); cur != "a" {
+		t.Errorf("on %s, want a", cur)
+	}
+	if !strings.Contains(strings.Join(res.Notices, "\n"), "would overwrite your changes to a.txt") {
+		t.Errorf("notices = %v", res.Notices)
 	}
 }
 

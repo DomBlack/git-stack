@@ -72,6 +72,9 @@ func (c *Client) Switch(ctx context.Context, repo Repo, name string) error {
 	_, err := c.gitIn(ctx, repo, "switch", "--no-guess", name)
 	if err != nil {
 		if ee, ok := errors.AsType[*exec.ExitError](err); ok {
+			if oe := overwriteError(ee); oe != nil {
+				return oe
+			}
 			return fmt.Errorf("switch to %q: %s", name, ee.Result.Err())
 		}
 		return err
@@ -124,6 +127,9 @@ func (c *Client) SwitchDetached(ctx context.Context, repo Repo, rev string) erro
 	_, err := c.gitIn(ctx, repo, "switch", "--detach", rev)
 	if err != nil {
 		if ee, ok := errors.AsType[*exec.ExitError](err); ok {
+			if oe := overwriteError(ee); oe != nil {
+				return oe
+			}
 			return fmt.Errorf("switch --detach %q: %s", rev, ee.Result.Err())
 		}
 		return err

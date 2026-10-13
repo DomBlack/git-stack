@@ -87,27 +87,18 @@ func (a *App) deleteApproved(ctx context.Context, st *syncState, approved []cand
 		switch lb.Worktree {
 		case "":
 		case st.repo.TopLevel:
-			if st.isDirty(ctx, a.d.Git, lb.Worktree) {
-				res.Kept = append(res.Kept, KeptBranch{Name: c.name, Reason: KeptDirty})
-				res.notice("%s is checked out here with uncommitted changes, so it was kept; commit or stash them and sync again", c.name)
-				continue
-			}
 			trunk, ok := st.local[c.trunk]
 			if !ok {
 				res.Kept = append(res.Kept, KeptBranch{Name: c.name, Reason: KeptNoTrunk})
 				res.notice("%s is checked out here and its trunk %s has no local branch, so it was kept", c.name, c.trunk)
 				continue
 			}
-			if trunk.Worktree != "" && trunk.Worktree != st.repo.TopLevel {
-				if err := a.d.Git.SwitchDetached(ctx, st.repo, trunk.Head); err != nil {
-					return err
-				}
-				res.notice("%s was checked out here; HEAD is now detached at %s (%s) because %s is checked out in %s", c.name, c.trunk, short(trunk.Head), c.trunk, shortPath(trunk.Worktree))
-			} else {
-				if err := a.d.Git.Switch(ctx, st.repo, c.trunk); err != nil {
-					return err
-				}
-				st.local[c.trunk] = withWorktree(trunk, st.repo.TopLevel)
+			moved, err := a.moveOffDeleted(ctx, st, c, trunk, res)
+			if err != nil {
+				return err
+			}
+			if !moved {
+				continue
 			}
 		default:
 			res.Kept = append(res.Kept, KeptBranch{Name: c.name, Reason: KeptOtherWorktree})
@@ -122,6 +113,58 @@ func (a *App) deleteApproved(ctx context.Context, st *syncState, approved []cand
 		*removed = append(*removed, c.name)
 	}
 	return nil
+}
+
+// moveOffDeleted switches the current checkout from a branch about to be
+// deleted to its trunk (or to the trunk's tip, detached, when the trunk is
+// checked out in another worktree). Uncommitted changes, untracked files
+// included, come along the way git switch carries them; only when git
+// refuses because they'd be overwritten is the branch kept and false
+// returned. Any other failure is returned as is.
+func (a *App) moveOffDeleted(ctx context.Context, st *syncState, c candidate, trunk git.Branch, res *SyncResult) (bool, error) {
+	dirty := st.isDirty(ctx, a.d.Git, st.repo.TopLevel)
+	if !dirty {
+		dirty, _ = a.d.Git.HasUntrackedFiles(ctx, st.repo)
+	}
+	detach := trunk.Worktree != "" && trunk.Worktree != st.repo.TopLevel
+	var err error
+	if detach {
+		err = a.d.Git.SwitchDetached(ctx, st.repo, trunk.Head)
+	} else {
+		err = a.d.Git.Switch(ctx, st.repo, c.trunk)
+	}
+	if oe, ok := errors.AsType[*git.OverwriteError](err); ok {
+		var what []string
+		if len(oe.Changed) > 0 {
+			what = append(what, "your changes to "+joinNames(oe.Changed))
+		}
+		step := "commit or stash them and sync again"
+		if len(oe.Untracked) > 0 {
+			what = append(what, "untracked "+joinNames(oe.Untracked))
+			step = "commit them, move them aside or stash them with git stash --include-untracked, then sync again"
+		}
+		res.Kept = append(res.Kept, KeptBranch{Name: c.name, Reason: KeptDirty})
+		res.notice("%s is checked out here and switching to %s would overwrite %s, so it was kept; %s",
+			c.name, c.trunk, strings.Join(what, " and "), step)
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	carried := ""
+	if dirty {
+		carried = "; your uncommitted changes came along"
+	}
+	if detach {
+		res.notice("%s was checked out here; HEAD is now detached at %s (%s) because %s is checked out in %s%s",
+			c.name, c.trunk, short(trunk.Head), c.trunk, shortPath(trunk.Worktree), carried)
+	} else {
+		st.local[c.trunk] = withWorktree(trunk, st.repo.TopLevel)
+		if dirty {
+			res.notice("%s was checked out here, so you are now on %s%s", c.name, c.trunk, carried)
+		}
+	}
+	return true, nil
 }
 
 // short abbreviates a commit id for messages.
