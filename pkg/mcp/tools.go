@@ -184,6 +184,35 @@ func (s *Server) modify(ctx context.Context, req *mcp.CallToolRequest, in modify
 	return nil, res, nil
 }
 
+// --- stack_absorb -------------------------------------------------------
+
+type absorbInput struct {
+	repoArg
+	Staging string `json:"staging,omitempty" jsonschema:"what to stage first: all (git add -A), update (git add -u) or none (default). The index is what gets absorbed"`
+	DryRun  bool   `json:"dry_run,omitempty" jsonschema:"plan only: report where each staged hunk would go without rewriting any commit"`
+}
+
+func (s *Server) absorb(ctx context.Context, req *mcp.CallToolRequest, in absorbInput) (*mcp.CallToolResult, app.AbsorbResult, error) {
+	staging, err := parseStaging(in.Staging)
+	if err != nil {
+		return nil, app.AbsorbResult{}, wrapErr(err)
+	}
+	repo, a, err := s.appFor(ctx, req, in.RepoPath)
+	if err != nil {
+		return nil, app.AbsorbResult{}, wrapErr(err)
+	}
+	res, err := a.Absorb(ctx, repo, app.AbsorbOptions{Staging: staging, DryRun: in.DryRun, Force: true})
+	if err != nil && res.Applied {
+		// The commits were rewritten and the restack above them hit a
+		// conflict: keep both, as stack_sync does.
+		return &mcp.CallToolResult{IsError: true, Content: []mcp.Content{&mcp.TextContent{Text: wrapErr(err).Error()}}}, res, nil
+	}
+	if err != nil {
+		return nil, app.AbsorbResult{}, wrapErr(err)
+	}
+	return nil, res, nil
+}
+
 // --- stack_continue / stack_abort ---------------------------------------
 
 type continueInput struct {
@@ -444,6 +473,12 @@ func (s *Server) registerTools() {
 		Description: "Amend the current branch's commit (or add a new commit with mode: commit) with the staged changes, then rebase every branch above it. On conflicts returns code conflict with the files; resolve, git add, then call again with continue: true.",
 		Annotations: &mcp.ToolAnnotations{DestructiveHint: boolp(true), OpenWorldHint: boolp(false)},
 	}, s.modify)
+	mcp.AddTool(s.mcp, &mcp.Tool{
+		Name:        "stack_absorb",
+		Title:       "Absorb staged changes into the stack's commits",
+		Description: "Fold each staged hunk into the commit of the current stack that last changed those lines (the current branch's commits and the branches below it, never trunk or a merged branch), rewrite those commits and everything above them keeping messages and authors, then restack the branches above the current one. The result's plan says where every hunk went; hunks no commit touched, new files and deleted files stay staged. Pass dry_run to see the plan without changing anything. Refuses with invalid_args when a branch below needs restacking first. On a conflict in the restack afterwards the commits are already rewritten and the result comes back with code conflict; resolve, git add, then stack_continue.",
+		Annotations: &mcp.ToolAnnotations{DestructiveHint: boolp(true), OpenWorldHint: boolp(false)},
+	}, s.absorb)
 	mcp.AddTool(s.mcp, &mcp.Tool{
 		Name:        "stack_restack",
 		Title:       "Restack",

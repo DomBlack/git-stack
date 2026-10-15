@@ -22,6 +22,7 @@ path is resolved with `git rev-parse`; anything outside a repository returns `no
 | `stack_view` | Tree of every stack: branches, parents, PR number/state/URL/title, each branch's own `commits`, `needs_restack`, `needs_push`, current branch, untracked branches | `include_untracked`, `fresh` (default true) | read-only, open-world |
 | `stack_create` | New branch on top of the current one (from trunk: new stack), commit staged changes | `message` (required), `branch`, `staging` = `all`/`update`/`none`, `use_ai` | non-destructive |
 | `stack_modify` | Amend the current branch (or `mode: commit`) and restack everything above | `mode`, `staging`, `message`, `continue`, `abort` | destructive |
+| `stack_absorb` | Fold each staged hunk into the commit of the current stack that last changed those lines, rewrite it and everything above, then restack what sits above the current branch; the result's `plan` lists every hunk's destination and what stays staged | `staging` = `all`/`update`/`none`, `dry_run` | destructive |
 | `stack_continue` | Finish an interrupted restack or modify once the conflicts are resolved and git added | `stage_all` | destructive |
 | `stack_abort` | Give up an interrupted restack and put every moved branch back | | destructive |
 | `stack_restack` | Local rebase of the stack onto its parents, bottom branch onto the local trunk included; only checks out a branch to resolve a conflict through one git rebase | `scope` = `all`/`upstack`/`downstack`/`only`, `branch`, `continue`, `abort`, `stage_all` | destructive |
@@ -65,6 +66,11 @@ can type in (the server has no terminal). For a commit nothing was committed; fo
 left in progress with the commit rescheduled, so `stack_continue` carries on once signing works
 and `stack_abort` still puts everything back. `next_steps` says which key to `ssh-add`, or how to
 turn signing off.
+`conflict` from `stack_absorb` means the commits were rewritten (the structured result says which
+branches moved) and the restack of the branches above then stopped; `stack_continue` and
+`stack_abort` apply to that restack only, the absorb itself stays. `invalid_args` from it names the
+branch that needs restacking first, the merge commit it won't rewrite, or the checkout elsewhere
+with uncommitted changes in the way; nothing has changed in those cases.
 `checks_failing` and `checks_pending` come from `stack_merge` when a pull request it would land
 has a check that failed, or (with none failed) one still queued or running, on its head commit.
 Nothing is merged. The error's `checks` lists each held up pull request:
