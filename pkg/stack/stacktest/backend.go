@@ -21,6 +21,8 @@ type Backend struct {
 	// Submits records submit options; SubmitFn, when set, runs on submit.
 	Submits  []stack.SubmitOptions
 	SubmitFn func(o stack.SubmitOptions) error
+	// Links records link options.
+	Links []stack.LinkOptions
 }
 
 // New returns a Backend over g with the given initial graph.
@@ -111,6 +113,13 @@ func (b *Backend) Submit(_ context.Context, _ git.Repo, o stack.SubmitOptions) (
 		}
 	}
 	return stack.SubmitResult{Output: "submitted"}, nil
+}
+
+func (b *Backend) Link(_ context.Context, _ git.Repo, o stack.LinkOptions) (stack.SubmitResult, error) {
+	b.mu.Lock()
+	b.Links = append(b.Links, o)
+	b.mu.Unlock()
+	return stack.SubmitResult{Output: "linked"}, nil
 }
 
 // Compile-time checks.

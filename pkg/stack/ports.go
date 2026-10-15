@@ -70,7 +70,21 @@ type SubmitResult struct {
 	Streamed bool
 }
 
+// LinkOptions controls Submitter.Link.
+type LinkOptions struct {
+	// Stack is the remote stack to add the pull requests to; 0 starts a new
+	// one, which needs at least two pull requests.
+	Stack int
+	// Trunk is the base of the bottom pull request of a new stack.
+	Trunk string
+	// PRs are pull request numbers, bottom to top.
+	PRs []int
+}
+
 // Submitter pushes the current stack and creates or updates its PRs.
 type Submitter interface {
 	Submit(ctx context.Context, repo git.Repo, o SubmitOptions) (SubmitResult, error)
+	// Link joins pull requests that already exist into a stack on the
+	// remote, without pushing any branch.
+	Link(ctx context.Context, repo git.Repo, o LinkOptions) (SubmitResult, error)
 }
