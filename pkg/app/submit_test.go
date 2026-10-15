@@ -212,7 +212,10 @@ func TestSubmitDissolvesPendingRemoteStacks(t *testing.T) {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	pending := `{"dissolve":[{"id":"S1","number":7,"stack":"a"},{"id":"S2","number":8,"stack":"x"}]}`
+	// x still starts a stack of its own; "gone" is in no stack any more.
+	mm := deps.Meta.(memMeta)
+	mm.g.Stacks = append(mm.g.Stacks, stack.Stack{Trunk: "main", Branches: []stack.Branch{{Name: "x"}}})
+	pending := `{"dissolve":[{"id":"S1","number":7,"stack":"a"},{"id":"S2","number":8,"stack":"x"},{"id":"S3","number":9,"stack":"gone"}]}`
 	if err := os.WriteFile(path, []byte(pending), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -229,7 +232,7 @@ func TestSubmitDissolvesPendingRemoteStacks(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !slices.Equal(sf.unstacked, []int{7, 8}) {
+	if !slices.Equal(sf.unstacked, []int{7, 8, 9}) {
 		t.Errorf("unstacked %v", sf.unstacked)
 	}
 	if n := strings.Join(res.Notices, "\n"); !strings.Contains(n, "could not dissolve stack #7") || !strings.Contains(n, "#8") {
@@ -245,8 +248,15 @@ func TestSubmitDissolvesPendingRemoteStacks(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if n := strings.Join(res.Notices, "\n"); !strings.Contains(n, "dissolved stack #7 on GitHub") {
-		t.Errorf("notices = %v", res.Notices)
+	n := strings.Join(res.Notices, "\n")
+	for _, want := range []string{
+		"dissolved stack #7 on GitHub; it is created again in its new order below",
+		"dissolved stack #8 on GitHub because its pull requests were regrouped by a reorder or move; submit from x to group them again",
+		"dissolved stack #9 on GitHub; its pull requests now belong to the stack they were moved to",
+	} {
+		if !strings.Contains(n, want) {
+			t.Errorf("missing %q in notices %v", want, res.Notices)
+		}
 	}
 	if _, err := os.Stat(path); !errors.Is(err, fs.ErrNotExist) {
 		t.Errorf("nothing should be pending: %v", err)

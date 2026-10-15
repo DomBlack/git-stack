@@ -3,6 +3,7 @@ package app_test
 import (
 	"context"
 	"errors"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -234,5 +235,31 @@ func TestReorderRollsBackWhenNothingMoved(t *testing.T) {
 	}
 	if st, _ := gittest.RunErr(t, f.dir, "status", "--porcelain"); !strings.Contains(st, "dirty.txt") {
 		t.Error("the staged file should still be there")
+	}
+}
+
+// A branch checked out with uncommitted changes in another worktree can't
+// be replayed, and skipping it would lose the branch above it, so the
+// reorder refuses before touching anything.
+func TestReorderRefusesABranchDirtyInAnotherWorktree(t *testing.T) {
+	f := newRestackFixture(t) // main -> a -> b -> c, HEAD on c
+	wt := filepath.Join(t.TempDir(), "wt")
+	gittest.Run(t, f.dir, "worktree", "add", "-q", wt, "b")
+	gittest.WriteFile(t, wt, "shared.txt", "dirty")
+	tips := map[string]string{"a": f.rev(t, "a"), "b": f.rev(t, "b"), "c": f.rev(t, "c")}
+	_, err := f.app.Reorder(context.Background(), f.repo, app.ReorderOptions{Order: []string{"b", "a", "c"}})
+	if !errors.Is(err, &stack.Error{Kind: stack.KindInvalidArgs}) {
+		t.Fatalf("want invalid_args, got %v", err)
+	}
+	if !slices.Equal(f.names(), []string{"a", "b", "c"}) {
+		t.Errorf("order = %v", f.names())
+	}
+	for n, tip := range tips {
+		if f.rev(t, n) != tip {
+			t.Errorf("%s moved", n)
+		}
+	}
+	if log := gittest.Run(t, f.dir, "log", "--format=%s", "main..a"); log != "feat: a" {
+		t.Errorf("log main..a = %q", log)
 	}
 }

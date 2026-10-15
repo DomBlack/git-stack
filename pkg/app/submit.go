@@ -156,7 +156,7 @@ func (a *App) Submit(ctx context.Context, repo git.Repo, o SubmitOptions) (Submi
 	if o.DryRun {
 		return res, nil
 	}
-	a.dissolvePending(ctx, repo, &res)
+	a.dissolvePending(ctx, repo, graph, s, &res)
 
 	texts := make(map[string]PRText, len(o.Texts))
 	for k, v := range o.Texts {
@@ -472,8 +472,10 @@ func (a *App) draftPR(ctx context.Context, repo git.Repo, trunk, parent, branch 
 
 // dissolvePending works through the stacks a reorder or move left stale
 // on GitHub: each is dissolved so gh stack can create it again from the
-// local order. A failure keeps the entry for the next submit and says so.
-func (a *App) dissolvePending(ctx context.Context, repo git.Repo, res *SubmitResult) {
+// local order. Only the stack being submitted is created again by this
+// submit, so each notice says where the entry's stack lives now. A failure
+// keeps the entry for the next submit and says so.
+func (a *App) dissolvePending(ctx context.Context, repo git.Repo, graph *stack.Graph, s *stack.Stack, res *SubmitResult) {
 	p, err := loadPendingRemote(repo)
 	if err != nil {
 		res.Notices = append(res.Notices, fmt.Sprintf("could not read the stacks waiting to be dissolved on GitHub: %v", err))
@@ -489,10 +491,22 @@ func (a *App) dissolvePending(ctx context.Context, repo git.Repo, res *SubmitRes
 			res.Notices = append(res.Notices, fmt.Sprintf("could not dissolve stack #%d on GitHub (%v); the pull requests of %s's stack keep their old grouping until it can be", r.Number, err, r.Stack))
 			continue
 		}
-		res.Notices = append(res.Notices, fmt.Sprintf("dissolved stack #%d on GitHub so it can be created again in its new order", r.Number))
+		res.Notices = append(res.Notices, dissolvedNotice(graph, s, r))
 	}
 	p.Dissolve = keep
 	if err := savePendingRemote(repo, p); err != nil {
 		res.Notices = append(res.Notices, fmt.Sprintf("could not update the list of stacks to dissolve: %v", err))
 	}
+}
+
+// dissolvedNotice words a successful dissolve by where the entry's stack
+// lives now, since submit only creates the stack it was run for.
+func dissolvedNotice(graph *stack.Graph, s *stack.Stack, r remoteStack) string {
+	if slices.Contains(s.Names(), r.Stack) {
+		return fmt.Sprintf("dissolved stack #%d on GitHub; it is created again in its new order below", r.Number)
+	}
+	if own, i, ok := graph.StackOf(r.Stack); ok && i == 0 {
+		return fmt.Sprintf("dissolved stack #%d on GitHub because its pull requests were regrouped by a reorder or move; submit from %s to group them again", r.Number, own.Bottom())
+	}
+	return fmt.Sprintf("dissolved stack #%d on GitHub; its pull requests now belong to the stack they were moved to", r.Number)
 }

@@ -119,6 +119,9 @@ func TestMoveRefusals(t *testing.T) {
 		want string
 	}{
 		{app.MoveOptions{Source: "c", Onto: "a"}, stack.KindInvalidArgs, "reorder"},
+		{app.MoveOptions{Source: "b", Onto: "b"}, stack.KindInvalidArgs, "b can't be moved onto itself"},
+		{app.MoveOptions{Source: "b", Onto: "a"}, stack.KindInvalidArgs, "b is already on a"},
+		{app.MoveOptions{Source: "c", Onto: "b"}, stack.KindInvalidArgs, "c is already on b"},
 		{app.MoveOptions{Source: "b", Onto: "x"}, stack.KindInvalidArgs, "y is above x"},
 		{app.MoveOptions{Source: "b", Onto: "loose"}, stack.KindNotInStack, "loose"},
 		{app.MoveOptions{Source: "loose", Onto: "y"}, stack.KindNotInStack, "loose"},
@@ -218,5 +221,100 @@ func TestMoveConflictInFirstSegmentThenContinueFinishesBoth(t *testing.T) {
 	}
 	if cur := gittest.Run(t, f.dir, "branch", "--show-current"); cur != "c" {
 		t.Errorf("current = %s", cur)
+	}
+}
+
+// onlyMoveStoppedFixture: main -> a -> b -> c with a second stack main -> x.
+// Moving a alone onto x leaves b and c on main, and b conflicts there
+// (a.txt does not exist on main). The working tree is dirty, so the
+// conflict can't be started and the move stops after a has moved.
+func onlyMoveStoppedFixture(t *testing.T) (*restackFixture, map[string]string) {
+	t.Helper()
+	f := newLinearFixture(t, []fileCommit{{"a", "a.txt", "a"}, {"b", "a.txt", "b"}, {"c", "c.txt", "c"}})
+	f.fb.graph.Stacks[0].ID, f.fb.graph.Stacks[0].Number = "S1", 1
+	addStack(t, f, false)
+	tips := map[string]string{}
+	for _, n := range []string{"a", "b", "c", "x"} {
+		tips[n] = f.rev(t, n)
+	}
+	gittest.WriteFile(t, f.dir, "shared.txt", "dirty")
+	return f, tips
+}
+
+func TestMoveOnlyStoppedByADirtyTreeCanBeAborted(t *testing.T) {
+	f, tips := onlyMoveStoppedFixture(t)
+	ctx := context.Background()
+	bases := map[string]string{"a": f.base("a"), "b": f.base("b"), "c": f.base("c")}
+	_, err := f.app.Move(ctx, f.repo, app.MoveOptions{Source: "a", Onto: "x", Only: true})
+	se, ok := errors.AsType[*stack.Error](err)
+	if !ok {
+		t.Fatalf("want a stack error, got %v", err)
+	}
+	steps := strings.Join(se.NextSteps, "\n")
+	if !strings.Contains(steps, "git stack continue") || !strings.Contains(steps, "git stack abort") {
+		t.Errorf("next steps = %q", steps)
+	}
+	if f.rev(t, "a") == tips["a"] {
+		t.Error("a should already have moved onto x")
+	}
+	if st, _ := gittest.RunErr(t, f.dir, "status", "--porcelain"); !strings.Contains(st, "shared.txt") {
+		t.Fatal("the dirty file should still be there")
+	}
+	res, err := f.app.Restack(ctx, f.repo, app.RestackOptions{Abort: true})
+	if err != nil || !res.OrderRestored {
+		t.Fatalf("abort: %+v %v", res, err)
+	}
+	want := [][]string{{"a", "b", "c"}, {"x"}}
+	if got := stackNames(f); !slices.EqualFunc(got, want, slices.Equal) {
+		t.Errorf("stacks = %v", got)
+	}
+	if f.fb.graph.Stacks[0].ID != "S1" || f.fb.graph.Stacks[1].ID != "S2" {
+		t.Errorf("ids = %q %q", f.fb.graph.Stacks[0].ID, f.fb.graph.Stacks[1].ID)
+	}
+	for n, tip := range tips {
+		if f.rev(t, n) != tip {
+			t.Errorf("%s moved: %s", n, f.rev(t, n))
+		}
+	}
+	for n, b := range bases {
+		if f.base(n) != b {
+			t.Errorf("%s base = %s, want %s", n, f.base(n), b)
+		}
+	}
+	if st, _ := gittest.RunErr(t, f.dir, "status", "--porcelain"); !strings.Contains(st, "shared.txt") {
+		t.Error("the dirty file should still be there")
+	}
+}
+
+func TestMoveOnlyStoppedByADirtyTreeCanBeContinued(t *testing.T) {
+	f, tips := onlyMoveStoppedFixture(t)
+	ctx := context.Background()
+	if _, err := f.app.Move(ctx, f.repo, app.MoveOptions{Source: "a", Onto: "x", Only: true}); err == nil {
+		t.Fatal("the move should have stopped")
+	}
+	gittest.Run(t, f.dir, "stash", "-q")
+	_, err := f.app.Restack(ctx, f.repo, app.RestackOptions{Continue: true})
+	se, ok := errors.AsType[*stack.Error](err)
+	if !ok || se.Kind != stack.KindConflict || se.Branch != "b" {
+		t.Fatalf("continue should reach b's conflict, got %v", err)
+	}
+	gittest.WriteFile(t, f.dir, "a.txt", "b")
+	gittest.Run(t, f.dir, "add", "a.txt")
+	res, err := f.app.Restack(ctx, f.repo, app.RestackOptions{Continue: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := moved(res); !slices.Equal(got, []string{"a", "b", "c"}) {
+		t.Errorf("moved %v", got)
+	}
+	want := [][]string{{"b", "c"}, {"x", "a"}}
+	if got := stackNames(f); !slices.EqualFunc(got, want, slices.Equal) {
+		t.Errorf("stacks = %v", got)
+	}
+	if f.rev(t, "a~1") != tips["x"] || f.rev(t, "b~1") != f.rev(t, "main") || f.rev(t, "c~1") != f.rev(t, "b") {
+		t.Error("branches not on their new parents")
+	}
+	if f.has(t, "b", "a.txt") && gittest.Run(t, f.dir, "show", "b:a.txt") != "b" {
+		t.Error("b should carry its own a.txt, not a's")
 	}
 }
