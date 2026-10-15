@@ -163,7 +163,10 @@ type absorbRun struct {
 // current branch and the branches below it, stopping before the first
 // branch whose pull request has merged. Every candidate branch but the
 // bottom of the stack must sit on its parent; the bottom may be behind
-// trunk, and its own commits are found the way restack finds them.
+// trunk, and its own commits are found the way restack finds them: from the
+// trunk tip when the branch already contains it (so a branch rebased onto a
+// newer trunk by hand doesn't claim trunk's commits), otherwise from its
+// recorded base, otherwise from the merge base with trunk.
 func (a *App) absorbCandidates(ctx context.Context, repo git.Repo, s *stack.Stack, i int) (*absorbRun, error) {
 	local, err := a.localBranches(ctx, repo)
 	if err != nil {
@@ -186,8 +189,12 @@ func (a *App) absorbCandidates(ctx context.Context, repo git.Repo, s *stack.Stac
 			if !ok {
 				return nil, stack.Newf(stack.KindInvalidArgs, "trunk %s no longer exists", s.Trunk)
 			}
-			from = b.Base
-			if from == "" || !a.isAncestor(ctx, repo, from, lb.Head) {
+			switch {
+			case a.isAncestor(ctx, repo, trunk.Head, lb.Head):
+				from = trunk.Head
+			case b.Base != "" && a.isAncestor(ctx, repo, b.Base, lb.Head):
+				from = b.Base
+			default:
 				if from, err = a.d.Git.MergeBase(ctx, repo, lb.Head, trunk.Head); err != nil {
 					return nil, err
 				}
