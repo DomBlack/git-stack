@@ -195,3 +195,26 @@ func TestRestoreReshapeKeepsBranchesItDoesNotKnow(t *testing.T) {
 		t.Errorf("stacks = %v, want %v", got, want)
 	}
 }
+
+// Moving a stack's bottom branch alone onto another stack carries the
+// source's bottom into the destination's slot. Restoring goes by remote id
+// first, so each stack goes back to its own slot rather than swapping.
+func TestRestoreReshapeKeepsSlotsAfterMovingTheBottomBranch(t *testing.T) {
+	g := stack.NewGraph([]stack.Stack{
+		{Trunk: "main", ID: "S1", Number: 7, Branches: []stack.Branch{{Name: "x", Base: "m"}, {Name: "x2", Base: "tx"}}},
+		{Trunk: "main", ID: "S2", Number: 8, Branches: []stack.Branch{{Name: "y", Base: "m"}}},
+	})
+	snap := snapshotOf(g, []string{"x", "y"})
+	g.Stacks[0].Branches = g.Stacks[0].Branches[1:]
+	g.Stacks[0].ID, g.Stacks[0].Number = "", 0
+	g.Stacks[1].Branches = append(g.Stacks[1].Branches, stack.Branch{Name: "x", Base: "ty"})
+	a, be := reshapeApp(g)
+	if err := a.restoreReshape(context.Background(), git.Repo{CommonDir: t.TempDir()}, snap); err != nil {
+		t.Fatal(err)
+	}
+	got := be.Graph()
+	if len(got.Stacks) != 2 || got.Stacks[0].ID != "S1" || got.Stacks[1].ID != "S2" ||
+		!slices.Equal(names(got.Stacks[0]), []string{"x", "x2"}) || !slices.Equal(names(got.Stacks[1]), []string{"y"}) {
+		t.Errorf("stacks = %+v", got.Stacks)
+	}
+}

@@ -203,16 +203,54 @@ func (b *Backend) Update(ctx context.Context, repo git.Repo, fn func(*stack.Grap
 		}
 		target = r.fileFor(repo)
 	}
+	roots, pool, err := r.parseAll()
+	if err != nil {
+		return err
+	}
 	for fi := range r.files {
 		var extra []stack.Stack
 		if fi == target {
 			extra = added
 		}
-		if err := b.writeBack(r, fi, extra); err != nil {
+		if err := b.writeBack(r, fi, roots[fi], pool, extra); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+// parseAll parses every loaded file and collects the node of every branch
+// in a record the graph came from, by name. Branch names are unique across
+// stacks, so a branch fn moved to another record, or to another file, takes
+// its node with it and keeps its pull request record and the members we
+// don't model.
+func (r *reading) parseAll() ([]*node, map[string]*node, error) {
+	roots := make([]*node, len(r.files))
+	pool := map[string]*node{}
+	for fi, f := range r.files {
+		root, err := parseTree(f.data)
+		if err != nil {
+			return nil, nil, err
+		}
+		roots[fi] = root
+		stacksNode := root.get("stacks")
+		if stacksNode == nil || stacksNode.kind != '[' {
+			continue
+		}
+		for ri, rec := range stacksNode.items {
+			if !slices.Contains(r.where, recRef{fi, ri}) {
+				continue // a duplicate Load skipped
+			}
+			branchesNode := rec.get("branches")
+			if branchesNode == nil || branchesNode.kind != '[' {
+				continue
+			}
+			for _, item := range branchesNode.items {
+				pool[item.str("branch")] = item
+			}
+		}
+	}
+	return roots, pool, nil
 }
 
 // fileFor picks the file new stacks are written to: the current worktree's
@@ -234,13 +272,10 @@ func (r *reading) fileFor(repo git.Repo) int {
 	return len(r.files) - 1
 }
 
-// writeBack applies the graph's edits to the fi'th file and rewrites it
-// when anything changed.
-func (b *Backend) writeBack(r *reading, fi int, added []stack.Stack) error {
-	root, err := parseTree(r.files[fi].data)
-	if err != nil {
-		return err
-	}
+// writeBack applies the graph's edits to the fi'th file, parsed as root,
+// and rewrites it when anything changed. Each branch is written from its
+// node in pool when it has one, wherever it came from.
+func (b *Backend) writeBack(r *reading, fi int, root *node, pool map[string]*node, added []stack.Stack) error {
 	stacksNode := root.get("stacks")
 	if stacksNode == nil && len(added) > 0 {
 		stacksNode = arrayNode()
@@ -278,40 +313,29 @@ func (b *Backend) writeBack(r *reading, fi int, added []stack.Stack) error {
 				changed = true
 			}
 		}
+		if gs.Trunk != "" {
+			if tn := rec.get("trunk"); tn == nil || tn.kind != '{' {
+				rec.set("trunk", objectNode(member{"branch", stringNode(gs.Trunk)}))
+				changed = true
+			} else if tn.str("branch") != gs.Trunk {
+				tn.set("branch", stringNode(gs.Trunk)) // keeps the recorded head
+				changed = true
+			}
+		}
 		branchesNode := rec.get("branches")
 		if branchesNode == nil || branchesNode.kind != '[' {
-			keep = append(keep, rec)
-			continue
+			branchesNode = arrayNode()
+			rec.set("branches", branchesNode)
 		}
-		byName := map[string]*node{}
-		for _, item := range branchesNode.items {
-			byName[item.str("branch")] = item
-		}
-		var kept []*node
-		for _, gb := range gs.Branches {
-			n := byName[gb.Name]
-			if n == nil {
-				n = objectNode(member{"branch", stringNode(gb.Name)})
-				changed = true
-			}
-			if gb.Head != "" && n.str("head") != gb.Head {
-				n.set("head", stringNode(gb.Head))
-				changed = true
-			}
-			if gb.Base != "" && n.str("base") != gb.Base {
-				n.set("base", stringNode(gb.Base))
-				changed = true
-			}
-			kept = append(kept, n)
-		}
-		if !slices.Equal(kept, branchesNode.items) {
+		kept, edited := branchNodes(gs.Branches, pool)
+		if edited || !slices.Equal(kept, branchesNode.items) {
 			changed = true
 		}
 		branchesNode.items = kept
 		keep = append(keep, rec)
 	}
 	for _, s := range added {
-		keep = append(keep, stackNode(s))
+		keep = append(keep, stackNode(s, pool))
 		changed = true
 	}
 	if !changed {
@@ -350,24 +374,47 @@ func (b *Backend) writeBack(r *reading, fi int, added []stack.Stack) error {
 	return os.Rename(tmp.Name(), path)
 }
 
-// stackNode is a fresh stack record: trunk and branches only; gh stack
-// fills in the id and number when it first submits it.
-func stackNode(s stack.Stack) *node {
-	branches := arrayNode()
-	for _, b := range s.Branches {
-		n := objectNode(member{"branch", stringNode(b.Name)})
-		if b.Head != "" {
-			n.set("head", stringNode(b.Head))
+// branchNodes renders a stack's branches, reusing each branch's node from
+// pool so its pull request record and unmodelled members travel with it,
+// and reports whether any head or base it wrote differs from the node.
+func branchNodes(branches []stack.Branch, pool map[string]*node) ([]*node, bool) {
+	edited := false
+	out := make([]*node, 0, len(branches))
+	for _, gb := range branches {
+		n := pool[gb.Name]
+		if n == nil {
+			n = objectNode(member{"branch", stringNode(gb.Name)})
+			edited = true
 		}
-		if b.Base != "" {
-			n.set("base", stringNode(b.Base))
+		if gb.Head != "" && n.str("head") != gb.Head {
+			n.set("head", stringNode(gb.Head))
+			edited = true
 		}
-		branches.items = append(branches.items, n)
+		if gb.Base != "" && n.str("base") != gb.Base {
+			n.set("base", stringNode(gb.Base))
+			edited = true
+		}
+		out = append(out, n)
 	}
-	return objectNode(
-		member{"trunk", objectNode(member{"branch", stringNode(s.Trunk)})},
-		member{"branches", branches},
-	)
+	return out, edited
+}
+
+// stackNode is a new stack record: its id and number when it has them (a
+// stack put back by an abort), its trunk and its branches, each from its
+// existing node when it had one. gh stack fills in the id and number of a
+// new stack when it first submits it.
+func stackNode(s stack.Stack, pool map[string]*node) *node {
+	rec := objectNode()
+	if s.ID != "" {
+		rec.set("id", stringNode(s.ID))
+	}
+	if s.Number != 0 {
+		rec.set("number", intNode(s.Number))
+	}
+	rec.set("trunk", objectNode(member{"branch", stringNode(s.Trunk)}))
+	branches, _ := branchNodes(s.Branches, pool)
+	rec.set("branches", arrayNode(branches...))
+	return rec
 }
 
 // worktreePath resolves a linked worktree's working tree from its git dir:
