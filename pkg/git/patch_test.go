@@ -128,6 +128,20 @@ func TestPatchTreeRefusesAnOffsetApply(t *testing.T) {
 	}
 }
 
+func TestPatchTreeAcceptsACorrectHunkInAFileNamedOffset(t *testing.T) {
+	c, repo, dir := patchFixture(t)
+	gittest.Commit(t, dir, "offset.txt", "a\nb\n", "offset file")
+	tree := gittest.Run(t, dir, "rev-parse", "HEAD^{tree}")
+	patch := "diff --git a/offset.txt b/offset.txt\n--- a/offset.txt\n+++ b/offset.txt\n@@ -2,1 +2,1 @@\n-b\n+B\n"
+	nt, err := c.PatchTree(context.Background(), repo, tree, patch)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := gittest.Run(t, dir, "cat-file", "-p", nt+":offset.txt"); got != "a\nB" {
+		t.Errorf("patched content = %q", got)
+	}
+}
+
 func TestPatchTreeIgnoresWhitespaceConfig(t *testing.T) {
 	c, repo, dir := patchFixture(t)
 	gittest.Run(t, dir, "config", "apply.whitespace", "fix")

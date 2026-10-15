@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"os"
+	"regexp"
 	"strings"
 
 	"github.com/DomBlack/git-stack/pkg/exec"
@@ -86,7 +87,7 @@ func (c *Client) PatchTree(ctx context.Context, repo Repo, tree, patch string) (
 		return "", err
 	}
 	// -v makes git say "Hunk #1 succeeded at 1 (offset -2 lines)".
-	if strings.Contains(applied.Err(), "offset") {
+	if offsetApplied.MatchString(applied.Err()) {
 		return "", &PatchError{Detail: strings.TrimSpace(applied.Err())}
 	}
 	res, err := c.gitInput(ctx, repo, nil, env, "write-tree")
@@ -95,6 +96,10 @@ func (c *Client) PatchTree(ctx context.Context, repo Repo, tree, patch string) (
 	}
 	return res.Out(), nil
 }
+
+// offsetApplied matches git's "Hunk #1 succeeded at 3 (offset 1 line)". The
+// verbose output also names every file, so "offset" alone proves nothing.
+var offsetApplied = regexp.MustCompile(`succeeded at \d+ \(offset `)
 
 // gitFailure turns a non-zero exit into an error carrying git's message.
 func gitFailure(what string, err error) error {
