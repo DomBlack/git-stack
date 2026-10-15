@@ -28,6 +28,7 @@ func (a Alias) Value() string { return a.Command }
 var DefaultAliases = []Alias{
 	{"create", "stack create"},
 	{"modify", "stack modify"},
+	{"absorb", "stack absorb"},
 	{"restack", "stack restack"},
 	{"submit", "stack submit"},
 	{"sync", "stack sync"},
@@ -39,6 +40,7 @@ var DefaultAliases = []Alias{
 	{"abort", "stack abort"},
 	{"c", "stack create"},
 	{"m", "stack modify"},
+	{"ab", "stack absorb"},
 	{"rs", "stack restack"},
 	{"ss", "stack submit"},
 	{"u", "stack up"},

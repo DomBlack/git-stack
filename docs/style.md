@@ -56,6 +56,7 @@ read as section markers rather than confetti because they never show up anywhere
 |---|---|---|
 | create | 🌱 | Creating branch feat-a… |
 | modify | ✏️ | (modify's own work is instant; its restack uses 🧱) |
+| absorb | 🧽 | Absorbing 2 hunks into 2 commits… |
 | restack | 🧱 | Restacking 2 branches above feat-a… |
 | submit | 🚀 | Submitting stack… |
 | sync | 🔄 | Syncing with origin… |
