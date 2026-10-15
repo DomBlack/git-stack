@@ -32,12 +32,20 @@ func TestPatchOrdersInsertionAfterEditOfSameLine(t *testing.T) {
 		{OldStart: 4, OldCount: 0, NewCount: 1, Lines: []string{"+after4"}},
 		{OldStart: 4, OldCount: 1, NewCount: 1, Lines: []string{"-l4", "+L4"}},
 	}
-	got := Patch("f.txt", hunks)
-	if strings.Index(got, "+L4") > strings.Index(got, "+after4") {
-		t.Errorf("wrong order:\n%s", got)
+	want := "diff --git a/f.txt b/f.txt\n--- a/f.txt\n+++ b/f.txt\n" +
+		"@@ -4,1 +4,1 @@\n-l4\n+L4\n" +
+		"@@ -4,0 +5,1 @@\n+after4\n"
+	if got := Patch("f.txt", hunks); got != want {
+		t.Errorf("got:\n%s\nwant:\n%s", got, want)
 	}
-	if !strings.Contains(got, "@@ -4,0 +5,1 @@") {
-		t.Errorf("insertion header wrong:\n%s", got)
+}
+
+// An insertion before the first line has an old start of 0.
+func TestPatchInsertionAtTopOfFile(t *testing.T) {
+	h := Hunk{OldStart: 0, OldCount: 0, NewCount: 2, Lines: []string{"+a", "+b"}}
+	want := "diff --git a/f.txt b/f.txt\n--- a/f.txt\n+++ b/f.txt\n@@ -0,0 +1,2 @@\n+a\n+b\n"
+	if got := Patch("f.txt", []Hunk{h}); got != want {
+		t.Errorf("got:\n%s", got)
 	}
 }
 
@@ -57,6 +65,8 @@ func TestPatchQuotesPaths(t *testing.T) {
 		"say \"hi\"":   `"say \"hi\""`,
 		"café.txt":     `"caf\303\251.txt"`,
 		"new\nline":    `"new\nline"`,
+		`a\b.txt`:      `"a\\b.txt"`,
+		"x":            "x",
 	}
 	for in, want := range cases {
 		if got := quotePath(in); got != want {

@@ -98,8 +98,8 @@ func Compute(commits []Commit, staged []FileDiff) Plan {
 			p.Skipped = append(p.Skipped, SkippedFile{Path: f.Path(), Reason: reason})
 			continue
 		}
-		for _, staged := range f.Hunks {
-			h, path := staged, f.OldPath
+		for _, sh := range f.Hunks {
+			h, path := sh, f.OldPath
 			var target *Target
 			var visited []visit
 			at := -1
@@ -107,7 +107,8 @@ func Compute(commits []Commit, staged []FileDiff) Plan {
 			for i := len(commits) - 1; i >= 0; i-- {
 				c := commits[i]
 				visited = append(visited, visit{sha: c.SHA, path: path, hunk: h})
-				j := slices.IndexFunc(c.Files, func(fd FileDiff) bool { return fd.NewPath == path && !fd.IsDeleted() })
+				// path is never empty here, so a deleted file (empty NewPath) never matches.
+				j := slices.IndexFunc(c.Files, func(fd FileDiff) bool { return fd.NewPath == path })
 				if j < 0 {
 					continue
 				}
@@ -126,7 +127,7 @@ func Compute(commits []Commit, staged []FileDiff) Plan {
 				}
 				path = fd.OldPath
 			}
-			p.Hunks = append(p.Hunks, HunkPlan{Path: f.Path(), Hunk: staged, Target: target})
+			p.Hunks = append(p.Hunks, HunkPlan{Path: f.Path(), Hunk: sh, Target: target})
 			if target == nil {
 				continue
 			}

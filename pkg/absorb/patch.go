@@ -23,7 +23,8 @@ func Patch(path string, hunks []Hunk) string {
 	})
 	var b strings.Builder
 	q := quotePath(path)
-	fmt.Fprintf(&b, "diff --git %s %s\n--- %s\n+++ %s\n", side("a/", path, q), side("b/", path, q), side("a/", path, q), side("b/", path, q))
+	aSide, bSide := side("a/", path, q), side("b/", path, q)
+	fmt.Fprintf(&b, "diff --git %s %s\n--- %s\n+++ %s\n", aSide, bSide, aSide, bSide)
 	delta := 0
 	for _, h := range sorted {
 		newStart := h.OldStart + delta
