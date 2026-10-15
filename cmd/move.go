@@ -29,7 +29,8 @@ places it can go.
 gh stack keeps each stack as a single line, so a branch can only land on the
 top of a stack or on a trunk; to change the order inside a stack use
 "git stack reorder". Nothing is checked out; conflicts stop like a restack and
-"git stack abort" puts everything back.`,
+"git stack abort" puts everything back. A branch checked out with changes in
+another worktree stops the command before anything changes.`,
 		Example: `  # take this branch (and the ones above) onto the top of another stack
   git move --onto feat/api-top
 
@@ -61,7 +62,7 @@ top of a stack or on a trunk; to change the order inside a stack use
 			if res.NewStack {
 				suffix = " (new stack)"
 			}
-			rep.Success("Moved %s onto %s%s", what, rep.Branch(res.Onto), suffix)
+			rep.Success("Moved %s from %s onto %s%s", what, rep.Branch(res.From), rep.Branch(res.Onto), suffix)
 			if len(res.LeftBehind) > 0 {
 				rep.Info("%s %s on %s", strings.Join(res.LeftBehind, ", "), stayVerb(len(res.LeftBehind)), rep.Branch(res.From))
 			}

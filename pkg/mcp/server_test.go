@@ -235,6 +235,17 @@ func TestToolsAreListedWithAnnotationsAndSchemas(t *testing.T) {
 	if !strings.Contains(string(schema), "repo_path") || !strings.Contains(string(schema), "defaults to the client") || !strings.Contains(string(schema), `"required":["message"]`) {
 		t.Errorf("stack_create schema = %s", schema)
 	}
+	for tool, field := range map[string]string{"stack_reorder": "order", "stack_move": "onto"} {
+		raw, _ := json.Marshal(got[tool].InputSchema)
+		var sch struct {
+			Properties map[string]struct {
+				Description string `json:"description"`
+			} `json:"properties"`
+		}
+		if err := json.Unmarshal(raw, &sch); err != nil || !strings.HasPrefix(sch.Properties[field].Description, "required:") {
+			t.Errorf("%s: %s should be described as required: %s", tool, field, raw)
+		}
+	}
 	init := h.session.InitializeResult()
 	if init == nil || !strings.HasPrefix(init.Instructions, "git-stack manages stacked branches") {
 		t.Error("instructions missing")

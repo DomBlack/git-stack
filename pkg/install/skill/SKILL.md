@@ -41,6 +41,10 @@ the one calling.
 - On `code: "conflict"`: resolve the listed files, `git add` them, then call the same tool
   again with `continue: true` (or `abort: true`); after `stack_absorb`, `stack_reorder` or
   `stack_move` that is `stack_continue` or `stack_abort` (abort also puts the old order back).
+- A branch checked out with uncommitted changes in another worktree makes `stack_reorder` and
+  `stack_move` refuse with nothing changed. After either, `stack_submit` dissolves the stale
+  GitHub stack and creates again only the stack it submits; call it from the other stack's bottom
+  branch, as its notice says, to group the rest.
 - Plain git is fine for reading (`git status`, `git diff`, `git log`) and for staging files.
 - Run `stack_view` before `stack_submit` so you know which branches get new PRs and need
   titles and bodies.

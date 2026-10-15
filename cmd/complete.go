@@ -208,17 +208,26 @@ func (c *cli) completeStackOrder(cmd *cobra.Command, args []string, toComplete s
 	return filterPrefix(items, toComplete), cobra.ShellCompDirectiveNoFileComp | cobra.ShellCompDirectiveKeepOrder
 }
 
-// completeMoveTargets offers every trunk and the top of every stack.
+// completeMoveTargets offers every trunk and the top of every stack except
+// the one being moved: the --source branch's, else the current branch's.
 func (c *cli) completeMoveTargets(cmd *cobra.Command, _ []string, toComplete string) ([]cobra.Completion, cobra.ShellCompDirective) {
 	v, ok := c.completionView(cmd)
 	if !ok {
 		return nil, cobra.ShellCompDirectiveNoFileComp
 	}
+	source := v.Current
+	if f := cmd.Flags().Lookup("source"); f != nil && f.Value.String() != "" {
+		source = f.Value.String()
+	}
+	own := ""
+	if s, _, ok := v.Graph.StackOf(source); ok {
+		own = s.Top()
+	}
 	var items []cobra.Completion
 	for _, trunk := range v.Graph.Trunks {
 		items = append(items, cobra.CompletionWithDesc(trunk, "trunk"))
 		for _, s := range v.Graph.StacksOn(trunk) {
-			if top := s.Top(); top != "" {
+			if top := s.Top(); top != "" && top != own {
 				items = append(items, cobra.CompletionWithDesc(top, "top of "+s.Bottom()+"'s stack"))
 			}
 		}
@@ -263,5 +272,17 @@ func (c *cli) completeTrunks(cmd *cobra.Command, _ []string, toComplete string) 
 		return nil, cobra.ShellCompDirectiveNoFileComp
 	}
 	items := slices.Clone(v.Graph.Trunks)
+	if len(items) == 0 {
+		// No stacks yet, which is where init is first used.
+		ctx := cmd.Context()
+		if ctx == nil {
+			ctx = context.Background()
+		}
+		if _, repo, err := c.completionApp(ctx); err == nil {
+			if name, ok, err := c.completionRuntime().Git.DefaultBranch(ctx, repo); err == nil && ok {
+				items = append(items, name)
+			}
+		}
+	}
 	return filterPrefix(items, toComplete), cobra.ShellCompDirectiveNoFileComp
 }

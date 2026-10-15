@@ -24,8 +24,9 @@ to top, naming every branch of the stack once.
 Nothing is checked out. Each branch keeps its own commits and is replayed onto
 its new parent. A conflict stops like a restack does: fix the files, git add
 them and run "git stack continue", or "git stack abort" to put the old order
-back. If the stack already has pull requests, the next submit creates the
-stack on GitHub again in the new order.`,
+back. A branch checked out with changes in another worktree stops the command
+before anything changes. If the stack already has pull requests, the next
+submit creates the stack on GitHub again in the new order.`,
 		Example: `  # rearrange the stack in the list
   git reorder
 
