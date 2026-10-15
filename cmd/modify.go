@@ -94,9 +94,12 @@ is created so the parent's commit is never rewritten.`,
 }
 
 // branchNoun is "branch" or "branches" for n.
-func branchNoun(n int) string {
+func branchNoun(n int) string { return pluralWord(n, "branch", "branches") }
+
+// pluralWord is one when n is 1, otherwise many.
+func pluralWord(n int, one, many string) string {
 	if n == 1 {
-		return "branch"
+		return one
 	}
-	return "branches"
+	return many
 }

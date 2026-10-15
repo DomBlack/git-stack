@@ -286,11 +286,11 @@ not split between them.
 ⚠ Still staged: 1 hunk
 ```
 
-On a terminal you see the plan and get asked first. The old tips are printed. If it picked the
-wrong commit, put things back with `git reset --soft <old tip of the branch you're on>` (your changes
-come back staged), `git branch -f <branch> <old tip>` for each other branch it rewrote, then
-`git restack`. Every branch it needs to rewrite has to be sitting on its parent already (run `git restack`
-if not), and the bottom branch of the stack is fine behind main.
+On a terminal you see the plan and get asked first. The old tips are printed. If it picked the wrong
+commit, put things back with `git reset --soft <old tip of the branch you're on>` (your changes come
+back staged), `git branch -f <branch> <old tip>` for each other branch it rewrote, then
+`git restack`. Every branch it needs to rewrite has to be sitting on its parent already (run
+`git restack` if not), and the bottom branch of the stack is fine behind main.
 
 Flags:
 - `-a` / `--all`, `-u` / `--update`, `-p` / `--patch` stage first, like `modify`; they stage even
