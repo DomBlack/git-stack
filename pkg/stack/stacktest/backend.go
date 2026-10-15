@@ -23,6 +23,11 @@ type Backend struct {
 	SubmitFn func(o stack.SubmitOptions) error
 	// Links records link options.
 	Links []stack.LinkOptions
+
+	// Unstacked records every Unstack call; UnstackFn, when set, decides
+	// its result.
+	Unstacked []int
+	UnstackFn func(number int) error
 }
 
 // New returns a Backend over g with the given initial graph.
@@ -120,6 +125,17 @@ func (b *Backend) Link(_ context.Context, _ git.Repo, o stack.LinkOptions) (stac
 	b.Links = append(b.Links, o)
 	b.mu.Unlock()
 	return stack.SubmitResult{Output: "linked"}, nil
+}
+
+func (b *Backend) Unstack(_ context.Context, _ git.Repo, number int) error {
+	b.mu.Lock()
+	b.Unstacked = append(b.Unstacked, number)
+	fn := b.UnstackFn
+	b.mu.Unlock()
+	if fn != nil {
+		return fn(number)
+	}
+	return nil
 }
 
 // Compile-time checks.

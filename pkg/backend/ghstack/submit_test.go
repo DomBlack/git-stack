@@ -81,3 +81,28 @@ func TestLink(t *testing.T) {
 		t.Error("link must be captured")
 	}
 }
+
+func TestUnstack(t *testing.T) {
+	f := installed()
+	f.On("gh", "stack").Reply("")
+	b := New(f, nil)
+	ctx := context.Background()
+	repo := git.Repo{TopLevel: "/r"}
+
+	if err := b.Unstack(ctx, repo, 7); err != nil || lastGh(f) != "stack unstack 7" {
+		t.Errorf("unstack: %v %q", err, lastGh(f))
+	}
+
+	// Exit 2 means GitHub no longer has the stack: nothing left to do.
+	gone := installed()
+	gone.On("gh", "stack", "unstack").Fail(2, "stack not found")
+	if err := New(gone, nil).Unstack(ctx, repo, 7); err != nil {
+		t.Errorf("a stack that is already gone is not an error: %v", err)
+	}
+
+	failing := installed()
+	failing.On("gh", "stack", "unstack").Fail(4, "HTTP 500")
+	if err := New(failing, nil).Unstack(ctx, repo, 7); !errors.Is(err, &stack.Error{Kind: stack.KindAPIFailure}) {
+		t.Errorf("api failure: %v", err)
+	}
+}

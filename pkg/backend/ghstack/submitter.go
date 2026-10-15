@@ -52,6 +52,16 @@ func (b *Backend) Link(ctx context.Context, repo git.Repo, o stack.LinkOptions) 
 	return stack.SubmitResult{Output: res.Err(), Streamed: b.out != nil}, err
 }
 
+// Unstack runs `gh stack unstack <number>`. With the number untracked
+// locally gh stack only talks to GitHub.
+func (b *Backend) Unstack(ctx context.Context, repo git.Repo, number int) error {
+	err := b.gh(ctx, repo, "unstack", strconv.Itoa(number))
+	if se, ok := errors.AsType[*stack.Error](err); ok && se.Kind == stack.KindNotInStack {
+		return nil // already gone on GitHub
+	}
+	return err
+}
+
 // ghTTY runs `gh stack <args>` with the terminal attached. Only the CLI's
 // runner can do this; the MCP runner returns ErrTTYUnavailable, which is
 // mapped to an interaction error.
