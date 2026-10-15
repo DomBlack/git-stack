@@ -252,7 +252,131 @@ func absorbPlanOf(p *absorb.Plan) AbsorbPlan {
 	return out
 }
 
-// absorbApply is filled in by the next task.
-func (a *App) absorbApply(_ context.Context, _ git.Repo, _ *absorbRun, res AbsorbResult) (AbsorbResult, error) {
-	return res, stack.New(stack.KindUnsupported, "absorb cannot apply yet")
+// absorbApply writes the rewritten commits, moves the affected branches
+// in one ref transaction, updates the metadata and restacks what sits
+// above the current branch. res comes back with Applied set as soon as
+// the branches have moved, so a conflict in the restack afterwards still
+// reports the absorb.
+func (a *App) absorbApply(ctx context.Context, repo git.Repo, run *absorbRun, res AbsorbResult) (AbsorbResult, error) {
+	rewritten := map[string]bool{}
+	for _, sha := range run.plan.Rewrites {
+		rewritten[sha] = true
+	}
+	subjects := map[string]string{}
+	for _, c := range run.commits {
+		subjects[c.SHA] = c.Subject
+	}
+	// The branches that move: every candidate whose tip is rewritten,
+	// which is the contiguous run from the oldest destination's branch up
+	// to the current one.
+	type move struct {
+		name, from, worktree string
+	}
+	var moves []move
+	for j := run.lowest; j <= run.current; j++ {
+		lb := run.local[run.stack.Branches[j].Name]
+		if rewritten[lb.Head] {
+			moves = append(moves, move{name: lb.Name, from: lb.Head, worktree: lb.Worktree})
+		}
+	}
+	// A checkout elsewhere with changes can't be brought along, and the
+	// branches above depend on this one moving, so refuse before any work.
+	dirty := newDirtyCache()
+	for _, m := range moves {
+		if m.worktree != "" && m.worktree != repo.TopLevel && dirty.isDirty(ctx, a.d.Git, repo, m.worktree) {
+			return res, stack.Newf(stack.KindInvalidArgs, "%s is checked out in %s with uncommitted changes, so it can't be rewritten", m.name, shortPath(m.worktree)).
+				WithSteps("commit or stash them there, then " + absorbCommand + " again")
+		}
+	}
+
+	n := res.Plan.Absorbed
+	headline := fmt.Sprintf("Absorbing %d %s into %d %s", n, pluralise(n, "hunk", "hunks"), res.Plan.Commits, pluralise(res.Plan.Commits, "commit", "commits"))
+	err := a.progress(ctx, PhaseAbsorb, headline, func(ctx context.Context) error {
+		// 1. Objects only: every rewritten commit, oldest first, on the
+		// previous rewritten one.
+		newSHA := map[string]string{}
+		parent := ""
+		for _, sha := range run.plan.Rewrites {
+			info, err := a.d.Git.CommitInfo(ctx, repo, sha)
+			if err != nil {
+				return err
+			}
+			if parent == "" {
+				parent = info.Parent
+			}
+			tree, err := a.d.Git.PatchTree(ctx, repo, info.Tree, absorb.PatchFiles(run.plan.Patches[sha]))
+			if err != nil {
+				if pe, ok := errors.AsType[*git.PatchError](err); ok {
+					return stack.Newf(stack.KindInvalidArgs, "the change for %q could not be applied to %s; nothing was changed", subjects[sha], sha[:7]).
+						WithSteps("this is a bug in " + absorbCommand + "; please report it with the detail above").WithDetail(pe.Detail).WithCause(err)
+				}
+				return err
+			}
+			if parent, err = a.d.Git.CommitTree(ctx, repo, tree, parent, info); err != nil {
+				return err
+			}
+			newSHA[sha] = parent
+		}
+		// 2. Every affected branch in one transaction, the current one
+		// included: moving its ref leaves the index and working tree as
+		// they are, so the absorbed hunks simply drop out of the staged
+		// diff.
+		updates := make([]git.RefUpdate, len(moves))
+		for i, m := range moves {
+			updates[i] = git.RefUpdate{Ref: "refs/heads/" + m.name, New: newSHA[m.from], Old: m.from}
+		}
+		if err := a.d.Git.UpdateRefs(ctx, repo, updates); err != nil {
+			return stack.New(stack.KindInvalidArgs, "a branch moved while absorbing, so nothing was changed").
+				WithSteps("run " + absorbCommand + " again").WithCause(err)
+		}
+		res.Applied = true
+		for _, m := range moves {
+			res.Rewritten = append(res.Rewritten, BranchMove{Name: m.name, Stack: run.stack.Bottom(), From: m.from, To: newSHA[m.from]})
+		}
+		// 3. Clean checkouts elsewhere follow their branch.
+		for _, m := range moves {
+			if m.worktree != "" && m.worktree != repo.TopLevel {
+				if err := a.d.Git.ResetHard(ctx, worktreeRepo(repo, m.worktree), newSHA[m.from]); err != nil {
+					res.Notices = append(res.Notices, fmt.Sprintf("%s was rewritten but its checkout in %s could not be updated: %v; run git reset --hard there", m.name, shortPath(m.worktree), err))
+				}
+			}
+		}
+		// 4. Heads for every moved branch; bases for the ones above the
+		// lowest (their parent moved too). The lowest keeps its base.
+		heads, bases := map[string]string{}, map[string]string{}
+		for i, m := range moves {
+			heads[m.name] = newSHA[m.from]
+			if i > 0 {
+				bases[m.name] = newSHA[moves[i-1].from]
+			}
+		}
+		return a.d.Meta.Update(ctx, repo, func(g *stack.Graph) error {
+			for i := range g.Stacks {
+				for j := range g.Stacks[i].Branches {
+					b := &g.Stacks[i].Branches[j]
+					if to, ok := heads[b.Name]; ok {
+						b.Head = to
+					}
+					if base, ok := bases[b.Name]; ok {
+						b.Base = base
+					}
+				}
+			}
+			return nil
+		})
+	})
+	if err != nil {
+		return res, err
+	}
+	// 5. Everything above, the way modify does it.
+	children := run.stack.Names()[run.current+1:] // linear stacks: everything above is a descendant
+	if len(children) == 0 {
+		return res, nil
+	}
+	k := len(children)
+	rr, err := a.restack(ctx, repo, RestackOptions{Scope: stack.ScopeUpstack}, absorbCommand,
+		fmt.Sprintf("Restacking %d %s above %s", k, pluralise(k, "branch", "branches"), res.Branch))
+	res.Notices = append(res.Notices, rr.Notices...)
+	res.Restacked = movedNames(rr)
+	return res, err
 }
