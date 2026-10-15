@@ -47,8 +47,9 @@ func (c *Client) HasMerges(ctx context.Context, repo Repo, from, to string) (boo
 	return res.Out() != "", nil
 }
 
-// PatchError is a patch git apply would not put on the tree: the removed
-// lines were not what the patch said they were. Detail is git's output.
+// PatchError is a patch git apply would not put on the tree as given: the
+// lines it removes are not where it says, it applied them at an offset, or
+// git rejected it for any other reason. Detail is git's output.
 type PatchError struct {
 	Detail string
 }

@@ -78,6 +78,9 @@ type AbsorbResult struct {
 
 const absorbCommand = "git stack absorb"
 
+// syncSteps is what to do when the stack's metadata names a branch that is gone.
+const syncSteps = "run git stack sync to tidy the stack's metadata"
+
 // Absorb folds each staged hunk into the commit of the current stack that
 // last changed those lines, rewrites that commit and everything above it
 // up to the current branch, and restacks the branches above.
@@ -182,13 +185,13 @@ func (a *App) absorbCandidates(ctx context.Context, repo git.Repo, s *stack.Stac
 		b := s.Branches[j]
 		lb, ok := local[b.Name]
 		if !ok {
-			return nil, stack.Newf(stack.KindInvalidArgs, "%s no longer exists", b.Name)
+			return nil, stack.Newf(stack.KindInvalidArgs, "%s no longer exists", b.Name).WithSteps(syncSteps)
 		}
 		var from string
 		if j == 0 {
 			trunk, ok := local[s.Trunk]
 			if !ok {
-				return nil, stack.Newf(stack.KindInvalidArgs, "trunk %s no longer exists", s.Trunk)
+				return nil, stack.Newf(stack.KindInvalidArgs, "trunk %s no longer exists", s.Trunk).WithSteps(syncSteps)
 			}
 			switch {
 			case a.isAncestor(ctx, repo, trunk.Head, lb.Head):
@@ -204,7 +207,7 @@ func (a *App) absorbCandidates(ctx context.Context, repo git.Repo, s *stack.Stac
 			parent := s.Branches[j-1].Name
 			pb, ok := local[parent]
 			if !ok {
-				return nil, stack.Newf(stack.KindInvalidArgs, "%s no longer exists", parent)
+				return nil, stack.Newf(stack.KindInvalidArgs, "%s no longer exists", parent).WithSteps(syncSteps)
 			}
 			if !a.isAncestor(ctx, repo, pb.Head, lb.Head) {
 				return nil, stack.Newf(stack.KindInvalidArgs, "%s needs restacking onto %s before its commits can be rewritten", b.Name, parent).
@@ -355,20 +358,7 @@ func (a *App) absorbApply(ctx context.Context, repo git.Repo, run *absorbRun, re
 				bases[m.name] = newSHA[moves[i-1].from]
 			}
 		}
-		return a.d.Meta.Update(ctx, repo, func(g *stack.Graph) error {
-			for i := range g.Stacks {
-				for j := range g.Stacks[i].Branches {
-					b := &g.Stacks[i].Branches[j]
-					if to, ok := heads[b.Name]; ok {
-						b.Head = to
-					}
-					if base, ok := bases[b.Name]; ok {
-						b.Base = base
-					}
-				}
-			}
-			return nil
-		})
+		return a.updateHeadsAndBases(ctx, repo, heads, bases)
 	})
 	if err != nil {
 		return res, err
