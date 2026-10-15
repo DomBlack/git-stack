@@ -1,0 +1,6 @@
+Reorder the stack
+❯ b  current  moved
+  c  moved
+  a  #12
+  main  trunk
+↑/↓ or j/k move cursor · shift+↑/↓ or K/J move branch · enter apply · esc cancel
