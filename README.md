@@ -344,8 +344,9 @@ branches an `--only` left behind, or undone with `git abort`. A branch checked o
 changes in another worktree stops the move before anything changes. The next `git ss` dissolves
 the stale stack on GitHub, lets gh stack create the one you submit, and then creates the moved
 branches' old stack again itself, so it is grouped again by the same submit. The notices name each
-stack. Only a stack with fewer than two PRs (nothing to group) or a failed create is left to you,
-and the notice says to submit from it.
+stack. What's left to you: a stack with fewer than two PRs has nothing to group and the notice
+says so; a branch in it with no open PR, or a failed create, gets a notice saying to submit from
+that stack. (Without `gh` set up as the forge, the notice just says to submit from it.)
 
 ```
 # on billing-webhook-alerts

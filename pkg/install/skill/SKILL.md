@@ -44,9 +44,9 @@ the one calling.
 - A branch checked out with uncommitted changes in another worktree makes `stack_reorder` and
   `stack_move` refuse with nothing changed. After either, `stack_submit` dissolves every
   stale GitHub stack, lets gh stack create the one it submits and creates the others again itself
-  (its notices name each), so a move's source stack is grouped again by the same submit. Only a
-  stack with fewer than two pull requests (nothing to group) or a failed create is left; the
-  notice then says to submit from it.
+  (its notices name each), so a move's source stack is grouped again by the same submit. A stack
+  with fewer than two pull requests has nothing to group and the notice says so; a branch with
+  no open pull request, or a failed create, gets a notice saying to submit from that stack.
 - Plain git is fine for reading (`git status`, `git diff`, `git log`) and for staging files.
 - Run `stack_view` before `stack_submit` so you know which branches get new PRs and need
   titles and bodies.

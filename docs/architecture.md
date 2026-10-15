@@ -426,11 +426,14 @@ which only touches GitHub because the number is no longer tracked locally (while
 would delete the local stack too, which is why the id is cleared first). Then the normal submit
 runs, finds a stack with no id and creates it. That covers only the stack being submitted, so
 after a move, or a reorder of a different stack, submit then creates each other dissolved stack
-again itself through the forge's create call, as long as it still exists locally and has at
-least two PRs, and records the new id. The notice names each stack. A stack with fewer than two
-PRs has nothing to group, and a failed create says to submit from that stack to try again. A
-stack that's already gone counts as done, and a failure to dissolve keeps the entry and says so in a notice. Keeping the two apart also means the reshape
-itself works offline. PRs that are queued for merge or have auto merge on stay stacked on
+again itself through the forge's create call (GitHub's plain create endpoint, the PR numbers
+bottom to top), as long as it still exists locally, has no id yet and every branch from the
+first unmerged one up has an open PR, with at least two of them, and records the new id. The
+notice names each stack. A stack with fewer than two PRs has nothing to group, a branch without
+an open PR stops the create with a notice naming it, and a failed create says to submit from
+that stack to try again; without a forge the dissolve notice says the same. A stack that's
+already gone counts as done, and a failure to dissolve keeps the entry and says so in a notice.
+Keeping the two apart also means the reshape itself works offline. PRs that are queued for merge or have auto merge on stay stacked on
 GitHub's side, so creating the new stack fails with gh stack's usual warning until they land.
 
 **Merged branches are deleted by default.** `stack.sync.prune` decides: `always` (default)
