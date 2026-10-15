@@ -37,7 +37,7 @@ func (f *fakeBackend) Update(_ context.Context, _ git.Repo, fn func(*stack.Graph
 	if err := fn(f.graph); err != nil {
 		return err
 	}
-	f.graph.Stacks = slices.DeleteFunc(f.graph.Stacks, func(s stack.Stack) bool { return len(s.Branches) == 0 })
+	f.graph = stack.NewGraph(slices.DeleteFunc(f.graph.Stacks, func(s stack.Stack) bool { return len(s.Branches) == 0 }))
 	return nil
 }
 
