@@ -140,6 +140,27 @@ func TestReorderNothingToDoAndRefusals(t *testing.T) {
 	}
 }
 
+func TestReorderRefusesAOneBranchStack(t *testing.T) {
+	f := newLinearFixture(t, []fileCommit{{"a", "a.txt", "a"}})
+	_, err := f.app.Reorder(context.Background(), f.repo, app.ReorderOptions{Order: []string{"a"}})
+	if !errors.Is(err, &stack.Error{Kind: stack.KindInvalidArgs}) || !strings.Contains(err.Error(), "nothing to reorder") {
+		t.Errorf("one branch: %v", err)
+	}
+}
+
+func TestReorderResultDoesNotAliasTheOrder(t *testing.T) {
+	f := newRestackFixture(t)
+	order := []string{"a", "b", "c"}
+	res, err := f.app.Reorder(context.Background(), f.repo, app.ReorderOptions{Order: order})
+	if err != nil {
+		t.Fatal(err)
+	}
+	order[0] = "zzz"
+	if !slices.Equal(res.After, []string{"a", "b", "c"}) {
+		t.Errorf("After follows the caller's slice: %v", res.After)
+	}
+}
+
 // reorderConflictFixture: main (shared.txt "base") -> a (shared.txt "a") -> b (shared.txt "b") -> c (c.txt).
 // Putting b under a conflicts: b's change assumes a's.
 func reorderConflictFixture(t *testing.T) *restackFixture {

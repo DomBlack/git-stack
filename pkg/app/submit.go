@@ -81,6 +81,9 @@ func (a *App) Submit(ctx context.Context, repo git.Repo, o SubmitOptions) (Submi
 	if a.d.Submit == nil {
 		return SubmitResult{}, stack.New(stack.KindUnsupported, "no submit backend configured")
 	}
+	if err := a.noRebaseActive(ctx, repo); err != nil {
+		return SubmitResult{}, err
+	}
 	target := o.Branch
 	if target == "" {
 		cur, err := a.d.Git.CurrentBranch(ctx, repo)
@@ -478,7 +481,7 @@ func (a *App) draftPR(ctx context.Context, repo git.Repo, trunk, parent, branch 
 func (a *App) dissolvePending(ctx context.Context, repo git.Repo, graph *stack.Graph, s *stack.Stack, res *SubmitResult) {
 	p, err := loadPendingRemote(repo)
 	if err != nil {
-		res.Notices = append(res.Notices, fmt.Sprintf("could not read the stacks waiting to be dissolved on GitHub: %v", err))
+		res.Notices = append(res.Notices, fmt.Sprintf("could not read %s (%v); delete it to forget the stacks waiting to be dissolved", remoteStacksPath(repo), err))
 		return
 	}
 	if p == nil {

@@ -37,10 +37,15 @@ type submitFake struct {
 	// unstacked records every Unstack call; unstackErr is what it returns.
 	unstacked  []int
 	unstackErr error
+	// unstackFn, when set, decides the result per number instead.
+	unstackFn func(number int) error
 }
 
 func (s *submitFake) Unstack(_ context.Context, _ git.Repo, number int) error {
 	s.unstacked = append(s.unstacked, number)
+	if s.unstackFn != nil {
+		return s.unstackFn(number)
+	}
 	return s.unstackErr
 }
 
@@ -226,6 +231,9 @@ func TestSubmitDissolvesPendingRemoteStacks(t *testing.T) {
 	if len(sf.unstacked) != 0 {
 		t.Fatalf("a dry run must not dissolve anything: %v", sf.unstacked)
 	}
+	if data, err := os.ReadFile(path); err != nil || string(data) != pending {
+		t.Fatalf("a dry run must leave the pending file alone: %q %v", data, err)
+	}
 
 	sf.unstackErr = errors.New("boom")
 	res, err := a.Submit(ctx, repo, app.SubmitOptions{Publish: true})
@@ -260,6 +268,85 @@ func TestSubmitDissolvesPendingRemoteStacks(t *testing.T) {
 	}
 	if _, err := os.Stat(path); !errors.Is(err, fs.ErrNotExist) {
 		t.Errorf("nothing should be pending: %v", err)
+	}
+}
+
+// One entry failing leaves only that entry pending; both outcomes are
+// reported.
+func TestSubmitKeepsOnlyTheFailedDissolvePending(t *testing.T) {
+	deps, sf, _, repo, _ := submitFixture(t)
+	a := app.New(deps)
+	path := filepath.Join(repo.CommonDir, "git-stack", "remote-stacks.json")
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	pending := `{"dissolve":[{"id":"S1","number":7,"stack":"a"},{"id":"S2","number":8,"stack":"a"}]}`
+	if err := os.WriteFile(path, []byte(pending), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	sf.unstackFn = func(n int) error {
+		if n == 8 {
+			return errors.New("boom")
+		}
+		return nil
+	}
+	res, err := a.Submit(context.Background(), repo, app.SubmitOptions{Publish: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	n := strings.Join(res.Notices, "\n")
+	if !strings.Contains(n, "dissolved stack #7 on GitHub") || !strings.Contains(n, "could not dissolve stack #8") {
+		t.Errorf("notices = %v", res.Notices)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil || strings.Contains(string(data), "S1") || !strings.Contains(string(data), "S2") {
+		t.Errorf("only #8 should stay pending: %q %v", data, err)
+	}
+}
+
+// A pending file that cannot be read is named, with how to clear it, and
+// the submit carries on.
+func TestSubmitNamesAnUnreadablePendingFile(t *testing.T) {
+	deps, sf, _, repo, _ := submitFixture(t)
+	a := app.New(deps)
+	path := filepath.Join(repo.CommonDir, "git-stack", "remote-stacks.json")
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("{not json"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	res, err := a.Submit(context.Background(), repo, app.SubmitOptions{Publish: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	n := strings.Join(res.Notices, "\n")
+	if !strings.Contains(n, path) || !strings.Contains(n, "delete it to forget the stacks waiting to be dissolved") {
+		t.Errorf("notices = %v", res.Notices)
+	}
+	if len(sf.opts) != 1 || len(sf.unstacked) != 0 {
+		t.Errorf("submit should still run: opts=%v unstacked=%v", sf.opts, sf.unstacked)
+	}
+}
+
+// A saved restack state means a reorder, move or restack is half done:
+// submitting now would push half moved branches.
+func TestSubmitRefusesWhileARestackIsSaved(t *testing.T) {
+	deps, sf, _, repo, _ := submitFixture(t)
+	a := app.New(deps)
+	path := filepath.Join(repo.GitDir, "git-stack", "restack.json")
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(`{"command":"git stack reorder","conflict":"b"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	_, err := a.Submit(context.Background(), repo, app.SubmitOptions{Publish: true})
+	if !errors.Is(err, &stack.Error{Kind: stack.KindRebaseActive}) {
+		t.Errorf("submit = %v, want rebase_active", err)
+	}
+	if len(sf.opts) != 0 || len(sf.unstacked) != 0 {
+		t.Errorf("nothing may be pushed or dissolved: %v %v", sf.opts, sf.unstacked)
 	}
 }
 

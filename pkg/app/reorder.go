@@ -89,7 +89,7 @@ func (a *App) Reorder(ctx context.Context, repo git.Repo, o ReorderOptions) (Reo
 	if err := validateOrder(names, order); err != nil {
 		return res, err
 	}
-	res.After = order
+	res.After = slices.Clone(order)
 	if slices.Equal(order, names) {
 		return res, nil
 	}
@@ -112,6 +112,9 @@ func (a *App) Reorder(ctx context.Context, repo git.Repo, o ReorderOptions) (Reo
 			s, _, ok := g.StackOf(bottom)
 			if !ok {
 				return stack.Newf(stack.KindInvalidArgs, "%s is no longer in a stack", bottom)
+			}
+			if len(s.Branches) != len(order) {
+				return stack.New(stack.KindInvalidArgs, "the stack changed while it was being reordered; try again")
 			}
 			byName := map[string]stack.Branch{}
 			for _, b := range s.Branches {
