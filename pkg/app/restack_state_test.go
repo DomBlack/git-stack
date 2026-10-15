@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"testing"
 
 	"github.com/DomBlack/git-stack/pkg/exec"
@@ -133,5 +134,14 @@ func TestApplyMovesSavesTheState(t *testing.T) {
 	saved, err := loadRestackState(repo)
 	if err != nil || saved == nil || len(saved.Moved) != 1 || saved.Moved[0].Name != "b" || saved.Moved[0].From != from || saved.Moved[0].To != to {
 		t.Errorf("saved = %+v %v", saved, err)
+	}
+}
+
+func TestWithEarlierMovesKeepsEachMovesStack(t *testing.T) {
+	earlier := []movedRef{{Name: "a", Stack: "a"}, {Name: "old"}}
+	got := withEarlierMoves(earlier, []BranchMove{{Name: "x", Stack: "x"}}, "x")
+	want := []BranchMove{{Name: "a", Stack: "a"}, {Name: "old", Stack: "x"}, {Name: "x", Stack: "x"}}
+	if !slices.Equal(got, want) {
+		t.Errorf("got %+v, want %+v", got, want)
 	}
 }

@@ -59,6 +59,8 @@ type movedRef struct {
 	OldBase string `json:"old_base,omitempty"`
 	// Worktree is where the branch was checked out when it moved, if anywhere.
 	Worktree string `json:"worktree,omitempty"`
+	// Stack is the bottom branch of the stack it moved in, for reporting.
+	Stack string `json:"stack,omitempty"`
 }
 
 // restackStatePath is <git-dir>/git-stack/restack.json.

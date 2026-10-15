@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/DomBlack/git-stack/pkg/exec"
@@ -117,7 +118,7 @@ func TestReshapeReordersAndQueuesTheRemoteStack(t *testing.T) {
 	if !slices.Equal(names(got), []string{"b", "a", "c"}) || got.ID != "" || got.Number != 0 {
 		t.Errorf("stack = %+v", got)
 	}
-	if p, _ := loadPendingRemote(repo); p == nil || len(p.Dissolve) != 1 || p.Dissolve[0] != (remoteStack{ID: "S1", Number: 3, Stack: "b"}) {
+	if p, _ := loadPendingRemote(repo); p == nil || len(p.Dissolve) != 1 || p.Dissolve[0] != (remoteStack{ID: "S1", Number: 3, Stack: "a"}) {
 		t.Errorf("pending = %+v", p)
 	}
 	if _, err := gittest.RunErr(t, dir, "cat-file", "-e", "b:a.txt"); err == nil {
@@ -128,5 +129,69 @@ func TestReshapeReordersAndQueuesTheRemoteStack(t *testing.T) {
 	}
 	if st, _ := loadRestackState(repo); st != nil {
 		t.Errorf("state left behind: %+v", st)
+	}
+}
+
+// trunksAndNames renders each stack as trunk:[branches] for comparison.
+func trunksAndNames(g *stack.Graph) []string {
+	var out []string
+	for _, s := range g.Stacks {
+		out = append(out, s.Trunk+":"+strings.Join(s.Names(), ","))
+	}
+	return out
+}
+
+func TestRestoreReshapePutsAStackBackOnItsTrunk(t *testing.T) {
+	g := stack.NewGraph([]stack.Stack{
+		{Trunk: "main", Worktree: "/w", ID: "S1", Number: 1, Branches: []stack.Branch{{Name: "a", Base: "m"}, {Name: "b", Base: "ta"}}},
+	})
+	snap := snapshotOf(g, []string{"a"})
+	snap.Created = []string{"a"}
+	// The whole stack moved onto develop: a new stack there, the old one gone.
+	g = stack.NewGraph([]stack.Stack{
+		{Trunk: "develop", Branches: []stack.Branch{{Name: "a", Head: "na", Base: "d"}, {Name: "b", Head: "nb", Base: "na"}}},
+	})
+	a, be := reshapeApp(g)
+	if err := a.restoreReshape(context.Background(), git.Repo{CommonDir: t.TempDir()}, snap); err != nil {
+		t.Fatal(err)
+	}
+	got := be.Graph()
+	if want := []string{"main:a,b"}; !slices.Equal(trunksAndNames(got), want) {
+		t.Fatalf("stacks = %v, want %v", trunksAndNames(got), want)
+	}
+	if s := got.Stacks[0]; s.Worktree != "/w" || s.ID != "S1" || s.Branches[0].Base != "m" || s.Branches[0].Head != "na" {
+		t.Errorf("stack = %+v", s)
+	}
+}
+
+func TestRestoreReshapeUndoesAnOnlyMoveOfABottomBranchAcrossTrunks(t *testing.T) {
+	g := stack.NewGraph([]stack.Stack{
+		{Trunk: "main", Branches: []stack.Branch{{Name: "a", Base: "m"}, {Name: "b", Base: "ta"}, {Name: "c", Base: "tb"}}},
+		{Trunk: "develop", Branches: []stack.Branch{{Name: "x", Base: "d"}}},
+	})
+	snap := snapshotOf(g, []string{"a", "x"})
+	g.Stacks[0].Branches = g.Stacks[0].Branches[1:]
+	g.Stacks[1].Branches = append(g.Stacks[1].Branches, stack.Branch{Name: "a", Base: "tx"})
+	a, be := reshapeApp(g)
+	if err := a.restoreReshape(context.Background(), git.Repo{CommonDir: t.TempDir()}, snap); err != nil {
+		t.Fatal(err)
+	}
+	if got, want := trunksAndNames(be.Graph()), []string{"main:a,b,c", "develop:x"}; !slices.Equal(got, want) {
+		t.Errorf("stacks = %v, want %v", got, want)
+	}
+}
+
+func TestRestoreReshapeKeepsBranchesItDoesNotKnow(t *testing.T) {
+	g := stack.NewGraph([]stack.Stack{
+		{Trunk: "main", Branches: []stack.Branch{{Name: "a"}, {Name: "b"}}},
+	})
+	snap := snapshotOf(g, []string{"a"})
+	g.Stacks[0].Branches = []stack.Branch{{Name: "b"}, {Name: "a"}, {Name: "late"}}
+	a, be := reshapeApp(g)
+	if err := a.restoreReshape(context.Background(), git.Repo{CommonDir: t.TempDir()}, snap); err != nil {
+		t.Fatal(err)
+	}
+	if got, want := trunksAndNames(be.Graph()), []string{"main:a,b,late"}; !slices.Equal(got, want) {
+		t.Errorf("stacks = %v, want %v", got, want)
 	}
 }

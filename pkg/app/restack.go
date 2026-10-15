@@ -1,6 +1,7 @@
 package app
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -255,7 +256,7 @@ func (a *App) recordRebased(ctx context.Context, run *restackRun, res *RestackRe
 		return err
 	}
 	if !slices.ContainsFunc(run.moved, func(m movedRef) bool { return m.Name == st.Conflict }) {
-		m := movedRef{Name: st.Conflict, From: st.ConflictTip, To: tip, OldBase: st.ConflictOldBase}
+		m := movedRef{Name: st.Conflict, From: st.ConflictTip, To: tip, OldBase: st.ConflictOldBase, Stack: run.stackName}
 		run.moved = append(run.moved, m)
 		res.Moved = append(res.Moved, BranchMove{Name: m.Name, Stack: run.stackName, From: m.From, To: m.To})
 	}
@@ -365,7 +366,7 @@ func (a *App) applyMoves(ctx context.Context, run *restackRun, p *restackPlan, r
 		}
 	}
 	for _, m := range p.moves {
-		run.moved = append(run.moved, movedRef{Name: m.name, From: m.from, To: m.to, OldBase: m.oldBase, Worktree: m.worktree})
+		run.moved = append(run.moved, movedRef{Name: m.name, From: m.from, To: m.to, OldBase: m.oldBase, Worktree: m.worktree, Stack: run.stackName})
 		res.Moved = append(res.Moved, BranchMove{Name: m.name, Stack: run.stackName, From: m.from, To: m.to})
 		if m.empty {
 			res.Notices = append(res.Notices, fmt.Sprintf("%s has no commits of its own any more; its changes are already in its parent", m.name))
@@ -542,12 +543,14 @@ func (a *App) checkRestackRebase(ctx context.Context, repo git.Repo, st *restack
 
 // withEarlierMoves puts the moves an operation made before this continue
 // in front of the ones it made now, so the result covers the whole
-// operation, bottom to top.
+// operation, bottom to top. Each keeps the stack it moved in; stackName
+// labels moves saved before moves recorded their stack.
 func withEarlierMoves(earlier []movedRef, now []BranchMove, stackName string) []BranchMove {
 	out := make([]BranchMove, 0, len(earlier)+len(now))
 	for _, m := range earlier {
 		if !slices.ContainsFunc(now, func(b BranchMove) bool { return b.Name == m.Name }) {
-			out = append(out, BranchMove{Name: m.Name, Stack: stackName, From: m.From, To: m.To})
+			name := cmp.Or(m.Stack, stackName)
+			out = append(out, BranchMove{Name: m.Name, Stack: name, From: m.From, To: m.To})
 		}
 	}
 	return append(out, now...)
