@@ -283,3 +283,224 @@ func TestAbsorbBottomBranchRebasedByHandOntoNewerTrunk(t *testing.T) {
 		}
 	}
 }
+
+func TestAbsorbIntoBottomBranchRewritesEverythingAbove(t *testing.T) {
+	f := newAbsorbFixture(t)
+	ctx := context.Background()
+	oldA, oldB, oldC := f.rev(t, "a"), f.rev(t, "b"), f.rev(t, "c")
+	f.stageLine(t, 5, "FIVE")
+	f.stageLine(t, 15, "FIFTEEN")
+	f.stageLine(t, 1, "one")
+	gittest.WriteFile(t, f.dir, "new.txt", "new\n")
+	gittest.Run(t, f.dir, "add", "new.txt")
+	gittest.WriteFile(t, f.dir, "a.txt", "unstaged edit\n")
+
+	res, err := f.app.Absorb(ctx, f.repo, app.AbsorbOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !res.Applied || res.DryRun || len(res.Rewritten) != 2 || res.Rewritten[0].Name != "a" || res.Rewritten[0].From != oldA || res.Rewritten[1].Name != "b" || res.Rewritten[1].From != oldB {
+		t.Errorf("res = %+v", res)
+	}
+	if !slices.Equal(res.Restacked, []string{"c"}) {
+		t.Errorf("restacked = %v", res.Restacked)
+	}
+	// The hunks landed in the right commits and were carried above.
+	if got := gittest.Run(t, f.dir, "show", "a~1:f.txt"); !strings.Contains(got, "\nFIVE\n") || strings.Contains(got, "FIFTEEN") {
+		t.Errorf("a's first commit: %q", got)
+	}
+	if got := gittest.Run(t, f.dir, "show", "a:f.txt"); !strings.Contains(got, "\nFIVE\n") {
+		t.Errorf("a's tip lost the change: %q", got)
+	}
+	if got := gittest.Run(t, f.dir, "show", "b:f.txt"); !strings.Contains(got, "\nFIVE\n") || !strings.Contains(got, "\nFIFTEEN\n") || strings.Contains(got, "\none\n") {
+		t.Errorf("b: %q", got)
+	}
+	if got := gittest.Run(t, f.dir, "show", "c:f.txt"); !strings.Contains(got, "\nFIFTEEN\n") {
+		t.Errorf("c was not restacked onto the new b: %q", got)
+	}
+	if n := gittest.Run(t, f.dir, "rev-list", "--count", "main..c"); n != "4" {
+		t.Errorf("history grew or shrank: %s commits", n)
+	}
+	// Messages, authors and dates survive; the old tips are gone from the branches.
+	if subj := gittest.Run(t, f.dir, "log", "--format=%s", "main..b"); subj != "feat: b\nfeat: a file\nfeat: a" {
+		t.Errorf("subjects = %q", subj)
+	}
+	if an := gittest.Run(t, f.dir, "log", "-1", "--format=%an <%ae> %at", "a~1"); an != "Test <test@example.com> 1767323045" {
+		t.Errorf("author = %q", an)
+	}
+	if f.rev(t, "a") == oldA || f.rev(t, "b") == oldB || f.rev(t, "c") == oldC {
+		t.Error("a branch did not move")
+	}
+	// What was not absorbed is exactly what is still staged; the
+	// unstaged edit is untouched.
+	if out := gittest.Run(t, f.dir, "diff", "--cached", "--name-only"); out != "f.txt\nnew.txt" {
+		t.Errorf("still staged: %q", out)
+	}
+	staged := gittest.Run(t, f.dir, "diff", "--cached")
+	if !strings.Contains(staged, "+one") || strings.Contains(staged, "FIVE") || strings.Contains(staged, "FIFTEEN") {
+		t.Errorf("staged diff = %q", staged)
+	}
+	if out := gittest.Run(t, f.dir, "diff", "--name-only"); out != "a.txt" {
+		t.Errorf("unstaged = %q", out)
+	}
+	// Metadata: heads and bases follow.
+	br := f.fb.graph.Stacks[0].Branches
+	if br[0].Head != f.rev(t, "a") || br[1].Head != f.rev(t, "b") || br[1].Base != f.rev(t, "a") || br[2].Head != f.rev(t, "c") || br[2].Base != f.rev(t, "b") {
+		t.Errorf("metadata = %+v", br)
+	}
+	if br[0].Base != f.rev(t, "main") {
+		t.Errorf("a's base should not change: %+v", br[0])
+	}
+}
+
+func TestAbsorbIntoCurrentBranchOnly(t *testing.T) {
+	f := newAbsorbFixture(t)
+	oldA := f.rev(t, "a")
+	f.stageLine(t, 15, "FIFTEEN")
+	res, err := f.app.Absorb(context.Background(), f.repo, app.AbsorbOptions{})
+	if err != nil || len(res.Rewritten) != 1 || res.Rewritten[0].Name != "b" || f.rev(t, "a") != oldA {
+		t.Errorf("res = %+v %v", res, err)
+	}
+	if _, err := gittest.RunErr(t, f.dir, "diff", "--cached", "--quiet"); err != nil {
+		t.Error("index should be clean")
+	}
+}
+
+func TestAbsorbTwoHunksIntoFileCreatedInStack(t *testing.T) {
+	f := newAbsorbFixture(t)
+	// a created g.txt (20 lines); edits to lines 3 and 10 both go to a.
+	gittest.Run(t, f.dir, "switch", "-q", "a")
+	gittest.Commit(t, f.dir, "g.txt", numbered(), "feat: g")
+	gittest.Run(t, f.dir, "switch", "-q", "b")
+	gittest.Run(t, f.dir, "rebase", "-q", "a")
+	gittest.Run(t, f.dir, "switch", "-q", "c")
+	gittest.Run(t, f.dir, "rebase", "-q", "b")
+	gittest.Run(t, f.dir, "switch", "-q", "b")
+	br := f.fb.graph.Stacks[0].Branches
+	br[0].Head, br[1].Head, br[1].Base, br[2].Head, br[2].Base = f.rev(t, "a"), f.rev(t, "b"), f.rev(t, "a"), f.rev(t, "c"), f.rev(t, "b")
+
+	want := withLine(withLine(numbered(), 10, "ten"), 3, "three\nthree and a half") // line 10 first: the insertion shifts what follows
+	gittest.WriteFile(t, f.dir, "g.txt", want)
+	gittest.Run(t, f.dir, "add", "g.txt")
+	res, err := f.app.Absorb(context.Background(), f.repo, app.AbsorbOptions{})
+	if err != nil || res.Plan.Absorbed != 2 || res.Plan.Commits != 1 {
+		t.Fatalf("res = %+v %v", res, err)
+	}
+	if got := gittest.Run(t, f.dir, "show", "a:g.txt") + "\n"; got != want {
+		t.Errorf("a:g.txt = %q, want %q", got, want)
+	}
+	if _, err := gittest.RunErr(t, f.dir, "diff", "--cached", "--quiet"); err != nil {
+		t.Error("index should be clean")
+	}
+}
+
+func TestAbsorbFileWithoutTrailingNewline(t *testing.T) {
+	f := newAbsorbFixture(t)
+	gittest.Run(t, f.dir, "switch", "-q", "a")
+	gittest.Commit(t, f.dir, "n.txt", "x\ny", "feat: no newline")
+	gittest.Run(t, f.dir, "switch", "-q", "b")
+	gittest.Run(t, f.dir, "rebase", "-q", "a")
+	gittest.Run(t, f.dir, "switch", "-q", "c")
+	gittest.Run(t, f.dir, "rebase", "-q", "b")
+	gittest.Run(t, f.dir, "switch", "-q", "b")
+	br := f.fb.graph.Stacks[0].Branches
+	br[0].Head, br[1].Head, br[1].Base, br[2].Head, br[2].Base = f.rev(t, "a"), f.rev(t, "b"), f.rev(t, "a"), f.rev(t, "c"), f.rev(t, "b")
+
+	gittest.WriteFile(t, f.dir, "n.txt", "x\nY")
+	gittest.Run(t, f.dir, "add", "n.txt")
+	res, err := f.app.Absorb(context.Background(), f.repo, app.AbsorbOptions{})
+	if err != nil || res.Plan.Absorbed != 1 {
+		t.Fatalf("res = %+v %v", res, err)
+	}
+	if got := gittest.Run(t, f.dir, "show", "a:n.txt"); got != "x\nY" {
+		t.Errorf("a:n.txt = %q", got)
+	}
+	if _, err := gittest.RunErr(t, f.dir, "diff", "--cached", "--quiet"); err != nil {
+		t.Error("index should be clean")
+	}
+}
+
+func TestAbsorbOtherWorktree(t *testing.T) {
+	f := newAbsorbFixture(t)
+	ctx := context.Background()
+	wt := t.TempDir()
+	gittest.Run(t, f.dir, "worktree", "add", "-q", wt, "a")
+
+	// Dirty there: refused before anything moves.
+	gittest.WriteFile(t, wt, "a.txt", "dirty\n")
+	oldA := f.rev(t, "a")
+	f.stageLine(t, 5, "FIVE")
+	_, err := f.app.Absorb(ctx, f.repo, app.AbsorbOptions{})
+	if !errors.Is(err, &stack.Error{Kind: stack.KindInvalidArgs}) || !strings.Contains(err.Error(), "checked out in") {
+		t.Errorf("dirty worktree: %v", err)
+	}
+	if f.rev(t, "a") != oldA {
+		t.Error("a moved despite the refusal")
+	}
+
+	// Clean there: moved and the checkout brought along.
+	gittest.Run(t, wt, "checkout", "-q", "--", "a.txt")
+	res, err := f.app.Absorb(ctx, f.repo, app.AbsorbOptions{})
+	if err != nil || !res.Applied {
+		t.Fatalf("clean worktree: %+v %v", res, err)
+	}
+	if head := gittest.Run(t, wt, "rev-parse", "HEAD"); head != f.rev(t, "a") || head == oldA {
+		t.Errorf("worktree HEAD = %s, a = %s", head, f.rev(t, "a"))
+	}
+	if got := gittest.Run(t, wt, "show", "HEAD:f.txt"); !strings.Contains(got, "\nFIVE\n") || gittest.Run(t, wt, "status", "--porcelain") != "" {
+		t.Errorf("worktree not updated cleanly: %q", got)
+	}
+}
+
+func TestAbsorbRefusesWhenABranchMovedMeanwhile(t *testing.T) {
+	f := newAbsorbFixture(t)
+	f.stageLine(t, 5, "FIVE")
+	// A Preview hook is the one place something can happen between the
+	// plan and the ref transaction.
+	oldA := f.rev(t, "a")
+	moved := ""
+	_, err := f.app.Absorb(context.Background(), f.repo, app.AbsorbOptions{Preview: func(*app.AbsorbPlan) {
+		gittest.Run(t, f.dir, "update-ref", "refs/heads/a", "main")
+		moved = f.rev(t, "a")
+	}})
+	// (a now sits at main, which no candidate commit is; the planner ran
+	// against the tips it read before the hook, and the transaction must
+	// notice the difference.)
+	if !errors.Is(err, &stack.Error{Kind: stack.KindInvalidArgs}) || !strings.Contains(err.Error(), "moved while") {
+		t.Errorf("err = %v", err)
+	}
+	if f.rev(t, "a") != moved || moved == oldA {
+		t.Error("the transaction should have left the moved ref alone")
+	}
+}
+
+func TestAbsorbConflictAboveLeavesTheAbsorbInPlace(t *testing.T) {
+	f := newAbsorbFixture(t)
+	ctx := context.Background()
+	// c also changes line 15, so restacking it onto the rewritten b conflicts.
+	gittest.Run(t, f.dir, "switch", "-q", "c")
+	gittest.Commit(t, f.dir, "f.txt", withLine(gittest.Run(t, f.dir, "show", "HEAD:f.txt")+"\n", 15, "c's fifteen"), "feat: c15")
+	f.fb.graph.Stacks[0].Branches[2].Head = f.rev(t, "c")
+	gittest.Run(t, f.dir, "switch", "-q", "b")
+	oldB := f.rev(t, "b")
+
+	f.stageLine(t, 15, "FIFTEEN")
+	res, err := f.app.Absorb(ctx, f.repo, app.AbsorbOptions{})
+	if !errors.Is(err, &stack.Error{Kind: stack.KindConflict}) {
+		t.Fatalf("want a conflict, got %v", err)
+	}
+	if !res.Applied || len(res.Rewritten) != 1 || res.Rewritten[0].Name != "b" || f.rev(t, "b") == oldB {
+		t.Errorf("absorb should have happened: %+v", res)
+	}
+	if got := gittest.Run(t, f.dir, "show", "b:f.txt"); !strings.Contains(got, "\nFIFTEEN\n") {
+		t.Errorf("b = %q", got)
+	}
+	// The usual abort puts c back and the user back on b.
+	ar, err := f.app.Restack(ctx, f.repo, app.RestackOptions{Abort: true})
+	if err != nil || gittest.Run(t, f.dir, "branch", "--show-current") != "b" {
+		t.Errorf("abort: %+v %v", ar, err)
+	}
+	if f.rev(t, "b") == oldB {
+		t.Error("abort must not undo the absorb itself")
+	}
+}
