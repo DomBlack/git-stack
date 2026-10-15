@@ -112,6 +112,22 @@ func TestPatchTreeRejectsAPatchThatDoesNotFit(t *testing.T) {
 	}
 }
 
+func TestPatchTreeRefusesAnOffsetApply(t *testing.T) {
+	c, repo, dir := patchFixture(t)
+	tree := gittest.Run(t, dir, "rev-parse", "HEAD^{tree}")
+	// The header says line 4 but l2 is on line 2: git would apply it at an
+	// offset.
+	moved := "diff --git a/f.txt b/f.txt\n--- a/f.txt\n+++ b/f.txt\n@@ -4,1 +4,1 @@\n-l2\n+L2\n"
+	_, err := c.PatchTree(context.Background(), repo, tree, moved)
+	pe, ok := errors.AsType[*git.PatchError](err)
+	if !ok || !strings.Contains(pe.Detail, "offset") {
+		t.Errorf("err = %v", err)
+	}
+	if left, _ := filepath.Glob(filepath.Join(repo.GitDir, "git-stack-absorb-*")); len(left) != 0 {
+		t.Errorf("temporary index left behind: %v", left)
+	}
+}
+
 func TestPatchTreeIgnoresWhitespaceConfig(t *testing.T) {
 	c, repo, dir := patchFixture(t)
 	gittest.Run(t, dir, "config", "apply.whitespace", "fix")
