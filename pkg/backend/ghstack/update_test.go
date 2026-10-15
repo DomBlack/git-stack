@@ -289,6 +289,19 @@ func TestUpdateClearsAndRestoresRemoteID(t *testing.T) {
 	if g.Stacks[0].ID != "S9" || g.Stacks[0].Number != 9 {
 		t.Errorf("loaded %q %d", g.Stacks[0].ID, g.Stacks[0].Number)
 	}
+	// A record with only one of the pair never carries an empty value for
+	// the other: the number goes, the id stays.
+	err = b.Update(ctx, repo, func(g *stack.Graph) error {
+		g.Stacks[0].Number = 0
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, _ = os.ReadFile(mainPath)
+	if s := string(data); !strings.Contains(s, `"id": "S9"`) || strings.Contains(s, `"number": 0`) || strings.Contains(s, `"number": 9`) {
+		t.Errorf("number should be removed and the id kept:\n%s", s)
+	}
 }
 
 func TestUpdateReorderKeepsBranchRecords(t *testing.T) {
