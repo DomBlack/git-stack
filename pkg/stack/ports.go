@@ -40,8 +40,8 @@ type Metadata interface {
 	// entries, change Head and Base) and may also append stacks (each with a
 	// trunk and at least one branch; they are written to the current
 	// worktree's file, else the main checkout's, else a new file in the
-	// common dir) and may clear a stack's ID and Number, which removes them
-	// from the record. It must not remove or reorder existing stacks; a stack
+	// common dir) and may set or clear a stack's ID and Number (clearing
+	// removes them from the record). It must not remove or reorder existing stacks; a stack
 	// left with no branches is removed. When fn returns an error nothing is
 	// written and the error is returned.
 	Update(ctx context.Context, repo git.Repo, fn func(*Graph) error) error

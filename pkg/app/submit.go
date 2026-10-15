@@ -159,7 +159,7 @@ func (a *App) Submit(ctx context.Context, repo git.Repo, o SubmitOptions) (Submi
 	if o.DryRun {
 		return res, nil
 	}
-	a.dissolvePending(ctx, repo, graph, s, &res)
+	dissolved := a.dissolvePending(ctx, repo, graph, s, &res)
 
 	texts := make(map[string]PRText, len(o.Texts))
 	for k, v := range o.Texts {
@@ -258,6 +258,7 @@ func (a *App) Submit(ctx context.Context, repo git.Repo, o SubmitOptions) (Submi
 			res.Notices = append(res.Notices, fmt.Sprintf("could not re-link the stack on GitHub after fixing bases: %v", err))
 		}
 	}
+	a.recreateDissolved(ctx, repo, s, dissolved, after, &res)
 	if (len(texts) > 0 || fixed) && a.d.Forge != nil {
 		// Titles or bases changed; refresh the cache so views show them.
 		if _, err := a.RefreshPRs(ctx, repo); err != nil {
@@ -474,42 +475,103 @@ func (a *App) draftPR(ctx context.Context, repo git.Repo, trunk, parent, branch 
 }
 
 // dissolvePending works through the stacks a reorder or move left stale
-// on GitHub: each is dissolved so gh stack can create it again from the
-// local order. Only the stack being submitted is created again by this
-// submit, so each notice says where the entry's stack lives now. A failure
-// keeps the entry for the next submit and says so.
-func (a *App) dissolvePending(ctx context.Context, repo git.Repo, graph *stack.Graph, s *stack.Stack, res *SubmitResult) {
+// on GitHub: each is dissolved so it can be created again from the local
+// order, and the dissolved entries are returned for recreateDissolved. A
+// failure keeps the entry for the next submit and says so.
+func (a *App) dissolvePending(ctx context.Context, repo git.Repo, graph *stack.Graph, s *stack.Stack, res *SubmitResult) []remoteStack {
 	p, err := loadPendingRemote(repo)
 	if err != nil {
 		res.Notices = append(res.Notices, fmt.Sprintf("could not read %s (%v); delete it to forget the stacks waiting to be dissolved", remoteStacksPath(repo), err))
-		return
+		return nil
 	}
 	if p == nil {
-		return
+		return nil
 	}
-	var keep []remoteStack
+	var keep, done []remoteStack
 	for _, r := range p.Dissolve {
 		if err := a.d.Submit.Unstack(ctx, repo, r.Number); err != nil {
 			keep = append(keep, r)
 			res.Notices = append(res.Notices, fmt.Sprintf("could not dissolve stack #%d on GitHub (%v); the pull requests of %s's stack keep their old grouping until it can be", r.Number, err, r.Stack))
 			continue
 		}
+		done = append(done, r)
 		res.Notices = append(res.Notices, dissolvedNotice(graph, s, r))
 	}
 	p.Dissolve = keep
 	if err := savePendingRemote(repo, p); err != nil {
 		res.Notices = append(res.Notices, fmt.Sprintf("could not update the list of stacks to dissolve: %v", err))
 	}
+	return done
+}
+
+// recreateDissolved creates again on GitHub each stack this submit
+// dissolved that is not the one being submitted (the backend creates that
+// one): a move's source stack, say, or a reordered stack submitted from
+// elsewhere. Without this they would stay ungrouped until someone
+// submitted from them. The new id and number are recorded on the stack.
+// Every outcome is a notice; a failure leaves the next submit from that
+// stack to create it.
+func (a *App) recreateDissolved(ctx context.Context, repo git.Repo, s *stack.Stack, dissolved []remoteStack, after map[string]forge.PullRequest, res *SubmitResult) {
+	if a.d.Forge == nil || len(dissolved) == 0 {
+		return
+	}
+	graph, err := a.d.Meta.Load(ctx, repo)
+	if err != nil {
+		a.d.Log.Warn("could not load the stacks to create them again on GitHub", "err", err)
+		return
+	}
+	var seen []string
+	for _, r := range dissolved {
+		if slices.Contains(s.Names(), r.Stack) || slices.Contains(seen, r.Stack) {
+			continue
+		}
+		own, i, ok := graph.StackOf(r.Stack)
+		if !ok || i != 0 || own.ID != "" {
+			continue
+		}
+		seen = append(seen, r.Stack)
+		var numbers []int
+		for _, b := range own.Branches {
+			pr, has := after[b.Name]
+			if b.Merged() || !has || (pr.State != forge.StateOpen && pr.State != forge.StateDraft) {
+				continue
+			}
+			numbers = append(numbers, pr.Number)
+		}
+		if len(numbers) < 2 {
+			res.Notices = append(res.Notices, fmt.Sprintf("%s's stack has fewer than two pull requests, so there is no stack to create on GitHub", r.Stack))
+			continue
+		}
+		ref, err := a.d.Forge.CreateStack(ctx, repo, numbers)
+		if err != nil {
+			res.Notices = append(res.Notices, fmt.Sprintf("could not create %s's stack on GitHub again (%v); submit from it to try again", r.Stack, err))
+			continue
+		}
+		bottom := r.Stack
+		err = a.d.Meta.Update(ctx, repo, func(g *stack.Graph) error {
+			for j := range g.Stacks {
+				if g.Stacks[j].Bottom() == bottom {
+					g.Stacks[j].ID, g.Stacks[j].Number = ref.ID, ref.Number
+				}
+			}
+			return nil
+		})
+		if err != nil {
+			res.Notices = append(res.Notices, fmt.Sprintf("created stack #%d on GitHub for %s's stack but could not record it (%v)", ref.Number, r.Stack, err))
+			continue
+		}
+		res.Notices = append(res.Notices, fmt.Sprintf("created stack #%d on GitHub again for %s's stack", ref.Number, r.Stack))
+	}
 }
 
 // dissolvedNotice words a successful dissolve by where the entry's stack
-// lives now, since submit only creates the stack it was run for.
+// lives now. Another stack's notice is followed by recreateDissolved's.
 func dissolvedNotice(graph *stack.Graph, s *stack.Stack, r remoteStack) string {
 	if slices.Contains(s.Names(), r.Stack) {
 		return fmt.Sprintf("dissolved stack #%d on GitHub; it is created again in its new order below", r.Number)
 	}
-	if own, i, ok := graph.StackOf(r.Stack); ok && i == 0 {
-		return fmt.Sprintf("dissolved stack #%d on GitHub because its pull requests were regrouped by a reorder or move; submit from %s to group them again", r.Number, own.Bottom())
+	if _, i, ok := graph.StackOf(r.Stack); ok && i == 0 {
+		return fmt.Sprintf("dissolved stack #%d on GitHub because its pull requests were regrouped by a reorder or move", r.Number)
 	}
 	return fmt.Sprintf("dissolved stack #%d on GitHub; its pull requests now belong to the stack they were moved to", r.Number)
 }

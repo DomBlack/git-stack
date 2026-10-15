@@ -98,6 +98,14 @@ type CheckSummary struct {
 // Clean reports whether nothing is failing or still running.
 func (c CheckSummary) Clean() bool { return len(c.Failing) == 0 && len(c.Pending) == 0 }
 
+// StackRef names a stack of pull requests on the forge.
+type StackRef struct {
+	// ID is the forge's identifier for the stack.
+	ID string
+	// Number is the stack's number within the repository.
+	Number int
+}
+
 // Forge performs pull-request operations for the repository's remote.
 type Forge interface {
 	// ListPRs returns every pull request whose head is a branch of this
@@ -115,6 +123,11 @@ type Forge interface {
 	// rather than one at a time. A pull request with no checks at all may
 	// be missing from the map.
 	Checks(ctx context.Context, repo git.Repo, numbers []int) (map[int]CheckSummary, error)
+	// CreateStack groups pull requests into a stack on the forge, bottom
+	// to top. GitHub needs at least two, none of them already in a stack,
+	// each based on the head of the one before. A refusal comes back as a
+	// *stack.Error of kind api_failure carrying the forge's message.
+	CreateStack(ctx context.Context, repo git.Repo, numbers []int) (StackRef, error)
 	// PullRequestURL is the web address of pull request number, worked out
 	// from local configuration only (never the network), so output can
 	// link a PR the forge hasn't been asked about. "" when it can't tell.
