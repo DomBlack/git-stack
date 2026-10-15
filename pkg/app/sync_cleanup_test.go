@@ -584,3 +584,29 @@ func TestSyncKeepsMergedBranchWithWhitespaceOnlyAmend(t *testing.T) {
 		t.Errorf("kept = %+v deleted = %+v", res.Kept, res.Deleted)
 	}
 }
+
+// When sync deletes a branch whose pull request closed, the branch above
+// replays from its recorded base onto trunk, so the deleted branch's
+// commits go with it even though trunk has not moved.
+func TestSyncRestackDropsAClosedParentsCommits(t *testing.T) {
+	f := newSyncFixture(t)
+	bs := f.meta.g.Stacks[0].Branches
+	bs[0].Base, bs[1].Base = f.rev(t, "main"), f.rev(t, "a")
+	f.forge.prs[0].State = forge.StateClosed
+	res, err := f.sync(t, app.SyncOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := deleted(res, "a"); !ok {
+		t.Fatalf("deleted = %+v", res.Deleted)
+	}
+	if _, err := gittest.RunErr(t, f.dir, "cat-file", "-e", "b:a.txt"); err == nil {
+		t.Error("b still carries a's commit")
+	}
+	if f.rev(t, "b~1") != f.rev(t, "main") {
+		t.Error("b is not on main")
+	}
+	if b := f.meta.g.Stacks[0].Branches[0]; b.Name != "b" || b.Base != f.rev(t, "main") {
+		t.Errorf("b = %+v, want its base on main", b)
+	}
+}

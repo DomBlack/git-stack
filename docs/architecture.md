@@ -356,7 +356,9 @@ straight back to sync). `git stack restack` now runs sync's planner over the sco
 (whole stack, `--upstack`, `--downstack`, `--only`, from the current branch or `--branch`),
 bottom branch onto the local trunk included, moves the refs in one transaction, the
 checked out branch with `reset --keep` so local edits to untouched files survive, and
-refuses up front when a local edit overlaps a file the move rewrites. A conflict hands
+refuses up front when a local edit overlaps a file the move rewrites. A branch whose
+recorded base sits above its parent's tip replays from that base, so a child of a branch
+that sync deleted no longer carries that branch's commits. A conflict hands
 that one branch to `git rebase --onto` so the user gets ordinary conflict markers; the
 branches below it are already moved and recorded. What is left to do, and everything
 already moved, sits in `<git-dir>/git-stack/restack.json` (ours, per worktree, written only

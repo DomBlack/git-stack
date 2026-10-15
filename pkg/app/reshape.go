@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 
 	"github.com/DomBlack/git-stack/pkg/git"
 	"github.com/DomBlack/git-stack/pkg/stack"
@@ -20,7 +21,9 @@ type reshapeSnapshot struct {
 }
 
 type snapshotStack struct {
-	Trunk    string           `json:"trunk"`
+	Trunk string `json:"trunk"`
+	// Worktree is the working tree whose metadata held the stack.
+	Worktree string           `json:"worktree,omitempty"`
 	ID       string           `json:"id,omitempty"`
 	Number   int              `json:"number,omitempty"`
 	Branches []snapshotBranch `json:"branches"`
@@ -45,7 +48,7 @@ func snapshotOf(g *stack.Graph, names []string) *reshapeSnapshot {
 			continue
 		}
 		seen[i] = true
-		ss := snapshotStack{Trunk: s.Trunk, ID: s.ID, Number: s.Number}
+		ss := snapshotStack{Trunk: s.Trunk, Worktree: s.Worktree, ID: s.ID, Number: s.Number}
 		for _, b := range s.Branches {
 			ss.Branches = append(ss.Branches, snapshotBranch{Name: b.Name, Base: b.Base})
 		}
@@ -66,59 +69,84 @@ func stackIndex(g *stack.Graph, s *stack.Stack) int {
 
 // restoreReshape puts the snapshot back: every branch entry of the stacks
 // involved keeps the head it has now, goes back to the stack and position
-// it had, and gets its old base; cleared remote ids come back and the
-// pending dissolve of those stacks is forgotten; stacks the reshape
-// created are emptied.
+// it had, and gets its old base; each stack gets its trunk, worktree and
+// remote id back, and the pending dissolve of those stacks is forgotten.
+// Stacks the reshape created are emptied, which removes them; any other
+// branch the snapshot does not name stays on the stack it is on now.
 func (a *App) restoreReshape(ctx context.Context, repo git.Repo, snap *reshapeSnapshot) error {
 	var ids []string
 	err := a.d.Meta.Update(ctx, repo, func(g *stack.Graph) error {
-		// Where each snapshot stack lives now: the stack holding the
-		// first of its branches that is still tracked.
-		homes := make([]int, len(snap.Stacks))
-		involved := map[int]bool{}
-		for k, ss := range snap.Stacks {
-			homes[k] = -1
+		ids = nil
+		// The slots involved, in index order: every stack holding a branch
+		// the snapshot names, and every stack the reshape created.
+		named := map[string]bool{}
+		where := map[string]int{}
+		var involved []int
+		for _, ss := range snap.Stacks {
 			for _, sb := range ss.Branches {
+				named[sb.Name] = true
 				if s, _, ok := g.StackOf(sb.Name); ok {
-					i := stackIndex(g, s)
-					involved[i] = true
-					if homes[k] < 0 {
-						homes[k] = i
-					}
+					where[sb.Name] = stackIndex(g, s)
+					involved = append(involved, where[sb.Name])
 				}
 			}
 		}
+		created := map[int]bool{}
 		for _, bottom := range snap.Created {
 			if s, _, ok := g.StackOf(bottom); ok {
-				involved[stackIndex(g, s)] = true
+				i := stackIndex(g, s)
+				created[i] = true
+				involved = append(involved, i)
 			}
 		}
+		slices.Sort(involved)
+		involved = slices.Compact(involved)
 		pool := map[string]stack.Branch{}
-		for i := range involved {
+		leftovers := map[int][]stack.Branch{}
+		for _, i := range involved {
 			for _, b := range g.Stacks[i].Branches {
-				pool[b.Name] = b
+				switch {
+				case named[b.Name]:
+					pool[b.Name] = b
+				case !created[i]:
+					leftovers[i] = append(leftovers[i], b)
+				}
 			}
 			g.Stacks[i].Branches = nil
 		}
+		// A stack goes home to the slot that holds its bottom branch on the
+		// same trunk; failing that, to the first free slot on that trunk;
+		// failing that, to a new stack. A created slot is never a home.
+		free := func(i int, trunk string) bool { return !created[i] && g.Stacks[i].Trunk == trunk }
+		homes := make([]int, len(snap.Stacks))
 		taken := map[int]bool{}
 		for k, ss := range snap.Stacks {
-			home := homes[k]
-			if home < 0 || taken[home] {
-				home = -1
-				for i := range involved {
-					if !taken[i] && g.Stacks[i].Trunk == ss.Trunk {
-						home = i
-						break
-					}
+			homes[k] = -1
+			if len(ss.Branches) == 0 {
+				continue
+			}
+			if i, ok := where[ss.Branches[0].Name]; ok && !taken[i] && free(i, ss.Trunk) {
+				homes[k], taken[i] = i, true
+			}
+		}
+		for k, ss := range snap.Stacks {
+			if homes[k] >= 0 {
+				continue
+			}
+			for _, i := range involved {
+				if !taken[i] && free(i, ss.Trunk) {
+					homes[k], taken[i] = i, true
+					break
 				}
 			}
-			if home < 0 {
-				g.Stacks = append(g.Stacks, stack.Stack{Trunk: ss.Trunk})
-				home = len(g.Stacks) - 1
+			if homes[k] < 0 {
+				g.Stacks = append(g.Stacks, stack.Stack{})
+				homes[k] = len(g.Stacks) - 1
 			}
-			taken[home] = true
-			s := &g.Stacks[home]
-			s.ID, s.Number = ss.ID, ss.Number
+		}
+		for k, ss := range snap.Stacks {
+			s := &g.Stacks[homes[k]]
+			s.Trunk, s.Worktree, s.ID, s.Number = ss.Trunk, ss.Worktree, ss.ID, ss.Number
 			if ss.ID != "" {
 				ids = append(ids, ss.ID)
 			}
@@ -130,6 +158,9 @@ func (a *App) restoreReshape(ctx context.Context, repo git.Repo, snap *reshapeSn
 				b.Base = sb.Base
 				s.Branches = append(s.Branches, b)
 			}
+		}
+		for _, i := range involved {
+			g.Stacks[i].Branches = append(g.Stacks[i].Branches, leftovers[i]...)
 		}
 		return nil
 	})
@@ -181,17 +212,26 @@ func (a *App) reshape(ctx context.Context, repo git.Repo, command, headline stri
 	var pending []remoteStack
 	err = a.d.Meta.Update(ctx, repo, func(g *stack.Graph) error {
 		before := parentsOf(g)
-		// The stacks to relink are found before the edit: a move can empty
-		// its source stack or carry its bottom branch elsewhere, and the
-		// edit only appends stacks and edits branches, so indexes hold.
+		// The stacks to relink, and the names GitHub knows them by, are
+		// found before the edit: a move can empty its source stack or carry
+		// its bottom branch elsewhere, and the edit only appends stacks and
+		// edits branches, so indexes hold.
 		var relink []int
+		pending = nil
 		for _, name := range e.relink {
 			if s, _, ok := g.StackOf(name); ok && s.ID != "" {
-				relink = append(relink, stackIndex(g, s))
+				if i := stackIndex(g, s); !slices.Contains(relink, i) {
+					relink = append(relink, i)
+					pending = append(pending, remoteStack{ID: s.ID, Number: s.Number, Stack: s.Bottom()})
+				}
 			}
 		}
+		count := len(g.Stacks)
 		if err := e.edit(g); err != nil {
 			return err
+		}
+		if len(g.Stacks) < count {
+			return errors.New("the edit removed a stack")
 		}
 		for i := range g.Stacks {
 			s := &g.Stacks[i]
@@ -211,9 +251,7 @@ func (a *App) reshape(ctx context.Context, repo git.Repo, command, headline stri
 			}
 		}
 		for _, i := range relink {
-			s := &g.Stacks[i]
-			pending = append(pending, remoteStack{ID: s.ID, Number: s.Number, Stack: s.Bottom()})
-			s.ID, s.Number = "", 0
+			g.Stacks[i].ID, g.Stacks[i].Number = "", 0
 		}
 		return nil
 	})
@@ -233,13 +271,32 @@ func (a *App) reshape(ctx context.Context, repo git.Repo, command, headline stri
 	err = a.progress(ctx, PhaseRestack, headline, func(ctx context.Context) error {
 		return a.restackSegments(ctx, run, e.segments, &res)
 	})
-	if err != nil && !errors.Is(err, &stack.Error{Kind: stack.KindConflict}) && len(run.moved) == 0 {
+	if err != nil && !errors.Is(err, &stack.Error{Kind: stack.KindConflict}) {
+		if len(run.moved) > 0 || a.refsMoved(ctx, repo, local) {
+			return res, asStackError(err).WithSteps("git stack restack finishes the rest")
+		}
 		if rerr := a.restoreReshape(ctx, repo, snap); rerr != nil {
 			return res, asStackError(err).WithSteps(fmt.Sprintf("the stack's new shape was kept because putting it back failed (%v); git stack restack finishes it", rerr))
 		}
 		return res, asStackError(err).WithSteps("nothing was changed")
 	}
 	return res, err
+}
+
+// refsMoved reports whether any branch's head differs from before, or
+// cannot be read: a failed restack can have moved the checked out branch
+// before the transaction that failed.
+func (a *App) refsMoved(ctx context.Context, repo git.Repo, before map[string]git.Branch) bool {
+	now, err := a.localBranches(ctx, repo)
+	if err != nil {
+		return true
+	}
+	for name, b := range before {
+		if now[name].Head != b.Head {
+			return true
+		}
+	}
+	return false
 }
 
 // parentsOf maps every stacked branch to its parent (trunk for a bottom
