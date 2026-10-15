@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"strconv"
-	"strings"
 
 	"github.com/DomBlack/git-stack/pkg/forge"
 	"github.com/DomBlack/git-stack/pkg/git"
@@ -43,19 +42,16 @@ func (f *Forge) CreateStack(ctx context.Context, repo git.Repo, numbers []int) (
 }
 
 // stackRefused turns gh's error for a rejected create (a pull request
-// already stacked, a broken chain, too few pull requests) into one that
-// carries GitHub's own message.
+// already stacked, a broken chain, too few pull requests) into one whose
+// message is GitHub's own reason, as it gave it.
 func stackRefused(err error) error {
 	se, ok := errors.AsType[*stack.Error](err)
 	if !ok || se.Kind != stack.KindAPIFailure {
 		return err
 	}
-	detail := se.Detail
-	// gh api prints the JSON body on stdout and "gh: <message> (HTTP 4xx)" on stderr.
-	msg := strings.TrimSpace(strings.TrimPrefix(strings.SplitN(detail, "\n", 2)[0], "gh:"))
+	msg := apiMessage(err)
 	if msg == "" {
 		msg = "GitHub refused to create the stack"
 	}
-	return stack.Newf(stack.KindAPIFailure, "GitHub did not create the stack: %s", msg).
-		WithDetail(detail).WithCause(err)
+	return stack.New(stack.KindAPIFailure, msg).WithDetail(se.Detail).WithCause(err)
 }

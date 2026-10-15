@@ -5,7 +5,6 @@ import (
 	"encoding/json/v2"
 	"errors"
 	"fmt"
-	"strings"
 	"time"
 
 	"github.com/DomBlack/git-stack/pkg/forge"
@@ -78,14 +77,12 @@ func mergeRefused(err error) error {
 	if !ok || se.Kind != stack.KindAPIFailure {
 		return err
 	}
-	detail := se.Detail
-	// gh api prints the JSON body on stdout and "gh: <message> (HTTP 4xx)" on stderr.
-	msg := strings.TrimSpace(strings.TrimPrefix(strings.SplitN(detail, "\n", 2)[0], "gh:"))
+	msg := apiMessage(err)
 	if msg == "" {
 		msg = "GitHub refused the merge"
 	}
 	return stack.Newf(stack.KindAPIFailure, "GitHub refused to merge the stack: %s", msg).
-		WithDetail(detail).WithCause(err).
+		WithDetail(se.Detail).WithCause(err).
 		WithSteps("every pull request below must be open and ready for review; git stack submit --publish marks drafts ready",
 			"check branch protection and required checks on the pull requests")
 }
