@@ -214,6 +214,19 @@ absorbed hunks simply drop out of the staged diff. Everything above the current 
 through modify's upstack restack, conflict handling included. There is no absorb specific abort;
 the old tips are printed and in the reflog.
 
+**`submit --down` pushes and creates PRs itself, then links them.** `--down`, or naming a branch,
+submits that branch and the ones below it, so the bottom of a stack can go for review while the
+top is still moving. gh stack submit always pushes every branch, so when there is a branch above
+the one asked for, submit does the work itself: it pushes those branches in one atomic
+`git push`, each with `--force-with-lease` against its remote tracking tip, creates any missing PRs
+through the forge (with the supplied or drafted text, otherwise a single commit's subject and body,
+the way gh stack fills them in), and runs `gh stack link` with the PR numbers so they join the
+stack on GitHub. Numbers resolve to PRs rather than branches, so link pushes nothing. With no stack
+on GitHub yet and a single PR there is nothing to link. A failed link is only a notice: the PRs
+exist, and gh stack submit finds open PRs by branch and adopts a stack that already exists, so a
+later whole stack submit tidies up. gh stack's editor only exists inside its submit, so with
+`--down` the titles come from the commits and we say so.
+
 **`submit --ai` drafts first, then lets gh stack submit, then fixes the PRs up.** The
 alternative was to push and create PRs ourselves and only use gh stack to link them. We
 didn't, because gh stack owns the push (`--force-with-lease`), the base calculation, the

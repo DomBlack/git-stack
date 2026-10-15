@@ -59,3 +59,25 @@ func TestSubmit(t *testing.T) {
 		t.Errorf("exit 9: %v", err)
 	}
 }
+
+func TestLink(t *testing.T) {
+	f := installed()
+	f.On("gh", "stack").Do(func(c exec.Cmd) (exec.Result, error) {
+		return exec.Result{Stderr: []byte("✓ linked\n")}, nil
+	})
+	b := New(f, nil)
+	ctx := context.Background()
+	repo := git.Repo{TopLevel: "/r"}
+
+	res, err := b.Link(ctx, repo, stack.LinkOptions{Trunk: "main", PRs: []int{7, 8}})
+	if err != nil || res.Output != "✓ linked" || lastGh(f) != "stack link --base main 7 8" {
+		t.Errorf("new stack: %+v %v %q", res, err, lastGh(f))
+	}
+	if _, err := b.Link(ctx, repo, stack.LinkOptions{Stack: 3, Trunk: "main", PRs: []int{9}}); err != nil || lastGh(f) != "stack link 3 9" {
+		t.Errorf("existing stack: %v %q", err, lastGh(f))
+	}
+	calls := f.CallsTo("gh")
+	if calls[len(calls)-1].Mode != exec.Capture {
+		t.Error("link must be captured")
+	}
+}

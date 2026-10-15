@@ -25,6 +25,7 @@ type submitFake struct {
 	forge    *recordingForge
 	graph    *stack.Graph
 	opts     []stack.SubmitOptions
+	links    []stack.LinkOptions
 	output   string // Submit's backend output
 	streamed bool   // reported as already relayed live
 	// baseOnTrunk makes new PRs target trunk instead of their parent, the
@@ -58,8 +59,14 @@ func (s *submitFake) Submit(_ context.Context, _ git.Repo, o stack.SubmitOptions
 	return stack.SubmitResult{Output: out, Streamed: s.streamed}, nil
 }
 
+func (s *submitFake) Link(_ context.Context, _ git.Repo, o stack.LinkOptions) (stack.SubmitResult, error) {
+	s.links = append(s.links, o)
+	return stack.SubmitResult{Output: "✓ linked"}, nil
+}
+
 type recordingForge struct {
 	prs     []forge.PullRequest
+	created []forge.CreatePR
 	updates map[int]forge.UpdatePR
 	lists   int
 	// merges records every MergeStack call as (number, method).
@@ -95,8 +102,15 @@ func (f *recordingForge) ListPRs(context.Context, git.Repo) ([]forge.PullRequest
 	f.lists++
 	return slices.Clone(f.prs), nil
 }
-func (f *recordingForge) CreatePR(context.Context, git.Repo, forge.CreatePR) (forge.PullRequest, error) {
-	return forge.PullRequest{}, nil
+func (f *recordingForge) CreatePR(_ context.Context, _ git.Repo, in forge.CreatePR) (forge.PullRequest, error) {
+	f.created = append(f.created, in)
+	state := forge.StateOpen
+	if in.Draft {
+		state = forge.StateDraft
+	}
+	pr := forge.PullRequest{Number: 100 + len(f.prs), Head: in.Head, Base: in.Base, State: state, Title: in.Title, URL: "u/" + in.Head}
+	f.prs = append(f.prs, pr)
+	return pr, nil
 }
 func (f *recordingForge) UpdatePR(_ context.Context, _ git.Repo, n int, in forge.UpdatePR) error {
 	if f.updates == nil {
@@ -372,4 +386,126 @@ func TestCancelledPRRefreshStopsTheCommand(t *testing.T) {
 	if len(sf.opts) != 0 || len(fg.updates) != 0 {
 		t.Errorf("nothing may be submitted after Ctrl-C: submits=%d updates=%d", len(sf.opts), len(fg.updates))
 	}
+}
+
+// partialFixture extends submitFixture with c on top of b, pushes all three
+// to a bare origin, then amends b and c so both need a force push. HEAD is
+// on b.
+func partialFixture(t *testing.T) (app.Deps, *submitFake, *recordingForge, git.Repo, string) {
+	t.Helper()
+	deps, sf, fg, repo, dir := submitFixture(t)
+	gittest.Run(t, dir, "switch", "-q", "-c", "c")
+	gittest.Commit(t, dir, "c.txt", "c", "feat: c")
+	gittest.InitRemote(t, dir)
+	gittest.Run(t, dir, "commit", "-q", "--amend", "-m", "feat: c again")
+	gittest.Run(t, dir, "switch", "-q", "b")
+	gittest.Run(t, dir, "commit", "-q", "--amend", "-m", "feat: b\n\nbody b")
+	sf.graph.Stacks[0].Branches = append(sf.graph.Stacks[0].Branches, stack.Branch{Name: "c"})
+	return deps, sf, fg, repo, dir
+}
+
+func remoteTip(t *testing.T, dir, branch string) string {
+	t.Helper()
+	out, _ := gittest.RunErr(t, dir, "ls-remote", "origin", "refs/heads/"+branch)
+	sha, _, _ := strings.Cut(out, "\t")
+	return sha
+}
+
+func TestSubmitDownLeavesTheOnesAboveAlone(t *testing.T) {
+	deps, sf, fg, repo, dir := partialFixture(t)
+	res, err := app.New(deps).Submit(context.Background(), repo, app.SubmitOptions{Down: true, NoEdit: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(sf.opts) != 0 {
+		t.Errorf("gh stack submit pushes every branch, so it must not run: %+v", sf.opts)
+	}
+	if got, want := remoteTip(t, dir, "b"), gittest.Run(t, dir, "rev-parse", "b"); got != want {
+		t.Errorf("b on origin = %s, want %s", got, want)
+	}
+	if remoteTip(t, dir, "c") == gittest.Run(t, dir, "rev-parse", "c") {
+		t.Error("c is above b and must not be pushed")
+	}
+	want := []forge.CreatePR{{Head: "b", Base: "a", Title: "feat: b", Body: "## Why\n"}}
+	if !slices.Equal(fg.created, want) {
+		t.Errorf("created = %+v, want %+v", fg.created, want)
+	}
+	if len(sf.links) != 1 || sf.links[0].Stack != 0 || sf.links[0].Trunk != "main" || !slices.Equal(sf.links[0].PRs, []int{7, 101}) {
+		t.Errorf("links = %+v", sf.links)
+	}
+	if len(res.PullRequests) != 2 || !res.PullRequests[1].Created || res.PullRequests[1].Number != 101 || res.PullRequests[0].Created {
+		t.Errorf("result = %+v", res.PullRequests)
+	}
+}
+
+func TestSubmitPartUsesSuppliedTextsAndTheKnownStack(t *testing.T) {
+	deps, sf, fg, repo, _ := partialFixture(t)
+	sf.graph.Stacks[0].Number = 5
+	res, err := app.New(deps).Submit(context.Background(), repo, app.SubmitOptions{
+		Down:  true,
+		Draft: true,
+		Texts: map[string]app.PRText{"b": {Title: "Mine", Body: "why"}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(fg.created) != 1 || fg.created[0].Title != "Mine" || fg.created[0].Body != "why" || !fg.created[0].Draft {
+		t.Errorf("created = %+v", fg.created)
+	}
+	if len(fg.updates) != 0 {
+		t.Errorf("the text went in at creation; nothing to update: %+v", fg.updates)
+	}
+	if !res.PullRequests[1].TextUpdated {
+		t.Errorf("b = %+v", res.PullRequests[1])
+	}
+	if len(sf.links) != 1 || sf.links[0].Stack != 5 {
+		t.Errorf("links = %+v", sf.links)
+	}
+}
+
+func TestSubmitNamedBranchWithAPRNeedsNoLink(t *testing.T) {
+	deps, sf, fg, repo, _ := partialFixture(t)
+	res, err := app.New(deps).Submit(context.Background(), repo, app.SubmitOptions{Branch: "a", NoEdit: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(sf.opts) != 0 || len(sf.links) != 0 || len(fg.created) != 0 {
+		t.Errorf("a has its PR and no stack exists yet: opts %+v links %+v created %+v", sf.opts, sf.links, fg.created)
+	}
+	if len(res.PullRequests) != 1 || res.PullRequests[0].Number != 7 {
+		t.Errorf("result = %+v", res.PullRequests)
+	}
+}
+
+func TestSubmitDefaultsToTheWholeStack(t *testing.T) {
+	deps, sf, fg, repo, _ := partialFixture(t)
+	res, err := app.New(deps).Submit(context.Background(), repo, app.SubmitOptions{NoEdit: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(sf.opts) != 1 || len(sf.links) != 0 || len(fg.created) != 0 {
+		t.Errorf("the whole stack goes through gh stack submit: opts %+v links %+v created %+v", sf.opts, sf.links, fg.created)
+	}
+	if len(res.PullRequests) != 3 {
+		t.Errorf("result = %+v", res.PullRequests)
+	}
+}
+
+func TestSubmitTargetErrors(t *testing.T) {
+	deps, _, _, repo, _ := partialFixture(t)
+	a := app.New(deps)
+	ctx := context.Background()
+	if _, err := a.Submit(ctx, repo, app.SubmitOptions{Branch: "nope"}); kindOf(err) != stack.KindNotInStack {
+		t.Errorf("unknown branch: %v", err)
+	}
+	if _, err := a.Submit(ctx, repo, app.SubmitOptions{Branch: "main"}); kindOf(err) != stack.KindNotInStack {
+		t.Errorf("trunk: %v", err)
+	}
+}
+
+func kindOf(err error) stack.Kind {
+	if se, ok := errors.AsType[*stack.Error](err); ok {
+		return se.Kind
+	}
+	return stack.KindUnknown
 }

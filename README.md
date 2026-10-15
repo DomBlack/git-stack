@@ -303,12 +303,17 @@ Flags:
 > Aliases: `git submit`, `git ss`
 
 Pushes every branch in the stack and creates or updates a PR for each one, each based on the branch
-below it. New PRs are ready for review by default.
+below it. `--down` stops at the current branch, and `git stack submit <branch>` at the named one,
+leaving the branches above alone; handy for getting the bottom of a stack reviewed while you keep
+working on the top. New PRs are ready for review by default.
 
 Unless you pass `-n` / `--no-edit`, `--ai` or `--no-interactive`, gh stack opens its editor for the
 title and body of each new PR. `--draft`, `--publish`, `--ai` and the editor only apply to new PRs.
+gh stack can only submit a whole stack, so with `--down` git-stack pushes those branches itself,
+creates their missing PRs and has `gh stack link` add them to the stack on GitHub; the editor isn't
+available there, so new PRs take their titles from their commits unless you pass `--ai`.
 
-gh stack does the push, with `--force-with-lease`, so after a restack your branches are force
+Branches are pushed with `--force-with-lease`, so after a restack your branches are force
 pushed. If a branch has commits on the remote that aren't in your local one (someone else pushed
 to it), submit refuses rather than overwrite them. `git sync` pulls them in when the remote is
 simply ahead; otherwise merge or cherry-pick them by hand, or pass `--force` if you really do want
@@ -324,6 +329,7 @@ Flags:
 - `--no-ai` don't use AI, even if `stack.ai.auto` is set
 - `-f` / `--force` push even if it overwrites commits someone else pushed
 - `--dry-run` show what would be submitted without pushing anything
+- `--down` only submit the current branch (or the one you name) and the ones below it
 
 ### `git stack up` / `git stack down` / `git stack top` / `git stack bottom`
 

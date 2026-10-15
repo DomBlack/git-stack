@@ -3,6 +3,7 @@ package ghstack
 import (
 	"context"
 	"errors"
+	"strconv"
 
 	"github.com/DomBlack/git-stack/pkg/exec"
 	"github.com/DomBlack/git-stack/pkg/git"
@@ -28,6 +29,25 @@ func (b *Backend) Submit(ctx context.Context, repo git.Repo, o stack.SubmitOptio
 		return stack.SubmitResult{}, b.ghTTY(ctx, repo, args...)
 	}
 	args = append(args, "--auto")
+	res, err := b.ghRun(ctx, repo, b.out, args...)
+	return stack.SubmitResult{Output: res.Err(), Streamed: b.out != nil}, err
+}
+
+// Link runs `gh stack link` with pull request numbers. Numbers resolve to
+// pull requests rather than branches, so gh stack pushes nothing.
+func (b *Backend) Link(ctx context.Context, repo git.Repo, o stack.LinkOptions) (stack.SubmitResult, error) {
+	if err := b.Preflight(ctx); err != nil {
+		return stack.SubmitResult{}, err
+	}
+	args := []string{"link"}
+	if o.Stack > 0 {
+		args = append(args, strconv.Itoa(o.Stack))
+	} else if o.Trunk != "" {
+		args = append(args, "--base", o.Trunk)
+	}
+	for _, n := range o.PRs {
+		args = append(args, strconv.Itoa(n))
+	}
 	res, err := b.ghRun(ctx, repo, b.out, args...)
 	return stack.SubmitResult{Output: res.Err(), Streamed: b.out != nil}, err
 }

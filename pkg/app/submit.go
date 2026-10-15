@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
+	"strings"
 
 	"github.com/DomBlack/git-stack/pkg/ai"
 	"github.com/DomBlack/git-stack/pkg/config"
@@ -37,6 +39,12 @@ type SubmitOptions struct {
 	// Force pushes even when a branch has commits on the remote that aren't
 	// in the local branch, overwriting them.
 	Force bool
+	// Down submits only the current branch and the ones below it, leaving
+	// the ones above alone.
+	Down bool
+	// Branch submits that branch and the ones below it instead of the
+	// current branch; it implies Down.
+	Branch string
 }
 
 // SubmittedPR is one line of the result.
@@ -67,32 +75,46 @@ type SubmitResult struct {
 }
 
 // Submit pushes the current stack and creates or updates its pull requests.
+// With Down or Branch it stops at a branch; when branches above it are left
+// out, submitPart does the work instead of gh stack submit.
 func (a *App) Submit(ctx context.Context, repo git.Repo, o SubmitOptions) (SubmitResult, error) {
 	if a.d.Submit == nil {
 		return SubmitResult{}, stack.New(stack.KindUnsupported, "no submit backend configured")
 	}
-	current, err := a.d.Git.CurrentBranch(ctx, repo)
-	if err != nil {
-		if errors.Is(err, git.ErrDetached) {
-			return SubmitResult{}, stack.New(stack.KindInvalidArgs, "HEAD is detached; check out a stacked branch first")
+	target := o.Branch
+	if target == "" {
+		cur, err := a.d.Git.CurrentBranch(ctx, repo)
+		if err != nil {
+			if errors.Is(err, git.ErrDetached) {
+				return SubmitResult{}, stack.New(stack.KindInvalidArgs, "HEAD is detached; check out a stacked branch or name one")
+			}
+			return SubmitResult{}, err
 		}
-		return SubmitResult{}, err
+		target = cur
 	}
 	graph, err := a.d.Meta.Load(ctx, repo)
 	if err != nil {
 		return SubmitResult{}, err
 	}
-	s, _, ok := graph.StackOf(current)
+	s, idx, ok := graph.StackOf(target)
 	if !ok {
-		if graph.IsTrunk(current) {
-			return SubmitResult{}, stack.Newf(stack.KindNotInStack, "%s is a trunk; check out a stacked branch to submit its stack", current)
+		if graph.IsTrunk(target) {
+			return SubmitResult{}, stack.Newf(stack.KindNotInStack, "%s is a trunk; check out a stacked branch or name one to submit", target)
 		}
-		return SubmitResult{}, stack.Newf(stack.KindNotInStack, "%s is not in a stack", current)
+		return SubmitResult{}, stack.Newf(stack.KindNotInStack, "%s is not in a stack", target)
+	}
+	scope := s.Branches
+	if o.Down || o.Branch != "" {
+		scope = s.Branches[:idx+1]
+	}
+	partial := slices.ContainsFunc(s.Branches[len(scope):], func(b stack.Branch) bool { return !b.Merged() })
+	if !slices.ContainsFunc(scope, func(b stack.Branch) bool { return !b.Merged() }) {
+		return SubmitResult{}, stack.Newf(stack.KindInvalidArgs, "nothing to submit up to %s; its pull request has merged", target)
 	}
 	res := SubmitResult{Stack: s.Names(), DryRun: o.DryRun}
 	if !o.Force {
 		var live []string
-		for _, b := range s.Branches {
+		for _, b := range scope {
 			if !b.Merged() {
 				live = append(live, b.Name)
 			}
@@ -109,7 +131,7 @@ func (a *App) Submit(ctx context.Context, repo git.Repo, o SubmitOptions) (Submi
 	}
 	before := PRsFor(known)
 	var newBranches []string
-	for _, b := range s.Branches {
+	for _, b := range scope {
 		if b.Merged() {
 			continue
 		}
@@ -153,25 +175,34 @@ func (a *App) Submit(ctx context.Context, repo git.Repo, o SubmitOptions) (Submi
 		}
 	}
 
-	// Route (b): let gh stack push and create everything, then set texts.
-	interactive := !o.NoEdit && len(texts) == 0 && a.d.Prompter != nil && len(newBranches) > 0
-	var out stack.SubmitResult
-	submit := func(ctx context.Context) error {
-		var err error
-		out, err = a.d.Submit.Submit(ctx, repo, stack.SubmitOptions{Publish: !draft, Interactive: interactive})
-		return err
-	}
-	if interactive {
-		// gh stack's editor owns the terminal; no headline over it.
-		err = submit(ctx)
+	editor := !o.NoEdit && len(texts) == 0 && a.d.Prompter != nil && len(newBranches) > 0
+	if partial {
+		if editor {
+			res.Notices = append(res.Notices, "gh stack's editor only opens for a whole stack submit; new PRs take their titles from their commits")
+		}
+		if err := a.submitPart(ctx, repo, s, scope, texts, draft, &res); err != nil {
+			return SubmitResult{}, err
+		}
 	} else {
-		err = a.progress(ctx, PhaseSubmit, "Submitting stack", submit)
-	}
-	if err != nil {
-		return SubmitResult{}, err
-	}
-	if !out.Streamed {
-		res.Output = out.Output
+		// Route (b): let gh stack push and create everything, then set texts.
+		var out stack.SubmitResult
+		submit := func(ctx context.Context) error {
+			var err error
+			out, err = a.d.Submit.Submit(ctx, repo, stack.SubmitOptions{Publish: !draft, Interactive: editor})
+			return err
+		}
+		if editor {
+			// gh stack's editor owns the terminal; no headline over it.
+			err = submit(ctx)
+		} else {
+			err = a.progress(ctx, PhaseSubmit, "Submitting stack", submit)
+		}
+		if err != nil {
+			return SubmitResult{}, err
+		}
+		if !out.Streamed {
+			res.Output = out.Output
+		}
 	}
 
 	// The cache was refreshed moments ago, so ask the forge again explicitly.
@@ -191,10 +222,11 @@ func (a *App) Submit(ctx context.Context, repo git.Repo, o SubmitOptions) (Submi
 			continue
 		}
 		e.Number, e.URL, e.State = pr.Number, pr.URL, pr.State
-		e.Created = e.WouldCreate
-		e.WouldCreate = false
+		if e.WouldCreate {
+			e.Created, e.WouldCreate = true, false
+		}
 		text, hasText := texts[e.Branch]
-		if !hasText || a.d.Forge == nil {
+		if !hasText || e.TextUpdated || a.d.Forge == nil {
 			continue
 		}
 		title, body := text.Title, text.Body
@@ -211,7 +243,14 @@ func (a *App) Submit(ctx context.Context, repo git.Repo, o SubmitOptions) (Submi
 		// append while the chain is broken by a wrong base. Now that the base
 		// is right, run the backend once more so it gets another go; it pushes
 		// nothing new and only re-links.
-		if _, err := a.d.Submit.Submit(ctx, repo, stack.SubmitOptions{Publish: !draft}); err != nil {
+		relink := func() error {
+			_, err := a.d.Submit.Submit(ctx, repo, stack.SubmitOptions{Publish: !draft})
+			return err
+		}
+		if partial {
+			relink = func() error { return a.linkPart(ctx, repo, s, res.PullRequests, &res) }
+		}
+		if err := relink(); err != nil {
 			res.Notices = append(res.Notices, fmt.Sprintf("could not re-link the stack on GitHub after fixing bases: %v", err))
 		}
 	}
@@ -222,6 +261,103 @@ func (a *App) Submit(ctx context.Context, repo git.Repo, o SubmitOptions) (Submi
 		}
 	}
 	return res, nil
+}
+
+// submitPart submits only the branches in scope, a run of the stack from
+// the bottom up. gh stack submit always pushes every branch, so this pushes
+// the branches itself, creates their missing pull requests through the forge,
+// and has gh stack link add the pull requests to the stack on GitHub.
+func (a *App) submitPart(ctx context.Context, repo git.Repo, s *stack.Stack, scope []stack.Branch, texts map[string]PRText, draft bool, res *SubmitResult) error {
+	if a.d.Forge == nil {
+		return ErrNoForge
+	}
+	var live []string
+	for _, b := range scope {
+		if !b.Merged() {
+			live = append(live, b.Name)
+		}
+	}
+	top := live[len(live)-1]
+	err := a.progress(ctx, PhaseSubmit, fmt.Sprintf("Submitting %s and the branches below it", top), func(ctx context.Context) error {
+		leases := map[string][]git.PushLease{}
+		var remotes []string
+		for _, name := range live {
+			remote, tip, _, err := a.remoteTip(ctx, repo, name)
+			if err != nil {
+				return err
+			}
+			if _, seen := leases[remote]; !seen {
+				remotes = append(remotes, remote)
+			}
+			leases[remote] = append(leases[remote], git.PushLease{Branch: name, Expect: tip})
+		}
+		for _, remote := range remotes {
+			if err := a.d.Git.Push(ctx, repo, remote, leases[remote]); err != nil {
+				return stack.Newf(stack.KindInvalidArgs, "%v", err).
+					WithSteps("run git stack sync to pull in what changed on the remote, then submit again")
+			}
+		}
+
+		parent := s.Trunk
+		for _, name := range live {
+			i := slices.IndexFunc(res.PullRequests, func(e SubmittedPR) bool { return e.Branch == name })
+			e := &res.PullRequests[i]
+			if e.WouldCreate {
+				text, hasText := texts[name]
+				if !hasText {
+					text = a.defaultPRText(ctx, repo, parent, name)
+				}
+				pr, err := a.d.Forge.CreatePR(ctx, repo, forge.CreatePR{Head: name, Base: parent, Title: text.Title, Body: text.Body, Draft: draft})
+				if err != nil {
+					return err
+				}
+				e.Number, e.URL, e.State = pr.Number, pr.URL, pr.State
+				e.Created, e.WouldCreate, e.TextUpdated = true, false, hasText
+			}
+			parent = name
+		}
+		return a.linkPart(ctx, repo, s, res.PullRequests, res)
+	})
+	return err
+}
+
+// linkPart adds the submitted pull requests to the stack on GitHub. A single
+// pull request with no stack yet has nothing to join. A failure is only a
+// notice: the pull requests exist, and the next submit links them again.
+func (a *App) linkPart(ctx context.Context, repo git.Repo, s *stack.Stack, prs []SubmittedPR, res *SubmitResult) error {
+	var numbers []int
+	for _, e := range prs {
+		if e.Number > 0 {
+			numbers = append(numbers, e.Number)
+		}
+	}
+	if s.Number == 0 && len(numbers) < 2 {
+		return nil
+	}
+	out, err := a.d.Submit.Link(ctx, repo, stack.LinkOptions{Stack: s.Number, Trunk: s.Trunk, PRs: numbers})
+	if err != nil {
+		res.Notices = append(res.Notices, fmt.Sprintf("could not add the pull requests to the stack on GitHub: %v", err))
+		return nil
+	}
+	if !out.Streamed && out.Output != "" {
+		res.Output = strings.TrimSpace(res.Output + "\n" + out.Output)
+	}
+	return nil
+}
+
+// defaultPRText is the title and body of a new pull request nobody wrote
+// one for: a single commit's subject and body, or else the branch name with
+// its dashes as spaces. The repository's PR template replaces the body.
+func (a *App) defaultPRText(ctx context.Context, repo git.Repo, parent, branch string) PRText {
+	text := PRText{Title: strings.NewReplacer("-", " ", "_", " ").Replace(branch)}
+	if msgs, err := a.d.Git.Messages(ctx, repo, parent, branch); err == nil && len(msgs) == 1 {
+		subject, body, _ := strings.Cut(strings.TrimSpace(msgs[0]), "\n")
+		text = PRText{Title: subject, Body: strings.TrimSpace(body)}
+	}
+	if template, ok := FindPRTemplate(repo.TopLevel); ok {
+		text.Body = template
+	}
+	return text
 }
 
 // fixBases puts every open PR's base back on its parent branch. gh stack

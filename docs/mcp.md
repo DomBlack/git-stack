@@ -27,7 +27,7 @@ path is resolved with `git rev-parse`; anything outside a repository returns `no
 | `stack_abort` | Give up an interrupted restack and put every moved branch back | | destructive |
 | `stack_restack` | Local rebase of the stack onto its parents, bottom branch onto the local trunk included; only checks out a branch to resolve a conflict through one git rebase | `scope` = `all`/`upstack`/`downstack`/`only`, `branch`, `continue`, `abort`, `stage_all` | destructive |
 | `stack_navigate` | `up`/`down`/`top`/`bottom` with `steps`, or `branch` | `direction`, `steps`, `branch` | idempotent |
-| `stack_submit` | Push and create/update chained PRs; ready for review by default | `draft`, `publish`, `dry_run`, `pull_requests` `{branch: {title, body}}`, `use_ai`, `force` | destructive, open-world |
+| `stack_submit` | Push and create/update chained PRs (with `down`, only up to the current branch); ready for review by default | `down`, `branch`, `draft`, `publish`, `dry_run`, `pull_requests` `{branch: {title, body}}`, `use_ai`, `force` | destructive, open-world |
 | `stack_sync` | Fetch, update trunk and restack every stack (checked out or not, all worktrees), never pushing; merged branches deleted per `stack.sync.prune` | `prune` (force deletion) | destructive, open-world |
 | `stack_merge` | Merge the stack's PRs up to a branch into trunk, all or nothing, then sync; refuses while a check on any of them failed or is still running | `branch` (default current), `method` = `merge`/`squash`/`rebase`, `no_sync`, `force` (skip the checks check; only with the user's say so) | destructive, open-world |
 
