@@ -21,6 +21,9 @@ that touches a stack:
 | Change the current branch's commit and rebase everything above | `stack_modify` |
 | Fold staged fixes into whichever commits of the stack last touched those lines | `stack_absorb` (`dry_run: true` to see the plan) |
 | Rebase the stack after edits lower down | `stack_restack` |
+| Change the order of a stack's branches | `stack_reorder` (`order` bottom to top) |
+| Move a branch and what's above it onto another stack or onto trunk | `stack_move` (`only: true` to leave the rest behind) |
+| Track branches made by hand as a stack | `stack_init` |
 | Move around | `stack_navigate` (`up`/`down`/`top`/`bottom` or `branch`) |
 | Push and open/update PRs | `stack_submit` — you write `pull_requests` `{branch: {title, body}}`; ready for review unless `draft: true` |
 | Pull trunk, restack, prune merged branches | `stack_sync` |
@@ -36,15 +39,16 @@ the one calling.
   in the middle. To change something lower down, `stack_navigate` there, edit, then
   `stack_modify` (it restacks the rest).
 - On `code: "conflict"`: resolve the listed files, `git add` them, then call the same tool
-  again with `continue: true` (or `abort: true`); after `stack_absorb` that is `stack_continue`
-  or `stack_abort`.
+  again with `continue: true` (or `abort: true`); after `stack_absorb`, `stack_reorder` or
+  `stack_move` that is `stack_continue` or `stack_abort` (abort also puts the old order back).
 - Plain git is fine for reading (`git status`, `git diff`, `git log`) and for staging files.
 - Run `stack_view` before `stack_submit` so you know which branches get new PRs and need
   titles and bodies.
 
 ## CLI equivalents
 
-`git stack create -m "…"`, `git stack modify -a`, `git stack absorb`, `git stack restack`,
+`git stack create -m "…"`, `git stack modify -a`, `git stack absorb`, `git stack reorder a b c`,
+`git stack move --onto <branch>`, `git stack init a b`, `git stack restack`,
 `git stack up/down/top/bottom`, `git stack checkout`, `git stack submit --no-edit`,
-`git stack sync -f`. Aliases: `git c`, `git m`, `git ab`, `git rs`, `git u`, `git d`, `git t`,
-`git b`, `git co`, `git ss`.
+`git stack sync -f`. Aliases: `git c`, `git m`, `git ab`, `git reorder`, `git move`, `git track`,
+`git rs`, `git u`, `git d`, `git t`, `git b`, `git co`, `git ss`.

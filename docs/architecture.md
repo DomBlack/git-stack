@@ -390,6 +390,41 @@ removed, not added), so after a fix we run the backend submit once more and it a
 gh stack will grumble that the base isn't what it expected on later submits; that's a warning,
 not a failure.
 
+**Reorder, move and init are metadata edits plus a restack.** gh stack keeps each stack as a
+flat list, bottom to top, so a reorder is a new order for one list, a move cuts a run of branches
+out of one list and appends it to another (or to a new stack on a trunk), and init appends a new
+stack. All three go through one reshape step in `pkg/app`. It snapshots the stacks it is about
+to change, rewrites them in a single `Update`, then hands the branches whose parent changed to
+the native restack, so nothing is checked out (init stops after the `Update` and just says which
+branches need a restack). `Update` grew for this: its callback may now append stacks (written to
+the worktree's own file when it has one, else the common one, which is created with
+`schemaVersion: 1` if there isn't one yet) and clear or set a stack's id and number, though it
+still can't drop or reorder stacks. In that same `Update` every branch whose parent changed gets
+its recorded base fixed to where its own commits start (the recorded base if it's still in the
+branch's history, else the merge base with its old parent), because the restack replays
+`base..tip` and that base is what keeps the old parent's commits out; the planner's rule about
+a base above the parent (see restack above) is what makes it replay rather than call the branch
+in place. A `move --only` is two runs, the moved branches onto their destination and then the
+ones left behind onto the old parent, so the saved restack state gained a queue of segments for
+continue to work through. It also carries the snapshot, so abort puts the order, membership and
+bases back as well as the refs. A failure before any ref has moved rolls the metadata back from
+the snapshot and the error says nothing was changed.
+
+**GitHub's stack is dissolved and made again, not edited.** The stacks API can create a stack
+from a list of PRs and add PRs to the top of one, and that's all. Left alone, `gh stack submit`
+after a reorder pushes every branch and fixes each PR's base, then sees the stack on GitHub is
+neither the local list nor an append of it, warns, and leaves the old order showing; after a
+move the PRs it tries to append are still in their old stack and GitHub refuses. So a reshape
+that changes a stack's PR order or membership clears the stack's id and number in the metadata
+and queues the number in `<common git dir>/git-stack/remote-stacks.json`. Every submit (the
+command and `stack_submit`) first works through that list with `gh stack unstack <number>`,
+which only touches GitHub because the number is no longer tracked locally (while it is, unstack
+would delete the local stack too, which is why the id is cleared first). Then the normal submit
+runs, finds a stack with no id and creates it. A stack that's already gone counts as done, and
+a failure keeps the entry and says so in a notice. Keeping the two apart also means the reshape
+itself works offline. PRs that are queued for merge or have auto merge on stay stacked on
+GitHub's side, so creating the new stack fails with gh stack's usual warning until they land.
+
 **Merged branches are deleted by default.** `stack.sync.prune` decides: `always` (default)
 deletes branches whose PRs merged or closed, `ask` prompts on a terminal and keeps with a
 notice otherwise, `never` keeps. `-d` and `-f` delete regardless. A branch checked out in

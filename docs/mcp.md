@@ -23,8 +23,11 @@ path is resolved with `git rev-parse`; anything outside a repository returns `no
 | `stack_create` | New branch on top of the current one (from trunk: new stack), commit staged changes | `message` (required), `branch`, `staging` = `all`/`update`/`none`, `use_ai` | non-destructive |
 | `stack_modify` | Amend the current branch (or `mode: commit`) and restack everything above | `mode`, `staging`, `message`, `continue`, `abort` | destructive |
 | `stack_absorb` | Fold each staged hunk into the commit of the current stack that last changed those lines, rewrite it and everything above, then restack what sits above the current branch; the result's `plan` lists every hunk's destination and what stays staged | `staging` = `all`/`update`/`none`, `dry_run` | destructive |
-| `stack_continue` | Finish an interrupted restack or modify once the conflicts are resolved and git added | `stage_all` | destructive |
-| `stack_abort` | Give up an interrupted restack and put every moved branch back | | destructive |
+| `stack_reorder` | Change the order of the current stack's branches and restack them, checking nothing out; the next `stack_submit` creates the stack on GitHub again in the new order | `order` (required: every branch of the stack once, bottom to top) | destructive |
+| `stack_move` | Move a branch, and unless `only` is set everything above it, onto the top of another stack or onto a trunk as a new stack, then restack; moves within one stack are `stack_reorder`'s job | `onto` (required: a trunk or another stack's top branch), `source` (default current), `only` | destructive |
+| `stack_init` | Track branches that already exist as a new stack on a trunk; only the metadata changes, and `needsRestack` lists the branches that aren't on their parent | `branches` (bottom to top, default current), `base` | destructive (it writes the metadata, though no branch moves) |
+| `stack_continue` | Finish an interrupted restack, modify, reorder or move once the conflicts are resolved and git added | `stage_all` | destructive |
+| `stack_abort` | Give up an interrupted restack and put every moved branch back (and, after a reorder or move, the old stack order) | | destructive |
 | `stack_restack` | Local rebase of the stack onto its parents, bottom branch onto the local trunk included; only checks out a branch to resolve a conflict through one git rebase | `scope` = `all`/`upstack`/`downstack`/`only`, `branch`, `continue`, `abort`, `stage_all` | destructive |
 | `stack_navigate` | `up`/`down`/`top`/`bottom` with `steps`, or `branch` | `direction`, `steps`, `branch` | idempotent |
 | `stack_submit` | Push and create/update chained PRs (with `down`, only up to the current branch); ready for review by default | `down`, `branch`, `draft`, `publish`, `dry_run`, `pull_requests` `{branch: {title, body}}`, `use_ai`, `force` | destructive, open-world |
@@ -71,6 +74,14 @@ branches moved) and the restack of the branches above then stopped; `stack_conti
 `stack_abort` apply to that restack only, the absorb itself stays. `invalid_args` from it names the
 branch that needs restacking first, the branch with a merge commit it won't rewrite, or the checkout elsewhere
 with uncommitted changes in the way; nothing has changed in those cases.
+`conflict` from `stack_reorder` or `stack_move` means the new order is already recorded and the
+restack stopped part way; the structured result comes back alongside the error, so you can see the
+new order (or what moved and what was left behind). `stack_continue` finishes it, both halves of a
+`move` with `only: true` included, and `stack_abort` puts the branches back and the stack order
+too. Because GitHub can only create a stack or add to the top of one, the next `stack_submit`
+dissolves the old stack on GitHub before gh stack creates it again, and says so in its notices
+("dissolved stack #7 on GitHub so it can be created again in its new order"). If that fails, a
+notice says so and the next submit tries again.
 `checks_failing` and `checks_pending` come from `stack_merge` when a pull request it would land
 has a check that failed, or (with none failed) one still queued or running, on its head commit.
 Nothing is merged. The error's `checks` lists each held up pull request:
