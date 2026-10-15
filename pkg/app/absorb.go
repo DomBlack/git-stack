@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+	"strings"
 
 	"github.com/DomBlack/git-stack/pkg/absorb"
 	"github.com/DomBlack/git-stack/pkg/git"
@@ -374,9 +375,27 @@ func (a *App) absorbApply(ctx context.Context, repo git.Repo, run *absorbRun, re
 		return res, nil
 	}
 	k := len(children)
-	rr, err := a.restack(ctx, repo, RestackOptions{Scope: stack.ScopeUpstack}, absorbCommand,
+	rr, err := a.restack(ctx, repo, RestackOptions{Scope: stack.ScopeUpstack}, restackCommand,
 		fmt.Sprintf("Restacking %d %s above %s", k, pluralise(k, "branch", "branches"), res.Branch))
 	res.Notices = append(res.Notices, rr.Notices...)
 	res.Restacked = movedNames(rr)
+	if se, ok := errors.AsType[*stack.Error](err); ok && se.Kind != stack.KindConflict {
+		// The absorb is done; say what is left, since re-running absorb
+		// would not restack anything.
+		isAre := pluralise(k, "was", "were")
+		steps := make([]string, len(se.NextSteps))
+		for i, step := range se.NextSteps {
+			steps[i] = strings.ReplaceAll(step, "then try again", "then "+restackCommand)
+		}
+		err = &stack.Error{
+			Kind:      se.Kind,
+			Msg:       fmt.Sprintf("absorbed, but %s above %s %s not restacked: %s", joinNames(children), res.Branch, isAre, se.Msg),
+			NextSteps: steps,
+			Files:     se.Files,
+			Branch:    se.Branch,
+			Detail:    se.Detail,
+			Cause:     err,
+		}
+	}
 	return res, err
 }

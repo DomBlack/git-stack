@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -502,5 +504,44 @@ func TestAbsorbConflictAboveLeavesTheAbsorbInPlace(t *testing.T) {
 	}
 	if f.rev(t, "b") == oldB {
 		t.Error("abort must not undo the absorb itself")
+	}
+}
+
+func TestAbsorbRestackRefusalAboveSaysWhatIsLeft(t *testing.T) {
+	f := newAbsorbFixture(t)
+	ctx := context.Background()
+	gittest.Run(t, f.dir, "switch", "-q", "c")
+	gittest.Commit(t, f.dir, "f.txt", withLine(gittest.Run(t, f.dir, "show", "HEAD:f.txt")+"\n", 15, "c's fifteen"), "feat: c15")
+	f.fb.graph.Stacks[0].Branches[2].Head = f.rev(t, "c")
+	gittest.Run(t, f.dir, "switch", "-q", "b")
+	oldB, oldC := f.rev(t, "b"), f.rev(t, "c")
+
+	gittest.WriteFile(t, f.dir, "a.txt", "unstaged\n")
+	f.stageLine(t, 15, "FIFTEEN")
+	f.stageLine(t, 1, "one")
+	res, err := f.app.Absorb(ctx, f.repo, app.AbsorbOptions{})
+	if !errors.Is(err, &stack.Error{Kind: stack.KindInvalidArgs}) {
+		t.Fatalf("want invalid_args, got %v", err)
+	}
+	if !res.Applied || len(res.Rewritten) != 1 || res.Rewritten[0].Name != "b" || f.rev(t, "b") == oldB {
+		t.Errorf("absorb should have happened: %+v", res)
+	}
+	if !strings.Contains(err.Error(), "absorbed, but c above b was not restacked") {
+		t.Errorf("message = %q", err)
+	}
+	se, _ := errors.AsType[*stack.Error](err)
+	var restackStep, tryAgain bool
+	for _, step := range se.NextSteps {
+		restackStep = restackStep || strings.Contains(step, "git stack restack")
+		tryAgain = tryAgain || strings.Contains(step, "try again")
+	}
+	if !restackStep || tryAgain {
+		t.Errorf("steps = %v", se.NextSteps)
+	}
+	if _, err := os.Stat(filepath.Join(f.repo.GitDir, "git-stack", "restack.json")); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("no restack state should exist: %v", err)
+	}
+	if f.rev(t, "c") != oldC {
+		t.Error("c should be untouched")
 	}
 }
