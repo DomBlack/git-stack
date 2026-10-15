@@ -49,6 +49,8 @@ const (
 	PhaseUpdate  Phase = "update"
 	PhaseInstall Phase = "install"
 	PhaseMerge   Phase = "merge"
+	// PhaseAbsorb: rewriting the stack's commits with the staged changes.
+	PhaseAbsorb Phase = "absorb"
 	// PhaseRefresh: fetching pull request state from the forge for a command
 	// that only reads it (log, submit's look at which PRs exist).
 	PhaseRefresh Phase = "refresh"
