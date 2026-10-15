@@ -187,3 +187,81 @@ func (c *cli) completeStepsFlag(dir stack.Direction) cobra.CompletionFunc {
 		return c.stepCompletions(cmd, dir, toComplete), cobra.ShellCompDirectiveNoFileComp | cobra.ShellCompDirectiveKeepOrder
 	}
 }
+
+// completeStackOrder offers the current stack's branches not yet typed,
+// for reorder's bottom to top order.
+func (c *cli) completeStackOrder(cmd *cobra.Command, args []string, toComplete string) ([]cobra.Completion, cobra.ShellCompDirective) {
+	v, ok := c.completionView(cmd)
+	if !ok {
+		return nil, cobra.ShellCompDirectiveNoFileComp
+	}
+	s, _, ok := v.Graph.StackOf(v.Current)
+	if !ok {
+		return nil, cobra.ShellCompDirectiveNoFileComp
+	}
+	var items []cobra.Completion
+	for _, name := range s.Names() {
+		if !slices.Contains(args, name) {
+			items = append(items, name)
+		}
+	}
+	return filterPrefix(items, toComplete), cobra.ShellCompDirectiveNoFileComp | cobra.ShellCompDirectiveKeepOrder
+}
+
+// completeMoveTargets offers every trunk and the top of every stack.
+func (c *cli) completeMoveTargets(cmd *cobra.Command, _ []string, toComplete string) ([]cobra.Completion, cobra.ShellCompDirective) {
+	v, ok := c.completionView(cmd)
+	if !ok {
+		return nil, cobra.ShellCompDirectiveNoFileComp
+	}
+	var items []cobra.Completion
+	for _, trunk := range v.Graph.Trunks {
+		items = append(items, cobra.CompletionWithDesc(trunk, "trunk"))
+		for _, s := range v.Graph.StacksOn(trunk) {
+			if top := s.Top(); top != "" {
+				items = append(items, cobra.CompletionWithDesc(top, "top of "+s.Bottom()+"'s stack"))
+			}
+		}
+	}
+	return filterPrefix(items, toComplete), cobra.ShellCompDirectiveNoFileComp | cobra.ShellCompDirectiveKeepOrder
+}
+
+// completeStackedBranches offers branches that are in a stack.
+func (c *cli) completeStackedBranches(cmd *cobra.Command, _ []string, toComplete string) ([]cobra.Completion, cobra.ShellCompDirective) {
+	v, ok := c.completionView(cmd)
+	if !ok {
+		return nil, cobra.ShellCompDirectiveNoFileComp
+	}
+	var items []cobra.Completion
+	for _, r := range v.Rows {
+		if r.Tracked && !r.IsTrunk {
+			items = append(items, cobra.CompletionWithDesc(r.Name, branchDescription(v, r)))
+		}
+	}
+	return filterPrefix(items, toComplete), cobra.ShellCompDirectiveNoFileComp
+}
+
+// completeUntrackedBranches offers local branches that are in no stack.
+func (c *cli) completeUntrackedBranches(cmd *cobra.Command, args []string, toComplete string) ([]cobra.Completion, cobra.ShellCompDirective) {
+	v, ok := c.completionView(cmd)
+	if !ok {
+		return nil, cobra.ShellCompDirectiveNoFileComp
+	}
+	var items []cobra.Completion
+	for _, r := range v.Rows {
+		if !r.Tracked && !r.IsTrunk && !slices.Contains(args, r.Name) {
+			items = append(items, r.Name)
+		}
+	}
+	return filterPrefix(items, toComplete), cobra.ShellCompDirectiveNoFileComp
+}
+
+// completeTrunks offers the trunks.
+func (c *cli) completeTrunks(cmd *cobra.Command, _ []string, toComplete string) ([]cobra.Completion, cobra.ShellCompDirective) {
+	v, ok := c.completionView(cmd)
+	if !ok {
+		return nil, cobra.ShellCompDirectiveNoFileComp
+	}
+	items := slices.Clone(v.Graph.Trunks)
+	return filterPrefix(items, toComplete), cobra.ShellCompDirectiveNoFileComp
+}
