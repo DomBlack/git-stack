@@ -30,3 +30,34 @@ func (c *Client) RemoteFor(ctx context.Context, repo Repo, branch string) string
 	}
 	return "origin"
 }
+
+// PushLease is a branch to push and the remote tip it may replace. An empty
+// Expect means the branch must not exist on the remote yet.
+type PushLease struct {
+	Branch string
+	Expect string
+}
+
+// Push force pushes each branch to the same name on remote, all or nothing.
+// Each one is leased against its Expect, so a remote that has moved since
+// the caller looked is refused rather than overwritten.
+func (c *Client) Push(ctx context.Context, repo Repo, remote string, leases []PushLease) error {
+	if len(leases) == 0 {
+		return nil
+	}
+	args := []string{"push", "--atomic", "--quiet"}
+	refspecs := make([]string, 0, len(leases))
+	for _, l := range leases {
+		ref := "refs/heads/" + l.Branch
+		args = append(args, "--force-with-lease="+ref+":"+l.Expect)
+		refspecs = append(refspecs, ref+":"+ref)
+	}
+	args = append(append(args, remote), refspecs...)
+	if _, err := c.gitIn(ctx, repo, args...); err != nil {
+		if ee, ok := errors.AsType[*exec.ExitError](err); ok {
+			return fmt.Errorf("push to %s: %s", remote, ee.Result.Err())
+		}
+		return err
+	}
+	return nil
+}

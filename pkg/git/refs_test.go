@@ -227,3 +227,49 @@ func TestReflog(t *testing.T) {
 		t.Errorf("missing ref: %v %v", got, err)
 	}
 }
+
+func TestPush(t *testing.T) {
+	c, repo, dir := remoteFixture(t)
+	ctx := context.Background()
+	remoteHead := func(branch string) string {
+		out, _ := gittest.RunErr(t, dir, "ls-remote", "origin", "refs/heads/"+branch)
+		sha, _, _ := strings.Cut(out, "\t")
+		return sha
+	}
+
+	// A new branch is leased against not existing yet.
+	gittest.Run(t, dir, "switch", "-q", "-c", "a")
+	a1 := gittest.Commit(t, dir, "a.txt", "a", "a")
+	if err := c.Push(ctx, repo, "origin", []git.PushLease{{Branch: "a"}}); err != nil {
+		t.Fatal(err)
+	}
+	if got := remoteHead("a"); got != a1 {
+		t.Fatalf("remote a = %q, want %s", got, a1)
+	}
+
+	// A rewritten branch is force pushed over the tip it was leased against.
+	gittest.Run(t, dir, "commit", "-q", "--amend", "-m", "a amended")
+	a2 := gittest.Run(t, dir, "rev-parse", "HEAD")
+	if err := c.Push(ctx, repo, "origin", []git.PushLease{{Branch: "a", Expect: a1}}); err != nil {
+		t.Fatal(err)
+	}
+	if got := remoteHead("a"); got != a2 {
+		t.Fatalf("remote a = %q, want %s", got, a2)
+	}
+
+	// Someone else moves a; the lease on the tip we saw refuses every branch
+	// in the push, not just a.
+	gittest.Run(t, dir, "fetch", "-q", "origin")
+	pushRemote(t, dir, "a", "theirs.txt")
+	gittest.Run(t, dir, "switch", "-q", "-c", "b")
+	gittest.Commit(t, dir, "b.txt", "b", "b")
+	gittest.Run(t, dir, "switch", "-q", "a")
+	gittest.Commit(t, dir, "a2.txt", "a2", "a again")
+	err := c.Push(ctx, repo, "origin", []git.PushLease{{Branch: "a", Expect: a2}, {Branch: "b"}})
+	if err == nil {
+		t.Fatal("a stale lease must refuse the push")
+	}
+	if got := remoteHead("b"); got != "" {
+		t.Errorf("b was pushed despite the refusal: %s", got)
+	}
+}
