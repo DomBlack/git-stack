@@ -80,12 +80,14 @@ new order (or what moved and what was left behind). `stack_continue` finishes it
 `move` with `only: true` included, and `stack_abort` puts the branches back and the stack order
 too. A reorder or move that stops without a conflict after some branches moved is saved the same
 way, so `stack_continue` finishes it and `stack_abort` undoes all of it. A branch checked out
-with uncommitted changes in another worktree (or a conflict on a branch checked out elsewhere)
-makes `stack_reorder` and `stack_move` fail with `invalid_args` and nothing changed.
+with uncommitted changes in another worktree, or whose move would overwrite untracked files
+there (or a conflict on a branch checked out elsewhere), makes `stack_reorder` and `stack_move`
+fail with `invalid_args` and nothing changed.
 Because GitHub can only create a stack or add to the top of one, the next `stack_submit`
-dissolves every stale GitHub stack first and then creates again only the stack it submits. Each
-notice says which stack was dissolved ("dissolved stack #7 on GitHub because its pull requests
-were regrouped by a reorder or move; submit from <bottom> to group them again"), so call
+dissolves every stale GitHub stack first and then creates again only the stack it submits. The
+notice says which stack was dissolved and, when it isn't the one being submitted, which stack
+to submit from ("dissolved stack #7 on GitHub because its pull requests were regrouped by a
+reorder or move; submit from <bottom> to group them again"), so call
 `stack_submit` from that other stack's bottom branch to group its pull requests. If dissolving
 fails, a notice says so and the next submit tries again.
 `checks_failing` and `checks_pending` come from `stack_merge` when a pull request it would land
