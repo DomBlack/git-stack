@@ -212,6 +212,7 @@ func (e *jsonError) Unwrap() error { return e.cause }
 var cliToTool = []struct{ from, to string }{
 	{"git stack restack --continue", "call stack_restack with continue: true"},
 	{"git stack restack --abort", "call stack_restack with abort: true"},
+	{"git stack restack", "stack_restack"},
 	{"git stack modify --continue", "call stack_modify with continue: true"},
 	{"git stack modify --abort", "call stack_modify with abort: true"},
 	{"git stack absorb", "stack_absorb"},

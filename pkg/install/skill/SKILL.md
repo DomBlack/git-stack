@@ -36,7 +36,7 @@ the one calling.
   in the middle. To change something lower down, `stack_navigate` there, edit, then
   `stack_modify` (it restacks the rest).
 - On `code: "conflict"`: resolve the listed files, `git add` them, then call the same tool
-  again with `continue: true` (or `abort: true`).
+  again with `continue: true` (or `abort: true`) (after `stack_absorb`, call `stack_continue` or `stack_abort`).
 - Plain git is fine for reading (`git status`, `git diff`, `git log`) and for staging files.
 - Run `stack_view` before `stack_submit` so you know which branches get new PRs and need
   titles and bodies.
