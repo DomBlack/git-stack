@@ -104,7 +104,7 @@ func (a *App) planMoves(ctx context.Context, in planInput) restackPlan {
 			parentName, parent, oldParent = b.Name, tip, tip
 			continue
 		}
-		if a.isAncestor(ctx, in.repo, parent, tip) {
+		if a.isAncestor(ctx, in.repo, parent, tip) && !a.baseAbove(ctx, in.repo, b.Base, parent, tip) {
 			// A branch sitting exactly on its parent keeps an older base: that
 			// is what tells cleanup it was fast forwarded into trunk rather
 			// than created empty, and it stays correct (the base is still
@@ -158,4 +158,15 @@ func (a *App) planMoves(ctx context.Context, in planInput) restackPlan {
 		parentName, parent, oldParent = b.Name, r.Tip, tip
 	}
 	return p
+}
+
+// baseAbove reports whether a recorded base sits strictly between the
+// parent's tip and the branch's tip. That means the parent now points
+// below the commits the branch was last restacked onto (it was reordered
+// under a lower branch, or reset back by hand), so the branch still
+// carries commits that are no longer its parent's and must replay
+// base..tip onto the parent rather than count as in place.
+func (a *App) baseAbove(ctx context.Context, repo git.Repo, base, parent, tip string) bool {
+	return base != "" && base != parent &&
+		a.isAncestor(ctx, repo, parent, base) && a.isAncestor(ctx, repo, base, tip)
 }

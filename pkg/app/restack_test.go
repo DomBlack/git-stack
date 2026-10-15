@@ -1012,3 +1012,31 @@ func TestRestackConflictRebaseSigningFailureSaysContinue(t *testing.T) {
 		t.Errorf("abort = %+v %v", res, err)
 	}
 }
+
+// After a reorder the lower branch's base sits above its new parent's
+// tip; the planner must replay from that base rather than call the branch
+// in place because trunk is in its history.
+func TestRestackReplaysBranchWhoseBaseIsAboveItsParent(t *testing.T) {
+	f := newRestackFixture(t)
+	ctx := context.Background()
+	s := &f.fb.graph.Stacks[0]
+	s.Branches[0], s.Branches[1] = s.Branches[1], s.Branches[0] // main -> b -> a -> c, bases untouched
+	res, err := f.app.Restack(ctx, f.repo, app.RestackOptions{Scope: stack.ScopeAll, Branch: "c"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := moved(res); !slices.Equal(got, []string{"b", "a", "c"}) {
+		t.Errorf("moved %v", got)
+	}
+	if _, err := gittest.RunErr(t, f.dir, "cat-file", "-e", "b:a.txt"); err == nil {
+		t.Error("b still carries a's commit")
+	}
+	for _, file := range []string{"a.txt", "b.txt"} {
+		if _, err := gittest.RunErr(t, f.dir, "cat-file", "-e", "a:"+file); err != nil {
+			t.Errorf("a lacks %s", file)
+		}
+	}
+	if f.base("b") != f.rev(t, "main") || f.base("a") != f.rev(t, "b") || f.base("c") != f.rev(t, "a") {
+		t.Errorf("bases b=%s a=%s c=%s", f.base("b"), f.base("a"), f.base("c"))
+	}
+}

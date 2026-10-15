@@ -36,6 +36,19 @@ type restackState struct {
 	Remaining []string `json:"remaining"`
 	// Moved are the branches this operation has already moved.
 	Moved []movedRef `json:"moved"`
+	// Then are the segments still to restack once Conflict and Remaining
+	// are done: a move leaves the branches it left behind as one.
+	Then []restackSegment `json:"then,omitempty"`
+	// Reshape is the metadata as it was before the reorder or move that
+	// started this run, for abort to put back.
+	Reshape *reshapeSnapshot `json:"reshape,omitempty"`
+}
+
+// restackSegment is a run of branches to restack onto a parent, bottom
+// first, queued behind the segment in progress.
+type restackSegment struct {
+	Parent   string   `json:"parent"`
+	Branches []string `json:"branches"`
 }
 
 // movedRef is one branch move, with what abort needs to undo it.
