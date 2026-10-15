@@ -268,8 +268,11 @@ func TestUpdateClearsAndRestoresRemoteID(t *testing.T) {
 		t.Fatal(err)
 	}
 	data, _ := os.ReadFile(mainPath)
-	if s := string(data); strings.Contains(s, `"id"`) || strings.Contains(s, `"number": 7`) || !strings.Contains(s, `"future"`) || !strings.Contains(s, `"extra": "yes"`) {
+	if s := string(data); strings.Contains(s, `"id"`) || !strings.Contains(s, `"future"`) || !strings.Contains(s, `"extra": "yes"`) {
 		t.Errorf("id and number should be gone and the rest kept:\n%s", s)
+	}
+	if f, err := parseFile(data); err != nil || f.Stacks[0].ID != "" || f.Stacks[0].Number != 0 || f.Stacks[0].Branches[0].PullRequest.Number != 1 {
+		t.Errorf("cleared file = %s (%v)", data, err)
 	}
 	err = b.Update(ctx, repo, func(g *stack.Graph) error {
 		g.Stacks[0].ID, g.Stacks[0].Number = "S9", 9
