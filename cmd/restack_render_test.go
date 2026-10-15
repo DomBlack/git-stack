@@ -16,3 +16,26 @@ func TestRenderRestackNothingInScope(t *testing.T) {
 		t.Errorf("out = %q", out.String())
 	}
 }
+
+func TestRenderRestackAborted(t *testing.T) {
+	tests := []struct {
+		name string
+		res  app.RestackResult
+		want string
+	}{
+		{"nothing", app.RestackResult{}, "ok: Restack aborted\n"},
+		{"branches", app.RestackResult{Restored: []string{"a", "b"}}, "ok: Restack aborted; put back a, b\n"},
+		{"branches and order", app.RestackResult{Restored: []string{"a", "b"}, OrderRestored: true}, "ok: Restack aborted; put back a, b and the stack order\n"},
+		{"order only", app.RestackResult{OrderRestored: true}, "ok: Restack aborted; put back the stack order\n"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var out, errOut bytes.Buffer
+			rep := ui.NewReporter(nil, &out, &errOut, ui.ReporterOptions{})
+			renderRestack(rep, tt.res, true)
+			if out.String() != tt.want {
+				t.Errorf("out = %q, want %q", out.String(), tt.want)
+			}
+		})
+	}
+}
