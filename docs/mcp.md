@@ -84,12 +84,13 @@ with uncommitted changes in another worktree, or whose move would overwrite untr
 there (or a conflict on a branch checked out elsewhere), makes `stack_reorder` and `stack_move`
 fail with `invalid_args` and nothing changed.
 Because GitHub can only create a stack or add to the top of one, the next `stack_submit`
-dissolves every stale GitHub stack first and then creates again only the stack it submits. The
-notice says which stack was dissolved and, when it isn't the one being submitted, which stack
-to submit from ("dissolved stack #7 on GitHub because its pull requests were regrouped by a
-reorder or move; submit from <bottom> to group them again"), so call
-`stack_submit` from that other stack's bottom branch to group its pull requests. If dissolving
-fails, a notice says so and the next submit tries again.
+dissolves every stale GitHub stack first, lets gh stack create the stack it submits, and then
+creates the other dissolved stacks again itself, so a move's source stack is grouped again by the
+same submit. A notice names each one ("dissolved stack #7 on GitHub; its pull requests now belong
+to the stack they were moved to", then "created stack #9 on GitHub again for <bottom>'s stack").
+Two cases are left to you. A stack with fewer than two pull requests has nothing to group, and
+the notice says so. If creating a stack fails, the notice says to submit from it to try again.
+If dissolving fails, a notice says so and the next submit tries again.
 `checks_failing` and `checks_pending` come from `stack_merge` when a pull request it would land
 has a check that failed, or (with none failed) one still queued or running, on its head commit.
 Nothing is merged. The error's `checks` lists each held up pull request:

@@ -77,6 +77,34 @@ func TestReorderMovesBranchUpAndDown(t *testing.T) {
 	}
 }
 
+func TestReorderShiftUpMovesBranchUp(t *testing.T) {
+	tm := newTestReorder(t)
+	waitForText(t, tm, "main")
+	tm.Send(tea.KeyPressMsg{Code: tea.KeyUp, Mod: tea.ModShift}) // b above c
+	tm.Send(tea.KeyPressMsg{Code: tea.KeyEnter})
+	if r := finalReorder(t, tm).Result(); !slices.Equal(r.Order, []string{"a", "c", "b"}) {
+		t.Errorf("shift+up: %+v", r)
+	}
+}
+
+func TestReorderJAndKMoveTheCursor(t *testing.T) {
+	tm := newTestReorder(t)
+	waitForText(t, tm, "main")
+	tm.Send(tea.KeyPressMsg{Code: 'k', Text: "k"}) // cursor to c, nothing moves
+	tm.Send(tea.KeyPressMsg{Code: tea.KeyEnter})
+	if r := finalReorder(t, tm).Result(); r.Cancelled || !slices.Equal(r.Order, []string{"a", "b", "c"}) {
+		t.Errorf("k: %+v", r)
+	}
+	tm = newTestReorder(t)
+	waitForText(t, tm, "main")
+	tm.Send(tea.KeyPressMsg{Code: 'j', Text: "j"}) // cursor to a
+	tm.Send(tea.KeyPressMsg{Code: 'K', Text: "K"}) // a above b
+	tm.Send(tea.KeyPressMsg{Code: tea.KeyEnter})
+	if r := finalReorder(t, tm).Result(); !slices.Equal(r.Order, []string{"b", "a", "c"}) {
+		t.Errorf("j then K: %+v", r)
+	}
+}
+
 func TestReorderCancelAndInterrupt(t *testing.T) {
 	tm := newTestReorder(t)
 	waitForText(t, tm, "main")

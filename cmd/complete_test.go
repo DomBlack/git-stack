@@ -2,11 +2,15 @@ package cmd
 
 import (
 	"bytes"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
+
+	"github.com/DomBlack/git-stack/pkg/git/gittest"
 )
 
 // TestEveryCommandAndFlagIsCompletable enforces the autocomplete rule: every
@@ -116,4 +120,93 @@ func testStreams(out *bytes.Buffer) Streams {
 		out = &bytes.Buffer{}
 	}
 	return Streams{In: strings.NewReader(""), Out: out, Err: &bytes.Buffer{}}
+}
+
+// twoStackRepo builds main -> a -> b -> c and main -> x -> y with an
+// untracked branch, and leaves HEAD on b.
+func twoStackRepo(t *testing.T) string {
+	t.Helper()
+	gittest.Isolate(t)
+	dir := gittest.InitRepo(t)
+	for _, b := range []string{"a", "b", "c"} {
+		gittest.Run(t, dir, "switch", "-q", "-c", b)
+		gittest.Commit(t, dir, b+".txt", b, b)
+	}
+	gittest.Run(t, dir, "switch", "-q", "-c", "x", "main")
+	gittest.Commit(t, dir, "x.txt", "x", "x")
+	gittest.Run(t, dir, "switch", "-q", "-c", "y")
+	gittest.Commit(t, dir, "y.txt", "y", "y")
+	gittest.Run(t, dir, "branch", "loose", "main")
+	gittest.Run(t, dir, "switch", "-q", "b")
+	meta := `{"schemaVersion":1,"stacks":[
+		{"trunk":{"branch":"main"},"branches":[{"branch":"a"},{"branch":"b"},{"branch":"c"}]},
+		{"trunk":{"branch":"main"},"branches":[{"branch":"x"},{"branch":"y"}]}]}`
+	gitDir := gittest.Run(t, dir, "rev-parse", "--absolute-git-dir")
+	if err := os.WriteFile(filepath.Join(gitDir, "gh-stack"), []byte(meta), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return dir
+}
+
+func TestReshapeCompletions(t *testing.T) {
+	dir := twoStackRepo(t)
+	offered := func(args ...string) string {
+		t.Helper()
+		return strings.Join(nonEmpty(runComplete(t, append([]string{"--cwd", dir}, args...)...)), "|")
+	}
+
+	t.Run("stack order", func(t *testing.T) {
+		if got := offered("reorder", ""); got != "a|b|c|:36" {
+			t.Errorf("all branches in stack order: %q", got)
+		}
+		if got := offered("reorder", "c", "a", ""); got != "b|:36" {
+			t.Errorf("without the ones already typed: %q", got)
+		}
+		if got := offered("reorder", "b", "a", "c", ""); got != ":36" {
+			t.Errorf("nothing left to offer: %q", got)
+		}
+	})
+
+	t.Run("move targets", func(t *testing.T) {
+		if got := offered("move", "--onto", ""); got != "main\ttrunk|y\ttop of x's stack|:36" {
+			t.Errorf("current stack's top left out: %q", got)
+		}
+		if got := offered("move", "--source", "y", "--onto", ""); got != "main\ttrunk|c\ttop of a's stack|:36" {
+			t.Errorf("source stack's top left out: %q", got)
+		}
+		if got := offered("move", "--onto", "m"); got != "main\ttrunk|:36" {
+			t.Errorf("prefix filter: %q", got)
+		}
+	})
+
+	t.Run("stacked branches", func(t *testing.T) {
+		want := "a\tstack: a|b\tstack: a · current|c\tstack: a|x\tstack: x|y\tstack: x|:4"
+		if got := offered("move", "--source", ""); got != want {
+			t.Errorf("stacked branches only: %q", got)
+		}
+	})
+
+	t.Run("untracked branches", func(t *testing.T) {
+		if got := offered("init", ""); got != "loose|:4" {
+			t.Errorf("untracked only: %q", got)
+		}
+		if got := offered("init", "loose", ""); got != ":4" {
+			t.Errorf("already typed: %q", got)
+		}
+	})
+
+	t.Run("trunks", func(t *testing.T) {
+		if got := offered("init", "--base", ""); got != "main|:4" {
+			t.Errorf("trunks: %q", got)
+		}
+	})
+}
+
+func TestTrunkCompletionFallsBackToTheDefaultBranch(t *testing.T) {
+	gittest.Isolate(t)
+	dir := gittest.InitRepo(t)
+	out := runComplete(t, "--cwd", dir, "init", "--base", "")
+	if got := strings.Join(nonEmpty(out), "|"); got != "main|:4" {
+		t.Errorf("no stack yet: %q", got)
+	}
 }

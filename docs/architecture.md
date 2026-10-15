@@ -424,10 +424,12 @@ and queues the number in `<common git dir>/git-stack/remote-stacks.json`. Every 
 command and `stack_submit`) first works through that list with `gh stack unstack <number>`,
 which only touches GitHub because the number is no longer tracked locally (while it is, unstack
 would delete the local stack too, which is why the id is cleared first). Then the normal submit
-runs, finds a stack with no id and creates it. That covers only the stack being submitted: after
-a move, or a reorder of a different stack, the dissolved stack's PRs stay ungrouped until it is
-submitted too, so the notice names that stack and says to submit from its bottom branch. A
-stack that's already gone counts as done, and a failure keeps the entry and says so in a notice. Keeping the two apart also means the reshape
+runs, finds a stack with no id and creates it. That covers only the stack being submitted, so
+after a move, or a reorder of a different stack, submit then creates each other dissolved stack
+again itself through the forge's create call, as long as it still exists locally and has at
+least two PRs, and records the new id. The notice names each stack. A stack with fewer than two
+PRs has nothing to group, and a failed create says to submit from that stack to try again. A
+stack that's already gone counts as done, and a failure to dissolve keeps the entry and says so in a notice. Keeping the two apart also means the reshape
 itself works offline. PRs that are queued for merge or have auto merge on stay stacked on
 GitHub's side, so creating the new stack fails with gh stack's usual warning until they land.
 
