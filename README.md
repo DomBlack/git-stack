@@ -63,6 +63,8 @@ git modify -a               # stage everything, amend that branch's commit and r
                             # (alias for git stack modify)
 git ab -u                   # or let absorb work out which commit each fix belongs to and put it there
                             # (alias for git stack absorb)
+git reorder                 # change the order of the stack's branches in a list
+                            # (alias for git stack reorder)
 git top                     # jump to the top of the stack (alias for git stack top)
 git ss                      # push the whole stack and create or update the PRs
                             # (alias for git stack submit)
@@ -105,11 +107,12 @@ merging the PRs on GitHub.
 
 ## What it doesn't do
 
-gh stack can only add branches at the top of a stack, so neither can git-stack. For anything that
-reshapes a stack, use gh stack directly and then `git restack`;
-
-- inserting, reordering or removing branches in the middle of a stack: `gh stack modify`
-- turning branches you already have into a stack: `gh stack init <branch> <branch>...`
+gh stack can only add branches at the top of a stack, so `git create` can't start one in the
+middle either; create it on top and `git reorder` it into place. Reordering a stack, moving
+branches onto another stack and adopting branches you made by hand are `git stack reorder`,
+`git stack move` and `git stack init`. The one thing left that needs gh stack directly (and then
+`git restack`) is folding a branch into another, or dropping one from the middle of a stack:
+`gh stack modify`.
 
 ## Install
 
@@ -143,7 +146,7 @@ Claude Code and Codex if you have them installed**. Each of those is on by defau
 change before it happens, and `--uninstall` removes what it recorded installing and nothing else
 (that record lives in `git config --global stack.managed*`).
 
-- **Aliases** (`--aliases`): `git create|modify|absorb|restack|continue|abort|submit|sync|up|down|top|bottom`
+- **Aliases** (`--aliases`): `git create|modify|absorb|reorder|move|track|restack|continue|abort|submit|sync|up|down|top|bottom`
   and the short ones `git c|m|ab|rs|ss|u|d|t|b|co`, written with `git config --global`. Anything that
   clashes with a git builtin or an installed command is skipped, and an alias you already have is
   only replaced if you pass `--force` or say yes when asked.
@@ -298,6 +301,90 @@ Flags:
 - `-d` / `--dry-run` show where each change would go and change nothing
 - `-f` / `--force` don't ask before rewriting
 
+### `git stack reorder [branch...]`
+
+> Alias: `git reorder`
+
+Changes the order of the branches in the stack you're on. With no arguments on a terminal it
+shows the stack as a list, top first with trunk at the bottom; `j`/`k` move the cursor, `J`/`K`
+(or shift with the arrows) move the branch under it, enter applies and esc cancels. Otherwise pass
+the new order as arguments, bottom to top, naming every branch of the stack once.
+
+Nothing is checked out. Each branch keeps its own commits and is replayed onto its new parent, so a
+conflict stops just like a restack: fix it, `git add` and `git continue`, or `git abort` to put the
+old order back. GitHub can't reorder a stack in place, so if the stack already has PRs the next
+`git ss` creates it on GitHub again in the new order. The PRs stay the same, but the stack's number
+changes.
+
+```
+❯ git reorder
+Reorder the stack
+  billing-webhook-retries  #418  moved
+❯ billing-webhook-alerts  current  moved
+  billing-webhook-schema  #412
+  main  trunk
+↑/↓ or j/k move cursor · shift+↑/↓ or K/J move branch · enter apply · esc cancel
+✔ Reordered the stack: billing-webhook-schema, billing-webhook-alerts, billing-webhook-retries
+✔ Restacked billing-webhook-alerts, billing-webhook-retries
+```
+
+### `git stack move`
+
+> Alias: `git move`
+
+Takes the current branch out of its stack, along with every branch above it, and puts it on top of
+another stack (`--onto` that stack's top branch) or starts a new stack with it (`--onto` a trunk,
+which can be a different one, e.g. moving a stack from `main` to `develop`). With `--only` the
+branch goes on its own; the branches above it stay where they were, now on its old parent and
+without its commits. Without `--onto` on a terminal you get the checkout picker, showing only the
+places it can go.
+
+gh stack keeps each stack as a single line, so a branch can only land on the top of a stack or on a
+trunk; to change the order within a stack use `git reorder`. Nothing is checked out and a conflict
+stops like a restack does; `git continue` finishes the whole move, including the branches an
+`--only` left behind, and `git abort` puts every branch and both stacks back how they were. Like a reorder, the stack it
+came from is created on GitHub again at the next `git ss`, so its number changes.
+
+```
+❯ git move --onto main --only
+✔ Moved billing-webhook-retries onto main (new stack)
+  billing-webhook-alerts stays on billing-webhook-schema
+✔ Restacked billing-webhook-retries, billing-webhook-alerts
+❯ git move --onto fix-login-timeout
+✔ Moved billing-webhook-retries onto fix-login-timeout
+✔ Restacked billing-webhook-retries
+```
+
+Flags:
+- `-o` / `--onto <branch>` where to put it: a trunk, or the top branch of another stack
+- `-s` / `--source <branch>` move this branch instead of the current one
+- `--only` move just the branch and leave the ones above it behind
+
+### `git stack init [branch...]`
+
+> Alias: `git track` (git won't let an alias replace its own `git init`); `git stack track` works
+> too
+
+Tracks branches you already have, e.g. ones made by hand with plain git, as a new stack. List them
+bottom to top; with no arguments it's just the branch you're on. The trunk is `--base` if you
+give it, otherwise the repo's only trunk, otherwise its default branch.
+
+It only records the stack. Nothing is committed, rebased or checked out, so a branch that isn't
+sitting on the one below it is pointed out and `git restack` puts it there. New branches are still
+made with `git create`; this only adopts ones that exist.
+
+```
+❯ git track search-index search-api search-ui
+✔ Tracking search-index, search-api, search-ui on main
+⚠ search-api is not on search-index; run git stack restack
+❯ git restack
+  search-index already in place
+✔ Restacked search-api, search-ui
+```
+
+Flags:
+- `-b` / `--base <trunk>` the trunk to stack on
+
 ### `git stack submit`
 
 > Aliases: `git submit`, `git ss`
@@ -423,8 +510,8 @@ Flags:
 
 > Aliases: `git continue`, `git stack cont`
 
-Once you've fixed and `git add`ed the conflicts, finishes the rebase a restack or modify stopped on
-and then restacks whatever was left above it.
+Once you've fixed and `git add`ed the conflicts, finishes the rebase a restack, modify, reorder or
+move stopped on and then restacks whatever was left above it.
 
 Flags:
 - `-a` / `--all` stage every change first
@@ -433,8 +520,9 @@ Flags:
 
 > Alias: `git abort`
 
-Gives up on the rebase a restack or modify stopped on and puts back every branch the operation had
-already moved, metadata included.
+Gives up on the rebase a restack, modify, reorder or move stopped on and puts back every branch the
+operation had already moved, metadata included; after a reorder or move that means the stack order
+too.
 
 ### `git stack log`
 
