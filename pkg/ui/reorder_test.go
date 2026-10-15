@@ -2,6 +2,7 @@ package ui
 
 import (
 	"context"
+	"errors"
 	"slices"
 	"strings"
 	"testing"
@@ -61,6 +62,7 @@ func TestReorderMovesBranchUpAndDown(t *testing.T) {
 	tm := newTestReorder(t)
 	waitForText(t, tm, "main")
 	tm.Send(tea.KeyPressMsg{Code: 'K', Text: "K"}) // b above c
+	tm.Send(tea.KeyPressMsg{Code: 'K', Text: "K"}) // clamps at the top
 	tm.Send(tea.KeyPressMsg{Code: tea.KeyEnter})
 	if r := finalReorder(t, tm).Result(); !slices.Equal(r.Order, []string{"a", "c", "b"}) {
 		t.Errorf("K: %+v", r)
@@ -83,8 +85,8 @@ func TestReorderCancelAndInterrupt(t *testing.T) {
 		t.Errorf("esc: %+v", r)
 	}
 	_, err := RunReorder(context.Background(), strings.NewReader("\x03"), &strings.Builder{}, ReorderOptions{Trunk: "main", Branches: []string{"a"}})
-	if err == nil {
-		t.Error("ctrl+c should interrupt")
+	if !errors.Is(err, context.Canceled) {
+		t.Errorf("ctrl+c should interrupt, got %v", err)
 	}
 }
 

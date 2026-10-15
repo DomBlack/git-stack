@@ -407,7 +407,10 @@ a base above the parent (see restack above) is what makes it replay rather than 
 in place. A `move --only` is two runs, the moved branches onto their destination and then the
 ones left behind onto the old parent, so the saved restack state gained a queue of segments for
 continue to work through. It also carries the snapshot, so abort puts the order, membership and
-bases back as well as the refs. A failure before any ref has moved rolls the metadata back from
+bases back as well as the refs. A stop without a conflict after some refs moved (a dirty tree,
+say) saves the same state, so `continue` finishes it and `abort` undoes all of it. A branch
+checked out with changes in another worktree, or a conflict on one checked out elsewhere, refuses
+the whole reshape up front with nothing changed. A failure before any ref has moved rolls the metadata back from
 the snapshot and the error says nothing was changed.
 
 **GitHub's stack is dissolved and made again, not edited.** The stacks API can create a stack
@@ -420,7 +423,9 @@ and queues the number in `<common git dir>/git-stack/remote-stacks.json`. Every 
 command and `stack_submit`) first works through that list with `gh stack unstack <number>`,
 which only touches GitHub because the number is no longer tracked locally (while it is, unstack
 would delete the local stack too, which is why the id is cleared first). Then the normal submit
-runs, finds a stack with no id and creates it. A stack that's already gone counts as done, and
+runs, finds a stack with no id and creates it. That covers only the stack being submitted: after
+a move, or a reorder of a different stack, the dissolved stack's PRs stay ungrouped until it is
+submitted too, so the notice names that stack and says to submit from its bottom branch. A stack that's already gone counts as done, and
 a failure keeps the entry and says so in a notice. Keeping the two apart also means the reshape
 itself works offline. PRs that are queued for merge or have auto merge on stay stacked on
 GitHub's side, so creating the new stack fails with gh stack's usual warning until they land.

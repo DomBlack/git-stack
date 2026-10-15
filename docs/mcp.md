@@ -23,7 +23,7 @@ path is resolved with `git rev-parse`; anything outside a repository returns `no
 | `stack_create` | New branch on top of the current one (from trunk: new stack), commit staged changes | `message` (required), `branch`, `staging` = `all`/`update`/`none`, `use_ai` | non-destructive |
 | `stack_modify` | Amend the current branch (or `mode: commit`) and restack everything above | `mode`, `staging`, `message`, `continue`, `abort` | destructive |
 | `stack_absorb` | Fold each staged hunk into the commit of the current stack that last changed those lines, rewrite it and everything above, then restack what sits above the current branch; the result's `plan` lists every hunk's destination and what stays staged | `staging` = `all`/`update`/`none`, `dry_run` | destructive |
-| `stack_reorder` | Change the order of the current stack's branches and restack them, checking nothing out; the next `stack_submit` creates the stack on GitHub again in the new order | `order` (required: every branch of the stack once, bottom to top) | destructive |
+| `stack_reorder` | Change the order of the current stack's branches and restack them, checking nothing out; the next `stack_submit` dissolves the stale stack on GitHub and creates it again in the new order; a branch checked out with changes in another worktree refuses the call with nothing changed | `order` (required: every branch of the stack once, bottom to top) | destructive |
 | `stack_move` | Move a branch, and unless `only` is set everything above it, onto the top of another stack or onto a trunk as a new stack, then restack; moves within one stack are `stack_reorder`'s job | `onto` (required: a trunk or another stack's top branch), `source` (default current), `only` | destructive |
 | `stack_init` | Track branches that already exist as a new stack on a trunk; only the metadata changes, and `needsRestack` lists the branches that aren't on their parent | `branches` (bottom to top, default current), `base` | destructive (it writes the metadata, though no branch moves) |
 | `stack_continue` | Finish an interrupted restack, modify, reorder or move once the conflicts are resolved and git added | `stage_all` | destructive |
@@ -78,10 +78,16 @@ with uncommitted changes in the way; nothing has changed in those cases.
 restack stopped part way; the structured result comes back alongside the error, so you can see the
 new order (or what moved and what was left behind). `stack_continue` finishes it, both halves of a
 `move` with `only: true` included, and `stack_abort` puts the branches back and the stack order
-too. Because GitHub can only create a stack or add to the top of one, the next `stack_submit`
-dissolves the old stack on GitHub before gh stack creates it again, and says so in its notices
-("dissolved stack #7 on GitHub so it can be created again in its new order"). If that fails, a
-notice says so and the next submit tries again.
+too. A reorder or move that stops without a conflict after some branches moved is saved the same
+way, so `stack_continue` finishes it and `stack_abort` undoes all of it. A branch checked out
+with uncommitted changes in another worktree (or a conflict on a branch checked out elsewhere)
+makes `stack_reorder` and `stack_move` fail with `invalid_args` and nothing changed.
+Because GitHub can only create a stack or add to the top of one, the next `stack_submit`
+dissolves every stale GitHub stack first and then creates again only the stack it submits. Each
+notice says which stack was dissolved ("dissolved stack #7 on GitHub because its pull requests
+were regrouped by a reorder or move; submit from <bottom> to group them again"), so call
+`stack_submit` from that other stack's bottom branch to group its pull requests. If dissolving
+fails, a notice says so and the next submit tries again.
 `checks_failing` and `checks_pending` come from `stack_merge` when a pull request it would land
 has a check that failed, or (with none failed) one still queued or running, on its head commit.
 Nothing is merged. The error's `checks` lists each held up pull request:

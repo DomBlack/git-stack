@@ -555,7 +555,7 @@ func (s *Server) registerTools() {
 	mcp.AddTool(s.mcp, &mcp.Tool{
 		Name:        "stack_reorder",
 		Title:       "Reorder the current stack's branches",
-		Description: "Change the order of the current stack's branches (order lists them bottom to top, every branch once) and restack them; nothing is checked out. A conflict comes back as code conflict with the result alongside; finish with stack_continue or undo with stack_abort, which also puts the old order back. The next stack_submit creates the stack on GitHub again in the new order.",
+		Description: "Change the order of the current stack's branches (order lists them bottom to top, every branch once) and restack them; nothing is checked out. A conflict comes back as code conflict with the result alongside; finish with stack_continue or undo with stack_abort, which also puts the old order back. A branch checked out with uncommitted changes in another worktree refuses the whole call with nothing changed. The next stack_submit dissolves the stale GitHub stack and creates it again in the new order.",
 		Annotations: &mcp.ToolAnnotations{DestructiveHint: boolp(true), OpenWorldHint: boolp(false)},
 	}, s.reorder)
 	mcp.AddTool(s.mcp, &mcp.Tool{

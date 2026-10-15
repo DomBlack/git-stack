@@ -312,18 +312,16 @@ the new order as arguments, bottom to top, naming every branch of the stack once
 
 Nothing is checked out. Each branch keeps its own commits and is replayed onto its new parent, so a
 conflict stops just like a restack: fix it, `git add` and `git continue`, or `git abort` to put the
-old order back. GitHub can't reorder a stack in place, so if the stack already has PRs the next
-`git ss` creates it on GitHub again in the new order. The PRs stay the same, but the stack's number
-changes.
+old order back. If a conflict isn't the reason it stopped, `git continue` finishes it and
+`git abort` undoes all of it. A branch checked out with uncommitted changes in another worktree
+stops the reorder before anything changes. GitHub can't reorder a stack in place, so if the stack
+already has PRs the next `git ss` dissolves it on GitHub and creates it again in the new order. The
+PRs stay the same, but the stack's number changes.
+
+The list goes away when you press enter, so what's left in your terminal is the result:
 
 ```
 ❯ git reorder
-Reorder the stack
-  billing-webhook-retries  #418  moved
-❯ billing-webhook-alerts  current  moved
-  billing-webhook-schema  #412
-  main  trunk
-↑/↓ or j/k move cursor · shift+↑/↓ or K/J move branch · enter apply · esc cancel
 ✔ Reordered the stack: billing-webhook-schema, billing-webhook-alerts, billing-webhook-retries
 ✔ Restacked billing-webhook-alerts, billing-webhook-retries
 ```
@@ -340,18 +338,23 @@ without its commits. Without `--onto` on a terminal you get the checkout picker,
 places it can go.
 
 gh stack keeps each stack as a single line, so a branch can only land on the top of a stack or on a
-trunk; to change the order within a stack use `git reorder`. Nothing is checked out and a conflict
-stops like a restack does; `git continue` finishes the whole move, including the branches an
-`--only` left behind, and `git abort` puts every branch and both stacks back how they were. Like a reorder, the stack it
-came from is created on GitHub again at the next `git ss`, so its number changes.
+trunk; to change the order within a stack use `git reorder`. Nothing is checked out. A conflict
+(or any other stop after some branches moved) is finished with `git continue`, which covers the
+branches an `--only` left behind, or undone with `git abort`. A branch checked out with uncommitted
+changes in another worktree stops the move before anything changes. The next `git ss` dissolves
+the stale stack on GitHub and creates again only the one you submit; the notice names the other
+stack, so submit from its bottom branch to group its PRs again.
 
 ```
+# on billing-webhook-alerts
 ❯ git move --onto main --only
-✔ Moved billing-webhook-retries onto main (new stack)
-  billing-webhook-alerts stays on billing-webhook-schema
-✔ Restacked billing-webhook-retries, billing-webhook-alerts
+✔ Moved billing-webhook-alerts from billing-webhook-schema onto main (new stack)
+  billing-webhook-retries stays on billing-webhook-schema
+✔ Restacked billing-webhook-alerts, billing-webhook-retries
+
+# a separate run, on billing-webhook-retries
 ❯ git move --onto fix-login-timeout
-✔ Moved billing-webhook-retries onto fix-login-timeout
+✔ Moved billing-webhook-retries from billing-webhook-alerts onto fix-login-timeout
 ✔ Restacked billing-webhook-retries
 ```
 
@@ -362,12 +365,12 @@ Flags:
 
 ### `git stack init [branch...]`
 
-> Alias: `git track` (git won't let an alias replace its own `git init`); `git stack track` works
-> too
+> Alias: `git track`; `git stack track` works too
 
 Tracks branches you already have, e.g. ones made by hand with plain git, as a new stack. List them
 bottom to top; with no arguments it's just the branch you're on. The trunk is `--base` if you
-give it, otherwise the repo's only trunk, otherwise its default branch.
+give it, otherwise the repo's only trunk, otherwise its default branch. The alias is `track`
+because git won't let an alias replace its own `git init`.
 
 It only records the stack. Nothing is committed, rebased or checked out, so a branch that isn't
 sitting on the one below it is pointed out and `git restack` puts it there. New branches are still

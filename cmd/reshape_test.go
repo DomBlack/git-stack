@@ -54,12 +54,12 @@ func TestMoveCommand(t *testing.T) {
 		t.Fatal(err)
 	}
 	out, errOut, err := run("move", "--source", "b", "--onto", "x", "--only")
-	if err != nil || !strings.Contains(out, "ok: Moved b onto x") || !strings.Contains(out, "c stays on a") || !strings.Contains(out, "Restacked b, c") {
+	if err != nil || !strings.Contains(out, "ok: Moved b from a onto x") || !strings.Contains(out, "c stays on a") || !strings.Contains(out, "Restacked b, c") {
 		t.Errorf("move: %q %q %v", out, errOut, err)
 	}
 	gittest.Run(t, dir, "switch", "-q", "c")
 	out, _, err = run("move", "--onto", "main")
-	if err != nil || !strings.Contains(out, "ok: Moved c onto main (new stack)") {
+	if err != nil || !strings.Contains(out, "ok: Moved c from a onto main (new stack)") {
 		t.Errorf("new stack: %q %v", out, err)
 	}
 	if _, _, err = run("move", "--onto", "main"); err == nil || !strings.Contains(err.Error(), "already on") {
