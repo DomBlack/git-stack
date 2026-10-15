@@ -61,6 +61,8 @@ git down                    # go back down one branch (alias for git stack down)
 # ...fix something the reviewer spotted on the first PR...
 git modify -a               # stage everything, amend that branch's commit and restack everything above
                             # (alias for git stack modify)
+git ab -u                   # or let absorb work out which commit each fix belongs to and put it there
+                            # (alias for git stack absorb)
 git top                     # jump to the top of the stack (alias for git stack top)
 git ss                      # push the whole stack and create or update the PRs
                             # (alias for git stack submit)
@@ -141,8 +143,8 @@ Claude Code and Codex if you have them installed**. Each of those is on by defau
 change before it happens, and `--uninstall` removes what it recorded installing and nothing else
 (that record lives in `git config --global stack.managed*`).
 
-- **Aliases** (`--aliases`): `git create|modify|restack|continue|abort|submit|sync|up|down|top|bottom`
-  and the short ones `git c|m|rs|ss|u|d|t|b|co`, written with `git config --global`. Anything that
+- **Aliases** (`--aliases`): `git create|modify|absorb|restack|continue|abort|submit|sync|up|down|top|bottom`
+  and the short ones `git c|m|ab|rs|ss|u|d|t|b|co`, written with `git config --global`. Anything that
   clashes with a git builtin or an installed command is skipped, and an alias you already have is
   only replaced if you pass `--force` or say yes when asked.
 - **Completion** (`--completion`, `--shell bash|zsh|fish`, repeatable, defaults to your `$SHELL`):
@@ -253,6 +255,47 @@ Flags:
 - `--no-edit` keep the commit message as it is (the default when amending without `-m`)
 - `--reset-author` set the author to you when amending
 - `--no-verify` skip git hooks when committing
+
+### `git stack absorb`
+
+> Aliases: `git absorb`, `git ab`
+
+Takes whatever is staged and folds each changed run of lines into the commit in this stack that
+last changed those lines, i.e. the fix for a review comment three PRs down goes into that PR's
+commit without you going there. It looks at the current branch's commits and the branches below
+it (never trunk, and never a branch whose PR has merged), rewrites the commit it picks and every
+commit above it keeping messages and authors, then restacks the branches above you. It doesn't
+push.
+
+It goes by lines, not by meaning, so two things to know. A change to lines no commit in the stack
+touched can't be placed and stays staged, as does a new or deleted file; the output says so. And one
+run of changed lines that spans lines two different commits changed goes into the newer of the two,
+not split between them.
+
+```
+❯ git absorb
+  pkg/app/sync.go:120-125  into 7ac32ef Give up on a webhook after five attempts (billing-webhook-retries)
+  pkg/app/sync.go:300  into 4f21abc Version the billing webhook payload (billing-webhook-schema)
+  README.md:12  not absorbed; no commit in this stack changed those lines
+? Absorb 2 hunks into 2 commits? [Y/n]
+✔ Absorbed 2 hunks into 2 commits
+  billing-webhook-schema  rewritten, was 9b1d2e0
+  billing-webhook-retries  rewritten, was 7ac32ef
+🧱 Restacking 1 branch above billing-webhook-retries…
+✔ Restacked 1 branch above billing-webhook-retries
+⚠ Still staged: 1 hunk
+```
+
+On a terminal you see the plan and get asked first. The old tips are printed, so if it picked the
+wrong commit, `git branch -f billing-webhook-schema 9b1d2e0` followed by `git restack` puts things
+back. Every branch it needs to rewrite has to be sitting on its parent already (run `git restack`
+if not), and the bottom branch of the stack is fine behind main.
+
+Flags:
+- `-a` / `--all`, `-u` / `--update`, `-p` / `--patch` stage first, like `modify`; they stage even
+  with `--dry-run`
+- `-d` / `--dry-run` show where each change would go and change nothing
+- `-f` / `--force` don't ask before rewriting
 
 ### `git stack submit`
 

@@ -198,6 +198,22 @@ fails the error says what was left behind and that `modify -c` commits on it.
 a `conflict` error listing the files and the `git stack continue` / `git stack abort`
 commands.
 
+**`absorb` is line geometry over zero context diffs, applied through a temporary index.** Each
+staged hunk starts at HEAD and is moved backwards through the stack's commits (the current branch
+and the branches below it, stopping at trunk or a merged branch) past every change that doesn't
+overlap its lines, shifting its line numbers as it goes; the first change it can't get past owns
+it, as does the commit that created the file. The hunk is then carried into every snapshot from
+that commit up to HEAD, because a child's tree has to contain it too or the child would undo it.
+Each rewritten commit's tree is patched with `git apply --cached --unidiff-zero` in a temporary
+index (`pkg/git.PatchTree`), which has git check the removed lines really are there before
+anything in the repository changes, and handles modes, line endings and odd paths the way git
+does; the commits are made with `commit-tree`, so like a restack's replayed commits they are not
+signed. Every affected branch, the current one included, moves in one `update-ref` transaction:
+all or none, and moving the ref under the checkout leaves the index and working tree alone, so the
+absorbed hunks simply drop out of the staged diff. Everything above the current branch then goes
+through modify's upstack restack, conflict handling included. There is no absorb specific abort;
+the old tips are printed and in the reflog.
+
 **`submit --ai` drafts first, then lets gh stack submit, then fixes the PRs up.** The
 alternative was to push and create PRs ourselves and only use gh stack to link them. We
 didn't, because gh stack owns the push (`--force-with-lease`), the base calculation, the
