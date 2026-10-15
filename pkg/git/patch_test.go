@@ -80,7 +80,7 @@ func TestPatchTree(t *testing.T) {
 	c, repo, dir := patchFixture(t)
 	ctx := context.Background()
 	tree := gittest.Run(t, dir, "rev-parse", "HEAD^{tree}")
-	index := gittest.Run(t, dir, "rev-parse", "HEAD^{tree}") // unchanged below
+	treeBefore := tree // the real index's write-tree must still equal it below
 	nt, err := c.PatchTree(ctx, repo, tree, editL2)
 	if err != nil {
 		t.Fatal(err)
@@ -90,8 +90,22 @@ func TestPatchTree(t *testing.T) {
 	}
 	// The real index and working tree are untouched, and the temporary
 	// index is gone.
-	if gittest.Run(t, dir, "write-tree") != index || gittest.Run(t, dir, "status", "--porcelain") != "" {
+	if gittest.Run(t, dir, "write-tree") != treeBefore || gittest.Run(t, dir, "status", "--porcelain") != "" {
 		t.Error("the real index or working tree changed")
+	}
+	if left, _ := filepath.Glob(filepath.Join(repo.GitDir, "git-stack-absorb-*")); len(left) != 0 {
+		t.Errorf("temporary index left behind: %v", left)
+	}
+}
+
+func TestPatchTreeRemovesTempIndexWhenReadTreeFails(t *testing.T) {
+	c, repo, _ := patchFixture(t)
+	_, err := c.PatchTree(context.Background(), repo, strings.Repeat("0", 40), editL2)
+	if err == nil {
+		t.Fatal("a bogus tree id should fail")
+	}
+	if _, ok := errors.AsType[*git.PatchError](err); ok {
+		t.Errorf("read-tree failing is not a patch error: %v", err)
 	}
 	if left, _ := filepath.Glob(filepath.Join(repo.GitDir, "git-stack-absorb-*")); len(left) != 0 {
 		t.Errorf("temporary index left behind: %v", left)

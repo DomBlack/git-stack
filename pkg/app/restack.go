@@ -368,14 +368,20 @@ func (a *App) applyMoves(ctx context.Context, run *restackRun, p *restackPlan, r
 			return err
 		}
 	}
-	return a.d.Meta.Update(ctx, run.repo, func(g *stack.Graph) error {
+	return a.updateHeadsAndBases(ctx, run.repo, heads, p.bases)
+}
+
+// updateHeadsAndBases records the new head of every branch in heads and
+// the new base of every branch in bases.
+func (a *App) updateHeadsAndBases(ctx context.Context, repo git.Repo, heads, bases map[string]string) error {
+	return a.d.Meta.Update(ctx, repo, func(g *stack.Graph) error {
 		for i := range g.Stacks {
 			for j := range g.Stacks[i].Branches {
 				b := &g.Stacks[i].Branches[j]
 				if to, ok := heads[b.Name]; ok {
 					b.Head = to
 				}
-				if base, ok := p.bases[b.Name]; ok {
+				if base, ok := bases[b.Name]; ok {
 					b.Base = base
 				}
 			}
