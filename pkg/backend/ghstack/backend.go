@@ -151,7 +151,11 @@ func (b *Backend) Load(_ context.Context, repo git.Repo) (*stack.Graph, error) {
 // dir that has a metadata file, re-reads them, runs fn on the merged graph
 // and writes each file back, editing the JSON in place so members we don't
 // model, PR records and ordering survive. A file whose stacks fn didn't
-// change is not rewritten.
+// change is not rewritten. fn may also append stacks (each with a trunk and
+// at least one branch; they are written to the current worktree's file, else
+// the main checkout's, else a new file in the common dir) and may clear a
+// stack's ID and Number, which removes them from the record. It must not
+// remove or reorder existing stacks; a stack left with no branches is removed.
 func (b *Backend) Update(ctx context.Context, repo git.Repo, fn func(*stack.Graph) error) error {
 	srcs := sources(repo)
 	slices.SortFunc(srcs, func(a, b source) int { return strings.Compare(a.gitDir, b.gitDir) })
@@ -179,25 +183,62 @@ func (b *Backend) Update(ctx context.Context, repo git.Repo, fn func(*stack.Grap
 	if err := fn(r.graph); err != nil {
 		return err
 	}
-	if len(r.graph.Stacks) != count {
-		return fmt.Errorf("%s: Update may not add or remove stacks", FileName)
+	if len(r.graph.Stacks) < count {
+		return fmt.Errorf("%s: Update may not remove stacks", FileName)
+	}
+	added := r.graph.Stacks[count:]
+	target := -1
+	if len(added) > 0 {
+		for _, s := range added {
+			if s.Trunk == "" || len(s.Branches) == 0 {
+				return fmt.Errorf("%s: a new stack needs a trunk and at least one branch", FileName)
+			}
+		}
+		target = r.fileFor(repo)
 	}
 	for fi := range r.files {
-		if err := b.writeBack(r, fi); err != nil {
+		var extra []stack.Stack
+		if fi == target {
+			extra = added
+		}
+		if err := b.writeBack(r, fi, extra); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
+// fileFor picks the file new stacks are written to: the current worktree's
+// when it has one, else the main checkout's, else a fresh file in the
+// common dir, which is where gh stack keeps it today.
+func (r *reading) fileFor(repo git.Repo) int {
+	for _, dir := range []string{repo.GitDir, repo.CommonDir} {
+		for i, f := range r.files {
+			if f.src.gitDir == dir {
+				return i
+			}
+		}
+	}
+	r.files = append(r.files, loaded{
+		src:  source{repo.CommonDir, filepath.Dir(repo.CommonDir)},
+		data: []byte("{\n  \"schemaVersion\": 1,\n  \"stacks\": []\n}\n"),
+		f:    &file{SchemaVersion: SchemaVersion},
+	})
+	return len(r.files) - 1
+}
+
 // writeBack applies the graph's edits to the fi'th file and rewrites it
 // when anything changed.
-func (b *Backend) writeBack(r *reading, fi int) error {
+func (b *Backend) writeBack(r *reading, fi int, added []stack.Stack) error {
 	root, err := parseTree(r.files[fi].data)
 	if err != nil {
 		return err
 	}
 	stacksNode := root.get("stacks")
+	if stacksNode == nil && len(added) > 0 {
+		stacksNode = arrayNode()
+		root.set("stacks", stacksNode)
+	}
 	if stacksNode == nil || stacksNode.kind != '[' {
 		return nil
 	}
@@ -213,6 +254,22 @@ func (b *Backend) writeBack(r *reading, fi int) error {
 		if len(gs.Branches) == 0 {
 			changed = true
 			continue
+		}
+		if gs.ID == "" && gs.Number == 0 {
+			if rec.get("id") != nil || rec.get("number") != nil {
+				rec.del("id")
+				rec.del("number")
+				changed = true
+			}
+		} else {
+			if rec.str("id") != gs.ID {
+				rec.set("id", stringNode(gs.ID))
+				changed = true
+			}
+			if rec.num("number") != gs.Number {
+				rec.set("number", intNode(gs.Number))
+				changed = true
+			}
 		}
 		branchesNode := rec.get("branches")
 		if branchesNode == nil || branchesNode.kind != '[' {
@@ -240,11 +297,15 @@ func (b *Backend) writeBack(r *reading, fi int) error {
 			}
 			kept = append(kept, n)
 		}
-		if len(kept) != len(branchesNode.items) {
+		if !slices.Equal(kept, branchesNode.items) {
 			changed = true
 		}
 		branchesNode.items = kept
 		keep = append(keep, rec)
+	}
+	for _, s := range added {
+		keep = append(keep, stackNode(s))
+		changed = true
 	}
 	if !changed {
 		return nil
@@ -280,6 +341,26 @@ func (b *Backend) writeBack(r *reading, fi int) error {
 		}
 	}
 	return os.Rename(tmp.Name(), path)
+}
+
+// stackNode is a fresh stack record: trunk and branches only; gh stack
+// fills in the id and number when it first submits it.
+func stackNode(s stack.Stack) *node {
+	branches := arrayNode()
+	for _, b := range s.Branches {
+		n := objectNode(member{"branch", stringNode(b.Name)})
+		if b.Head != "" {
+			n.set("head", stringNode(b.Head))
+		}
+		if b.Base != "" {
+			n.set("base", stringNode(b.Base))
+		}
+		branches.items = append(branches.items, n)
+	}
+	return objectNode(
+		member{"trunk", objectNode(member{"branch", stringNode(s.Trunk)})},
+		member{"branches", branches},
+	)
 }
 
 // worktreePath resolves a linked worktree's working tree from its git dir:
