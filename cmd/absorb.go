@@ -63,9 +63,7 @@ tip>" for each other branch it rewrote, then "git stack restack".`,
 				return err
 			}
 			if !res.Applied {
-				for _, n := range res.Notices {
-					rep.Warn("%s", n)
-				}
+				renderNotices(rep, res.Notices)
 				switch {
 				case res.Plan.Absorbed == 0:
 					rep.Success("Nothing to absorb")
@@ -112,9 +110,7 @@ func hunkLines(h app.AbsorbHunk) string {
 
 // renderAbsorbResult prints what an applied absorb did.
 func renderAbsorbResult(rep *ui.Reporter, res app.AbsorbResult) {
-	for _, n := range res.Notices {
-		rep.Warn("%s", n)
-	}
+	renderNotices(rep, res.Notices)
 	rep.Success("Absorbed %d %s into %d %s", res.Plan.Absorbed, hunkNoun(res.Plan.Absorbed), res.Plan.Commits, commitNoun(res.Plan.Commits))
 	for _, m := range res.Rewritten {
 		rep.Info("%s  rewritten, was %s", rep.Branch(m.Name), rep.SHA(m.From))
@@ -123,6 +119,13 @@ func renderAbsorbResult(rep *ui.Reporter, res app.AbsorbResult) {
 		rep.Success("Restacked %d %s above %s", n, branchNoun(n), rep.Branch(res.Branch))
 	}
 	stillStaged(rep, res.Plan)
+}
+
+// renderNotices prints each notice as a warning.
+func renderNotices(rep *ui.Reporter, notices []string) {
+	for _, n := range notices {
+		rep.Warn("%s", n)
+	}
 }
 
 // stillStaged notes what an applied absorb left in the index: hunks it
@@ -143,10 +146,3 @@ func stillStaged(rep *ui.Reporter, p app.AbsorbPlan) {
 
 func hunkNoun(n int) string   { return pluralWord(n, "hunk", "hunks") }
 func commitNoun(n int) string { return pluralWord(n, "commit", "commits") }
-
-func pluralWord(n int, one, many string) string {
-	if n == 1 {
-		return one
-	}
-	return many
-}

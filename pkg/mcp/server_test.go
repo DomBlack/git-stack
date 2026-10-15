@@ -528,6 +528,41 @@ func TestSyncConflictKeepsTheResult(t *testing.T) {
 	}
 }
 
+// A conflict restacking the branches above an absorb is an error, but the
+// absorb itself happened and the result comes back with it.
+func TestAbsorbConflictAboveKeepsTheResult(t *testing.T) {
+	h := newHarness(t)
+	defer h.assertNoStdout()
+	// c changes a.txt too, which clashes with the edit absorbed into a.
+	gittest.Run(t, h.dir, "switch", "-q", "-c", "c")
+	gittest.Commit(t, h.dir, "a.txt", "c's version", "feat: c")
+	gittest.Run(t, h.dir, "switch", "-q", "b")
+	g := h.backend.Graph()
+	g.Stacks[0].Branches = append(g.Stacks[0].Branches, stack.Branch{Name: "c"})
+	gittest.WriteFile(t, h.dir, "a.txt", "A")
+	gittest.Run(t, h.dir, "add", "a.txt")
+
+	res, text := h.call("stack_absorb", nil, nil)
+	if !res.IsError {
+		t.Fatalf("want a tool error, got %+v", res.StructuredContent)
+	}
+	var te toolError
+	if err := json.Unmarshal([]byte(text), &te); err != nil || te.Code != stack.KindConflict.Code() {
+		t.Errorf("error = %q %v", text, err)
+	}
+	b, err := json.Marshal(res.StructuredContent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var ab app.AbsorbResult
+	if err := json.Unmarshal(b, &ab); err != nil {
+		t.Fatalf("structured result %s: %v", b, err)
+	}
+	if !ab.Applied || len(ab.Rewritten) != 2 || ab.Rewritten[0].Name != "a" || ab.Rewritten[1].Name != "b" {
+		t.Errorf("absorb = %+v", ab)
+	}
+}
+
 func TestRepoResolution(t *testing.T) {
 	h := newHarness(t)
 	defer h.assertNoStdout()
@@ -631,12 +666,16 @@ func TestAbsorb(t *testing.T) {
 		t.Error("dry run moved a")
 	}
 
+	oldB := gittest.Run(t, h.dir, "rev-parse", "b")
 	h.call("stack_absorb", nil, &res)
 	if !res.Applied || len(res.Rewritten) != 2 || res.Rewritten[0].Name != "a" || res.Rewritten[1].Name != "b" {
 		t.Fatalf("absorb = %+v", res)
 	}
 	if got := gittest.Run(t, h.dir, "show", "a:a.txt"); got != "A" {
 		t.Errorf("a:a.txt = %q", got)
+	}
+	if gittest.Run(t, h.dir, "rev-parse", "b") == oldB || res.Rewritten[1].From != oldB {
+		t.Error("b's tip did not move")
 	}
 	if _, err := gittest.RunErr(t, h.dir, "diff", "--cached", "--quiet"); err != nil {
 		t.Error("index should be clean")

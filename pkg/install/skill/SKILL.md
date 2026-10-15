@@ -36,13 +36,15 @@ the one calling.
   in the middle. To change something lower down, `stack_navigate` there, edit, then
   `stack_modify` (it restacks the rest).
 - On `code: "conflict"`: resolve the listed files, `git add` them, then call the same tool
-  again with `continue: true` (or `abort: true`) (after `stack_absorb`, call `stack_continue` or `stack_abort`).
+  again with `continue: true` (or `abort: true`); after `stack_absorb` that is `stack_continue`
+  or `stack_abort`.
 - Plain git is fine for reading (`git status`, `git diff`, `git log`) and for staging files.
 - Run `stack_view` before `stack_submit` so you know which branches get new PRs and need
   titles and bodies.
 
 ## CLI equivalents
 
-`git stack create -m "…"`, `git stack modify -a`, `git stack absorb`, `git stack restack`, `git stack up/down/top/bottom`,
-`git stack checkout`, `git stack submit --no-edit`, `git stack sync -f`. Aliases: `git c`, `git m`, `git ab`,
-`git rs`, `git u`, `git d`, `git t`, `git b`, `git co`, `git ss`.
+`git stack create -m "…"`, `git stack modify -a`, `git stack absorb`, `git stack restack`,
+`git stack up/down/top/bottom`, `git stack checkout`, `git stack submit --no-edit`,
+`git stack sync -f`. Aliases: `git c`, `git m`, `git ab`, `git rs`, `git u`, `git d`, `git t`,
+`git b`, `git co`, `git ss`.
