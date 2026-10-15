@@ -386,3 +386,108 @@ func TestReshapeFailedWriteKeepsIDAndQueueInStep(t *testing.T) {
 		})
 	}
 }
+
+// A continue that is refused for the same reason as the first run keeps
+// the state, so its steps are continue and abort, not the original command.
+func TestReshapeContinueRefusedAgainPointsAtContinueAndAbort(t *testing.T) {
+	var wt string
+	f := onlyMoveFixture(t, func(dir string) {
+		branchOff(t, dir, "main", "a", "a.txt", "a")
+		branchOff(t, dir, "a", "b", "b.txt", "b")
+		branchOff(t, dir, "b", "c", "c.txt", "c")
+		gittest.Run(t, dir, "switch", "-q", "a")
+		wt = filepath.Join(t.TempDir(), "wt")
+		gittest.Run(t, dir, "worktree", "add", "-q", wt, "b")
+	})
+	if err := os.WriteFile(filepath.Join(wt, "shared.txt"), []byte("dirty"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	if _, err := f.a.reshape(ctx, f.repo, "git stack move", "Moving", onlyMoveEdit()); !isKind(err, stack.KindInvalidArgs) {
+		t.Fatalf("first run = %v", err)
+	}
+	_, err := f.a.Restack(ctx, f.repo, RestackOptions{Continue: true})
+	se, ok := errors.AsType[*stack.Error](err)
+	if !ok || se.Kind != stack.KindInvalidArgs {
+		t.Fatalf("continue = %v", err)
+	}
+	steps := strings.Join(se.NextSteps, "\n")
+	if !strings.Contains(steps, "git stack continue") || !strings.Contains(steps, "git stack abort") || strings.Contains(steps, "git stack move") {
+		t.Errorf("steps = %q", se.NextSteps)
+	}
+	if st, _ := loadRestackState(f.repo); st == nil {
+		t.Error("state was dropped")
+	}
+}
+
+// A continue whose queued branches are all gone has nothing to restack, but
+// it is still the end of the operation: the state must not linger.
+func TestContinueWithNothingLeftClearsTheState(t *testing.T) {
+	f := newStopFixture(t, func(dir string) {
+		branchOff(t, dir, "main", "a", "a.txt", "a")
+		branchOff(t, dir, "a", "b", "b.txt", "b")
+		gittest.Run(t, dir, "switch", "-q", "a")
+	}, []string{"main", "a", "b"})
+	err := saveRestackState(f.repo, &restackState{
+		Command: "git stack move", OriginalBranch: "b", Trunk: "main",
+		Then: []restackSegment{{Parent: "main", Branches: []string{"ghost"}}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.a.Restack(context.Background(), f.repo, RestackOptions{Continue: true}); err != nil {
+		t.Fatal(err)
+	}
+	if st, _ := loadRestackState(f.repo); st != nil {
+		t.Errorf("state left: %+v", st)
+	}
+	if cur := gittest.Run(t, f.dir, "branch", "--show-current"); cur != "b" {
+		t.Errorf("current = %s, want the original branch", cur)
+	}
+}
+
+// The checked out branch is reset before the ref transaction; if that
+// transaction fails, abort must still put the branch back.
+func TestAbortPutsBackTheCheckedOutBranchAfterAFailedTransaction(t *testing.T) {
+	f := newStopFixture(t, func(dir string) {
+		branchOff(t, dir, "main", "a", "a.txt", "a")
+		branchOff(t, dir, "a", "b", "b.txt", "b")
+		branchOff(t, dir, "b", "c", "c.txt", "c")
+	}, []string{"main", "a", "b", "c"})
+	before := cloneGraph(f.be.Graph())
+	tips := map[string]string{}
+	for _, n := range []string{"a", "b", "c"} {
+		tips[n] = f.rev(t, n)
+	}
+	// A held lock on b's ref makes the transaction fail after c was reset.
+	lock := filepath.Join(f.dir, ".git", "refs", "heads", "b.lock")
+	if err := os.WriteFile(lock, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	_, err := f.a.reshape(ctx, f.repo, "git stack reorder", "Reordering", reorderEdit())
+	se, ok := errors.AsType[*stack.Error](err)
+	if !ok || !slices.Contains(se.NextSteps, "or git stack abort puts everything back") {
+		t.Fatalf("err = %v", err)
+	}
+	if st, _ := loadRestackState(f.repo); st == nil || !slices.ContainsFunc(st.Moved, func(m movedRef) bool { return m.Name == "c" }) {
+		t.Fatalf("state = %+v, want c recorded as moved", st)
+	}
+	if err := os.Remove(lock); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.a.Restack(ctx, f.repo, RestackOptions{Abort: true}); err != nil {
+		t.Fatal(err)
+	}
+	for n, tip := range tips {
+		if f.rev(t, n) != tip {
+			t.Errorf("%s not put back", n)
+		}
+	}
+	if got := f.be.Graph().Stacks[0]; !slices.Equal(got.Names(), before.Stacks[0].Names()) {
+		t.Errorf("stack = %v", got.Names())
+	}
+	if st, _ := loadRestackState(f.repo); st != nil {
+		t.Errorf("state left: %+v", st)
+	}
+}
