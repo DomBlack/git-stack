@@ -213,6 +213,76 @@ func (s *Server) absorb(ctx context.Context, req *mcp.CallToolRequest, in absorb
 	return nil, res, nil
 }
 
+// --- stack_reorder / stack_move / stack_init ----------------------------
+
+type reorderInput struct {
+	repoArg
+	Order []string `json:"order,omitempty" jsonschema:"required: the new order of the current stack's branches, bottom to top; every branch once"`
+}
+
+func (s *Server) reorder(ctx context.Context, req *mcp.CallToolRequest, in reorderInput) (*mcp.CallToolResult, app.ReorderResult, error) {
+	if len(in.Order) == 0 {
+		return nil, app.ReorderResult{}, wrapErr(stack.New(stack.KindInvalidArgs, "order is required: the stack's branches, bottom to top"))
+	}
+	repo, a, err := s.appFor(ctx, req, in.RepoPath)
+	if err != nil {
+		return nil, app.ReorderResult{}, wrapErr(err)
+	}
+	res, err := a.Reorder(ctx, repo, app.ReorderOptions{Order: in.Order})
+	if err != nil && res.Changed && errors.Is(err, &stack.Error{Kind: stack.KindConflict}) {
+		// The new order is recorded and the restack hit a conflict: keep
+		// both, as stack_absorb does.
+		return &mcp.CallToolResult{IsError: true, Content: []mcp.Content{&mcp.TextContent{Text: wrapErr(err).Error()}}}, res, nil
+	}
+	if err != nil {
+		return nil, app.ReorderResult{}, wrapErr(err)
+	}
+	return nil, res, nil
+}
+
+type moveInput struct {
+	repoArg
+	Source string `json:"source,omitempty" jsonschema:"the branch to move (default: the current branch)"`
+	Onto   string `json:"onto,omitempty" jsonschema:"required: where to put it: a trunk (starts a new stack) or the top branch of another stack"`
+	Only   bool   `json:"only,omitempty" jsonschema:"move just this branch; the branches above it stay on its old parent"`
+}
+
+func (s *Server) move(ctx context.Context, req *mcp.CallToolRequest, in moveInput) (*mcp.CallToolResult, app.MoveResult, error) {
+	if in.Onto == "" {
+		return nil, app.MoveResult{}, wrapErr(stack.New(stack.KindInvalidArgs, "onto is required: a trunk or the top branch of another stack"))
+	}
+	repo, a, err := s.appFor(ctx, req, in.RepoPath)
+	if err != nil {
+		return nil, app.MoveResult{}, wrapErr(err)
+	}
+	res, err := a.Move(ctx, repo, app.MoveOptions{Source: in.Source, Onto: in.Onto, Only: in.Only})
+	if err != nil && len(res.Moved) > 0 && errors.Is(err, &stack.Error{Kind: stack.KindConflict}) {
+		return &mcp.CallToolResult{IsError: true, Content: []mcp.Content{&mcp.TextContent{Text: wrapErr(err).Error()}}}, res, nil
+	}
+	if err != nil {
+		return nil, app.MoveResult{}, wrapErr(err)
+	}
+	return nil, res, nil
+}
+
+type initInput struct {
+	repoArg
+	Branches []string `json:"branches,omitempty" jsonschema:"existing branches to track, bottom to top (default: the current branch)"`
+	Base     string   `json:"base,omitempty" jsonschema:"the trunk (default: the repository's trunk)"`
+}
+
+func (s *Server) initStack(ctx context.Context, req *mcp.CallToolRequest, in initInput) (*mcp.CallToolResult, app.InitResult, error) {
+	repo, a, err := s.appFor(ctx, req, in.RepoPath)
+	if err != nil {
+		return nil, app.InitResult{}, wrapErr(err)
+	}
+	res, err := a.Init(ctx, repo, app.InitOptions{Branches: in.Branches, Base: in.Base})
+	if err != nil {
+		return nil, app.InitResult{}, wrapErr(err)
+	}
+	return nil, res, nil
+}
+
 // --- stack_continue / stack_abort ---------------------------------------
 
 type continueInput struct {
@@ -482,6 +552,24 @@ func (s *Server) registerTools() {
 		Description: "Fold each staged hunk into the commit of the current stack that last changed those lines (the current branch's commits and the branches below it, never trunk or a merged branch), rewrite those commits and everything above them keeping messages and authors, then restack the branches above the current one. The result's plan says where every hunk went; hunks no commit touched, new files and deleted files stay staged. Pass dry_run to see the plan without changing anything. Refuses with invalid_args when a branch below needs restacking first. On a conflict in the restack afterwards the commits are already rewritten and the result comes back with code conflict; resolve, git add, then stack_continue.",
 		Annotations: &mcp.ToolAnnotations{DestructiveHint: boolp(true), OpenWorldHint: boolp(false)},
 	}, s.absorb)
+	mcp.AddTool(s.mcp, &mcp.Tool{
+		Name:        "stack_reorder",
+		Title:       "Reorder the current stack's branches",
+		Description: "Change the order of the current stack's branches (order lists them bottom to top, every branch once) and restack them; nothing is checked out. A conflict comes back as code conflict with the result alongside; finish with stack_continue or undo with stack_abort, which also puts the old order back. The next stack_submit creates the stack on GitHub again in the new order.",
+		Annotations: &mcp.ToolAnnotations{DestructiveHint: boolp(true), OpenWorldHint: boolp(false)},
+	}, s.reorder)
+	mcp.AddTool(s.mcp, &mcp.Tool{
+		Name:        "stack_move",
+		Title:       "Move a branch onto another stack",
+		Description: "Move a branch (and, unless only is true, everything above it) onto the top of another stack, or onto a trunk as a new stack, then restack. A branch can't be moved within its own stack (use stack_reorder) or under another stack's branch. Conflicts and undo work as for stack_reorder.",
+		Annotations: &mcp.ToolAnnotations{DestructiveHint: boolp(true), OpenWorldHint: boolp(false)},
+	}, s.move)
+	mcp.AddTool(s.mcp, &mcp.Tool{
+		Name:        "stack_init",
+		Title:       "Track existing branches as a stack",
+		Description: "Track existing branches as a new stack on a trunk, bottom to top; nothing is committed, rebased or checked out. The result's needsRestack lists branches that aren't on their parent; stack_restack fixes them.",
+		Annotations: &mcp.ToolAnnotations{DestructiveHint: boolp(true), OpenWorldHint: boolp(false)},
+	}, s.initStack)
 	mcp.AddTool(s.mcp, &mcp.Tool{
 		Name:        "stack_restack",
 		Title:       "Restack",
