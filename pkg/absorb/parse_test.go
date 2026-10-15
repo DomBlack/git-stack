@@ -208,3 +208,20 @@ func TestParseEmptyAndBad(t *testing.T) {
 		t.Error("bad hunk line should fail")
 	}
 }
+
+// Git follows a file name on the --- and +++ lines with a tab when the name
+// contains a space, quoted or not. The tab is not part of the path.
+func TestParseTrailingTabOnSpacedPaths(t *testing.T) {
+	diff := "diff --git a/has space.txt b/has space.txt\n--- a/has space.txt\t\n+++ b/has space.txt\t\n@@ -1 +1 @@\n-a\n+b\n" +
+		"diff --git \"a/sp ace\\t.txt\" \"b/sp ace\\t.txt\"\n--- \"a/sp ace\\t.txt\"\t\n+++ \"b/sp ace\\t.txt\"\t\n@@ -1 +1 @@\n-a\n+b\n"
+	files, err := Parse(diff)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if files[0].OldPath != "has space.txt" || files[0].NewPath != "has space.txt" {
+		t.Errorf("unquoted = %q %q", files[0].OldPath, files[0].NewPath)
+	}
+	if files[1].OldPath != "sp ace\t.txt" || files[1].NewPath != "sp ace\t.txt" {
+		t.Errorf("quoted = %q %q", files[1].OldPath, files[1].NewPath)
+	}
+}

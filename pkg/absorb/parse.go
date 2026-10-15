@@ -169,6 +169,8 @@ func splitHeader(rest string) (old, nu string, ok bool) {
 // sidePath reads the path off a --- or +++ line: "" for /dev/null,
 // otherwise unquoted and without its a/ or b/ prefix.
 func sidePath(s, prefix string) string {
+	// git follows a name containing a space with a tab on these lines.
+	s = strings.TrimSuffix(s, "\t")
 	if s == "/dev/null" {
 		return ""
 	}
