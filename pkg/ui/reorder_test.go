@@ -52,7 +52,7 @@ func TestReorderStartsOnCurrentTopFirst(t *testing.T) {
 		return -1
 	}
 	c, b, a, trunk := line("c"), line("b"), line("a"), line("main")
-	if c < 0 || b < 0 || a < 0 || !(c < b && b < a && a < trunk) || !strings.Contains(out, "#12") || !strings.Contains(out, "❯ b") {
+	if c < 0 || b < 0 || a < 0 || c >= b || b >= a || a >= trunk || !strings.Contains(out, "#12") || !strings.Contains(out, "❯ b") {
 		t.Errorf("screen:\n%s", out)
 	}
 }
