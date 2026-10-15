@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/DomBlack/git-stack/pkg/exec"
+	"github.com/DomBlack/git-stack/pkg/exec/exectest"
 	"github.com/DomBlack/git-stack/pkg/git"
 	"github.com/DomBlack/git-stack/pkg/stack"
 )
@@ -98,6 +99,26 @@ func TestUnstack(t *testing.T) {
 	gone.On("gh", "stack", "unstack").Fail(2, "stack not found")
 	if err := New(gone, nil).Unstack(ctx, repo, 7); err != nil {
 		t.Errorf("a stack that is already gone is not an error: %v", err)
+	}
+
+	// Exit 2 for any other reason (not a repository, not in a stack) is a
+	// real failure.
+	other := installed()
+	other.On("gh", "stack", "unstack").Fail(2, "not a git repository")
+	if err := New(other, nil).Unstack(ctx, repo, 7); !errors.Is(err, &stack.Error{Kind: stack.KindNotInStack}) {
+		t.Errorf("exit 2 without not found must be returned: %v", err)
+	}
+	named := installed()
+	named.On("gh", "stack", "unstack").Fail(2, "stack #7 not found on GitHub")
+	if err := New(named, nil).Unstack(ctx, repo, 7); err != nil {
+		t.Errorf("a stack GitHub does not have is not an error: %v", err)
+	}
+
+	// A missing gh stack extension is reported before anything runs.
+	missing := exectest.New()
+	missing.On("gh", "extension", "list").Reply("")
+	if err := New(missing, nil).Unstack(ctx, repo, 7); !errors.Is(err, &stack.Error{Kind: stack.KindNotInstalled}) {
+		t.Errorf("not installed: %v", err)
 	}
 
 	failing := installed()

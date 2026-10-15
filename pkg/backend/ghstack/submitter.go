@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"strconv"
+	"strings"
 
 	"github.com/DomBlack/git-stack/pkg/exec"
 	"github.com/DomBlack/git-stack/pkg/git"
@@ -55,8 +56,14 @@ func (b *Backend) Link(ctx context.Context, repo git.Repo, o stack.LinkOptions) 
 // Unstack runs `gh stack unstack <number>`. With the number untracked
 // locally gh stack only talks to GitHub.
 func (b *Backend) Unstack(ctx context.Context, repo git.Repo, number int) error {
+	if err := b.Preflight(ctx); err != nil {
+		return err
+	}
 	err := b.gh(ctx, repo, "unstack", strconv.Itoa(number))
-	if se, ok := errors.AsType[*stack.Error](err); ok && se.Kind == stack.KindNotInStack {
+	// Exit 2 also covers "not a repository" and "not in a stack", so only a
+	// message saying the stack was not found means it is already gone.
+	if se, ok := errors.AsType[*stack.Error](err); ok && se.Kind == stack.KindNotInStack &&
+		(strings.Contains(se.Detail, "not found") || strings.Contains(se.Msg, "not found")) {
 		return nil // already gone on GitHub
 	}
 	return err

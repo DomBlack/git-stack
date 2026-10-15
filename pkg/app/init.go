@@ -119,6 +119,9 @@ func (a *App) initTrunk(ctx context.Context, repo git.Repo, graph *stack.Graph, 
 		}
 		base = def
 	}
+	if _, _, ok := graph.StackOf(base); ok && !graph.IsTrunk(base) {
+		return "", stack.Newf(stack.KindInvalidArgs, "%s is a stacked branch, not a trunk", base)
+	}
 	exists, err := a.d.Git.BranchExists(ctx, repo, base)
 	if err != nil {
 		return "", err

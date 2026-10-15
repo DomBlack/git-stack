@@ -84,6 +84,8 @@ func TestInitTrunkAndRefusals(t *testing.T) {
 		{app.InitOptions{Branches: []string{"main"}}, stack.KindInvalidArgs, "trunk"},
 		{app.InitOptions{Branches: []string{"p", "p"}}, stack.KindInvalidArgs, "twice"},
 		{app.InitOptions{Branches: []string{"p"}, Base: "nope"}, stack.KindInvalidArgs, "nope"},
+		{app.InitOptions{Branches: []string{"p"}, Base: "b"}, stack.KindInvalidArgs, "b is a stacked branch, not a trunk"},
+		{app.InitOptions{Branches: []string{"p", "dev"}, Base: "dev"}, stack.KindInvalidArgs, "dev is a trunk and can't be in a stack"},
 	} {
 		_, err := f.app.Init(ctx, f.repo, tc.o)
 		if !errors.Is(err, &stack.Error{Kind: tc.kind}) || !strings.Contains(err.Error(), tc.want) {
@@ -108,6 +110,26 @@ func TestInitTrunkAndRefusals(t *testing.T) {
 	res, err = f.app.Init(ctx, f.repo, app.InitOptions{})
 	if err != nil || res.Trunk != "main" {
 		t.Errorf("two trunks: %+v %v", res, err)
+	}
+}
+
+func TestInitRefusesADetachedHead(t *testing.T) {
+	f := newRestackFixture(t)
+	gittest.Run(t, f.dir, "switch", "-q", "--detach", "main")
+	_, err := f.app.Init(context.Background(), f.repo, app.InitOptions{})
+	if !errors.Is(err, &stack.Error{Kind: stack.KindInvalidArgs}) || !strings.Contains(err.Error(), "detached") {
+		t.Errorf("detached: %v", err)
+	}
+}
+
+// A trunk of an existing stack is a fine --base.
+func TestInitAcceptsAnExistingTrunkAsBase(t *testing.T) {
+	f := newRestackFixture(t)
+	gittest.Run(t, f.dir, "switch", "-q", "-c", "p", "main")
+	gittest.Commit(t, f.dir, "p.txt", "p", "p")
+	res, err := f.app.Init(context.Background(), f.repo, app.InitOptions{Branches: []string{"p"}, Base: "main"})
+	if err != nil || res.Trunk != "main" {
+		t.Errorf("base main: %+v %v", res, err)
 	}
 }
 

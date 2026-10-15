@@ -3,6 +3,8 @@ package app_test
 import (
 	"context"
 	"errors"
+	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -67,6 +69,35 @@ func TestMoveOntoAnotherStacksTop(t *testing.T) {
 	}
 	if cur := gittest.Run(t, f.dir, "branch", "--show-current"); cur != "c" {
 		t.Errorf("current = %s", cur)
+	}
+}
+
+// Moving a stack's bottom branch without --only takes the whole stack, so
+// the source stack empties and goes away.
+func TestMoveWholeStackOntoAnotherStacksTop(t *testing.T) {
+	f := newRestackFixture(t) // main -> a -> b -> c, HEAD on c
+	addStack(t, f, false)
+	f.fb.graph.Stacks[0].ID, f.fb.graph.Stacks[0].Number = "S1", 1
+	res, err := f.app.Move(context.Background(), f.repo, app.MoveOptions{Source: "a", Onto: "x"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(res.Moved, []string{"a", "b", "c"}) || len(res.LeftBehind) != 0 {
+		t.Errorf("result = %+v", res)
+	}
+	want := [][]string{{"x", "a", "b", "c"}}
+	if got := stackNames(f); !slices.EqualFunc(got, want, slices.Equal) {
+		t.Errorf("stacks = %v", got)
+	}
+	if f.base("a") != f.rev(t, "x") || f.base("b") != f.rev(t, "a") || f.base("c") != f.rev(t, "b") {
+		t.Errorf("bases a=%s b=%s c=%s", f.base("a"), f.base("b"), f.base("c"))
+	}
+	if !f.has(t, "a", "x.txt") || !f.has(t, "c", "x.txt") {
+		t.Error("a, b and c should sit on x")
+	}
+	data, err := os.ReadFile(filepath.Join(f.repo.CommonDir, "git-stack", "remote-stacks.json"))
+	if err != nil || !strings.Contains(string(data), `"id":"S1"`) || !strings.Contains(string(data), `"number":1`) {
+		t.Errorf("the emptied stack's remote id should be queued: %q %v", data, err)
 	}
 }
 
