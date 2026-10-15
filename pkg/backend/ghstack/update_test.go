@@ -315,3 +315,117 @@ func TestUpdateReorderKeepsBranchRecords(t *testing.T) {
 		t.Errorf("loaded %+v", g.Stacks[0])
 	}
 }
+
+// A branch moved to another stack takes its pull request record and the
+// members we don't model with it.
+func TestUpdateMoveKeepsBranchRecords(t *testing.T) {
+	b, repo, mainPath, _ := updateFixture(t)
+	ctx := context.Background()
+	err := b.Update(ctx, repo, func(g *stack.Graph) error {
+		src, dst := &g.Stacks[0], &g.Stacks[1]
+		dst.Branches = append(dst.Branches, src.Branches[0])
+		src.Branches = src.Branches[1:]
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, _ := os.ReadFile(mainPath)
+	f, err := parseFile(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(f.Stacks) != 2 || len(f.Stacks[1].Branches) != 2 || f.Stacks[1].Branches[1].Branch != "a" {
+		t.Fatalf("file = %s", data)
+	}
+	if pr := f.Stacks[1].Branches[1].PullRequest; pr == nil || pr.Number != 1 || !strings.Contains(string(data), `"extra": "yes"`) {
+		t.Errorf("a lost its records on the way:\n%s", data)
+	}
+}
+
+// A stack appended with a remote id (an abort putting a stack back) keeps
+// it, and its branches keep their records.
+func TestUpdateAppendWritesRemoteIDAndKeepsRecords(t *testing.T) {
+	b, repo, mainPath, _ := updateFixture(t)
+	ctx := context.Background()
+	err := b.Update(ctx, repo, func(g *stack.Graph) error {
+		a := g.Stacks[0].Branches[0]
+		g.Stacks[0].Branches = g.Stacks[0].Branches[1:]
+		g.Stacks = append(g.Stacks, stack.Stack{Trunk: "main", ID: "S5", Number: 5, Branches: []stack.Branch{a}})
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, _ := os.ReadFile(mainPath)
+	f, err := parseFile(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	last := f.Stacks[len(f.Stacks)-1]
+	if last.ID != "S5" || last.Number != 5 || last.Branches[0].Branch != "a" || last.Branches[0].PullRequest == nil || !strings.Contains(string(data), `"extra": "yes"`) {
+		t.Errorf("appended stack = %+v in\n%s", last, data)
+	}
+}
+
+// A stack whose trunk changed gets its trunk branch rewritten; the trunk's
+// recorded head stays.
+func TestUpdateRewritesChangedTrunk(t *testing.T) {
+	b, repo, mainPath, _ := updateFixture(t)
+	ctx := context.Background()
+	err := b.Update(ctx, repo, func(g *stack.Graph) error {
+		g.Stacks[0].Trunk = "release"
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, _ := os.ReadFile(mainPath)
+	if s := string(data); !strings.Contains(s, `"branch": "release"`) || !strings.Contains(s, `"head": "t1"`) {
+		t.Errorf("trunk not rewritten:\n%s", s)
+	}
+	g, _ := b.Load(ctx, repo)
+	if g.Stacks[0].Trunk != "release" {
+		t.Errorf("loaded trunk %q", g.Stacks[0].Trunk)
+	}
+}
+
+// A branch moving from the worktree's file into a stack in the main file
+// keeps its members, and the worktree file loses it.
+func TestUpdateMoveAcrossFilesKeepsBranchRecords(t *testing.T) {
+	b, repo, mainPath, wtPath := updateFixture(t)
+	wt := `{"schemaVersion":1,"stacks":[{"trunk":{"branch":"main"},"branches":[{"branch":"w","head":"hw","pullRequest":{"number":4},"note":"kept"},{"branch":"w2","head":"hw2"}]}]}`
+	if err := os.WriteFile(wtPath, []byte(wt), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	err := b.Update(ctx, repo, func(g *stack.Graph) error {
+		var src, dst *stack.Stack
+		for i := range g.Stacks {
+			switch g.Stacks[i].Bottom() {
+			case "w":
+				src = &g.Stacks[i]
+			case "a":
+				dst = &g.Stacks[i]
+			}
+		}
+		dst.Branches = append(dst.Branches, src.Branches[0])
+		src.Branches = src.Branches[1:]
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, _ := os.ReadFile(mainPath)
+	f, err := parseFile(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	moved := f.Stacks[0].Branches[len(f.Stacks[0].Branches)-1]
+	if moved.Branch != "w" || moved.PullRequest == nil || moved.PullRequest.Number != 4 || !strings.Contains(string(data), `"note": "kept"`) {
+		t.Errorf("w lost its records on the way:\n%s", data)
+	}
+	if wtData, _ := os.ReadFile(wtPath); strings.Contains(string(wtData), `"branch": "w"`) || !strings.Contains(string(wtData), `"w2"`) {
+		t.Errorf("worktree file should only hold w2 now:\n%s", wtData)
+	}
+}

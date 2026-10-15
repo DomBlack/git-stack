@@ -80,14 +80,12 @@ func (a *App) restoreReshape(ctx context.Context, repo git.Repo, snap *reshapeSn
 		// The slots involved, in index order: every stack holding a branch
 		// the snapshot names, and every stack the reshape created.
 		named := map[string]bool{}
-		where := map[string]int{}
 		var involved []int
 		for _, ss := range snap.Stacks {
 			for _, sb := range ss.Branches {
 				named[sb.Name] = true
 				if s, _, ok := g.StackOf(sb.Name); ok {
-					where[sb.Name] = stackIndex(g, s)
-					involved = append(involved, where[sb.Name])
+					involved = append(involved, stackIndex(g, s))
 				}
 			}
 		}
@@ -103,7 +101,9 @@ func (a *App) restoreReshape(ctx context.Context, repo git.Repo, snap *reshapeSn
 		involved = slices.Compact(involved)
 		pool := map[string]stack.Branch{}
 		leftovers := map[int][]stack.Branch{}
+		bottoms := map[int]string{}
 		for _, i := range involved {
+			bottoms[i] = g.Stacks[i].Bottom()
 			for _, b := range g.Stacks[i].Branches {
 				switch {
 				case named[b.Name]:
@@ -114,37 +114,50 @@ func (a *App) restoreReshape(ctx context.Context, repo git.Repo, snap *reshapeSn
 			}
 			g.Stacks[i].Branches = nil
 		}
-		// A stack goes home to the slot that holds its bottom branch on the
-		// same trunk; failing that, to the first free slot on that trunk;
-		// failing that, to a new stack. A created slot is never a home.
-		free := func(i int, trunk string) bool { return !created[i] && g.Stacks[i].Trunk == trunk }
+		// Each stack goes home to the first free slot, in index order, that
+		// still carries its remote id; else that has its bottom branch at
+		// the bottom on the same trunk; else that is on the same trunk;
+		// else to a new stack. Exact matches are settled for every stack
+		// before any falls back, so a moved bottom branch can't pull its
+		// stack into the record of the stack it was moved onto. A created
+		// slot is never a home.
 		homes := make([]int, len(snap.Stacks))
 		taken := map[int]bool{}
-		for k, ss := range snap.Stacks {
-			homes[k] = -1
-			if len(ss.Branches) == 0 {
-				continue
+		claim := func(k int, match func(i int) bool) {
+			for _, i := range involved {
+				if !taken[i] && !created[i] && match(i) {
+					homes[k], taken[i] = i, true
+					return
+				}
 			}
-			if i, ok := where[ss.Branches[0].Name]; ok && !taken[i] && free(i, ss.Trunk) {
-				homes[k], taken[i] = i, true
+		}
+		for k := range homes {
+			homes[k] = -1
+		}
+		for k, ss := range snap.Stacks {
+			if ss.ID != "" && len(ss.Branches) > 0 {
+				claim(k, func(i int) bool { return g.Stacks[i].ID == ss.ID })
+			}
+		}
+		for k, ss := range snap.Stacks {
+			if homes[k] < 0 && len(ss.Branches) > 0 {
+				claim(k, func(i int) bool { return bottoms[i] == ss.Branches[0].Name && g.Stacks[i].Trunk == ss.Trunk })
 			}
 		}
 		for k, ss := range snap.Stacks {
 			if homes[k] >= 0 {
 				continue
 			}
-			for _, i := range involved {
-				if !taken[i] && free(i, ss.Trunk) {
-					homes[k], taken[i] = i, true
-					break
-				}
-			}
-			if homes[k] < 0 {
+			claim(k, func(i int) bool { return g.Stacks[i].Trunk == ss.Trunk })
+			if homes[k] < 0 && slices.ContainsFunc(ss.Branches, func(sb snapshotBranch) bool { _, ok := pool[sb.Name]; return ok }) {
 				g.Stacks = append(g.Stacks, stack.Stack{})
 				homes[k] = len(g.Stacks) - 1
 			}
 		}
 		for k, ss := range snap.Stacks {
+			if homes[k] < 0 {
+				continue // every branch of it is gone; nothing to put back
+			}
 			s := &g.Stacks[homes[k]]
 			s.Trunk, s.Worktree, s.ID, s.Number = ss.Trunk, ss.Worktree, ss.ID, ss.Number
 			if ss.ID != "" {
