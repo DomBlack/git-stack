@@ -327,6 +327,10 @@ func (a *App) absorbApply(ctx context.Context, repo git.Repo, run *absorbRun, re
 			updates[i] = git.RefUpdate{Ref: "refs/heads/" + m.name, New: newSHA[m.from], Old: m.from}
 		}
 		if err := a.d.Git.UpdateRefs(ctx, repo, updates); err != nil {
+			if git.LockPath(err) != "" {
+				return stack.New(stack.KindLocked, "the branches could not be moved: "+err.Error()).
+					WithSteps("run " + absorbCommand + " again").WithCause(err)
+			}
 			return stack.New(stack.KindInvalidArgs, "a branch moved while absorbing, so nothing was changed").
 				WithSteps("run " + absorbCommand + " again").WithCause(err)
 		}
@@ -379,17 +383,23 @@ func (a *App) absorbApply(ctx context.Context, repo git.Repo, run *absorbRun, re
 		fmt.Sprintf("Restacking %d %s above %s", k, pluralise(k, "branch", "branches"), res.Branch))
 	res.Notices = append(res.Notices, rr.Notices...)
 	res.Restacked = movedNames(rr)
-	if se, ok := errors.AsType[*stack.Error](err); ok && se.Kind != stack.KindConflict {
+	left := make([]string, 0, len(children))
+	for _, name := range children {
+		if !slices.Contains(res.Restacked, name) {
+			left = append(left, name)
+		}
+	}
+	if se, ok := errors.AsType[*stack.Error](err); ok && se.Kind != stack.KindConflict && len(left) > 0 {
 		// The absorb is done; say what is left, since re-running absorb
 		// would not restack anything.
-		isAre := pluralise(k, "was", "were")
+		isAre := pluralise(len(left), "was", "were")
 		steps := make([]string, len(se.NextSteps))
 		for i, step := range se.NextSteps {
 			steps[i] = strings.ReplaceAll(step, "then try again", "then "+restackCommand)
 		}
 		err = &stack.Error{
 			Kind:      se.Kind,
-			Msg:       fmt.Sprintf("absorbed, but %s above %s %s not restacked: %s", joinNames(children), res.Branch, isAre, se.Msg),
+			Msg:       fmt.Sprintf("absorbed, but %s above %s %s not restacked: %s", joinNames(left), res.Branch, isAre, se.Msg),
 			NextSteps: steps,
 			Files:     se.Files,
 			Branch:    se.Branch,
