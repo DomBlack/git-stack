@@ -157,19 +157,26 @@ func (b *Backend) Load(_ context.Context, repo git.Repo) (*stack.Graph, error) {
 // stack's ID and Number, which removes them from the record. It must not
 // remove or reorder existing stacks; a stack left with no branches is removed.
 func (b *Backend) Update(ctx context.Context, repo git.Repo, fn func(*stack.Graph) error) error {
-	srcs := sources(repo)
-	slices.SortFunc(srcs, func(a, b source) int { return strings.Compare(a.gitDir, b.gitDir) })
+	var dirs []string
+	for _, src := range sources(repo) {
+		if _, err := os.Stat(filepath.Join(src.gitDir, FileName)); err == nil {
+			dirs = append(dirs, src.gitDir)
+		}
+	}
+	// The common dir is always locked, even with no file yet: Update may
+	// create the first stack's file there and two writers must not race it.
+	if !slices.Contains(dirs, repo.CommonDir) {
+		dirs = append(dirs, repo.CommonDir)
+	}
+	slices.Sort(dirs)
 	var unlocks []func()
 	defer func() {
 		for _, u := range unlocks {
 			u()
 		}
 	}()
-	for _, src := range srcs {
-		if _, err := os.Stat(filepath.Join(src.gitDir, FileName)); err != nil {
-			continue
-		}
-		unlock, err := lock(ctx, filepath.Join(src.gitDir, LockName), lockWait)
+	for _, dir := range dirs {
+		unlock, err := lock(ctx, filepath.Join(dir, LockName), lockWait)
 		if err != nil {
 			return err
 		}
