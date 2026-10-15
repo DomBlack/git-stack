@@ -7,6 +7,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"slices"
 
 	"github.com/DomBlack/git-stack/pkg/git"
 )
@@ -26,6 +27,8 @@ type restackState struct {
 	// Conflict is the branch whose git rebase is in progress, Onto its
 	// parent, NewBase the parent tip it is being rebased onto, ConflictTip
 	// and ConflictOldBase its tip and recorded base before the rebase.
+	// Conflict is empty when a reorder or move stopped for another reason
+	// after some refs moved; continue then starts on Then.
 	Conflict        string `json:"conflict"`
 	Onto            string `json:"onto"`
 	NewBase         string `json:"new_base"`
@@ -42,6 +45,15 @@ type restackState struct {
 	// Reshape is the metadata as it was before the reorder or move that
 	// started this run, for abort to put back.
 	Reshape *reshapeSnapshot `json:"reshape,omitempty"`
+}
+
+// branches are the branches the state still has to restack, the
+// conflicting one first.
+func (s *restackState) branches() []string {
+	if s.Conflict == "" {
+		return slices.Clone(s.Remaining)
+	}
+	return append([]string{s.Conflict}, s.Remaining...)
 }
 
 // restackSegment is a run of branches to restack onto a parent, bottom

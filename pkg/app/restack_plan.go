@@ -58,6 +58,13 @@ type planInput struct {
 	// branch the caller moves itself (with reset --keep) rather than
 	// skipping it when it has local changes.
 	currentWorktree string
+	// strict refuses instead of skipping a branch that can't be moved
+	// (dirty elsewhere, or untracked files in the way). A reorder or move
+	// must move every branch: one left where it is still carries commits
+	// that belong elsewhere now, and the branch above it would lose its
+	// own. command names the CLI command for the next step.
+	strict  bool
+	command string
 }
 
 // plannedMove is one branch's rebase, computed but not applied.
@@ -99,6 +106,11 @@ func (a *App) planMoves(ctx context.Context, in planInput) restackPlan {
 		}
 		tip := lb.Head
 		if lb.Worktree != "" && lb.Worktree != in.currentWorktree && in.dirty.isDirty(ctx, a.d.Git, in.repo, lb.Worktree) {
+			if in.strict {
+				p.err = stack.Newf(stack.KindInvalidArgs, "%s is checked out in %s with uncommitted changes, so it can't be moved", b.Name, shortPath(lb.Worktree)).
+					WithSteps("commit or stash them there, then run " + in.command + " again")
+				return p
+			}
 			p.notices = append(p.notices, fmt.Sprintf("%s is checked out in %s with uncommitted changes, so it was not restacked; commit or stash them and try again",
 				b.Name, shortPath(lb.Worktree)))
 			parentName, parent, oldParent = b.Name, tip, tip
@@ -144,6 +156,11 @@ func (a *App) planMoves(ctx context.Context, in planInput) restackPlan {
 			files, err := a.untrackedInTheWay(ctx, in.repo, lb.Worktree, tip, r.Tip)
 			if err != nil {
 				p.err = fmt.Errorf("%s: %w", b.Name, err)
+				return p
+			}
+			if len(files) > 0 && in.strict {
+				p.err = stack.Newf(stack.KindInvalidArgs, "%s is checked out in %s and moving it would overwrite untracked %s, so it can't be moved", b.Name, shortPath(lb.Worktree), joinNames(files)).
+					WithSteps("move them aside there, then run " + in.command + " again")
 				return p
 			}
 			if len(files) > 0 {

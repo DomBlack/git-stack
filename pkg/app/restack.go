@@ -143,6 +143,7 @@ func (a *App) restackBranches(ctx context.Context, run *restackRun, branches []s
 			repo: run.repo, stackName: run.stackName, branches: branches,
 			parentName: parentName, parentTip: parentTip.Head,
 			local: local, dirty: newDirtyCache(), currentWorktree: run.repo.TopLevel,
+			strict: run.reshape != nil, command: run.command,
 		})
 		if p.err != nil {
 			return p.err
@@ -186,6 +187,12 @@ func (a *App) restackBranches(ctx context.Context, run *restackRun, branches []s
 // worktree, or this working tree has changes git rebase would reject.
 func (a *App) checkConflictStart(ctx context.Context, run *restackRun, p *restackPlan, local map[string]git.Branch) error {
 	c := p.conflict
+	if wt := local[c.Branch].Worktree; wt != "" && wt != run.repo.TopLevel && run.reshape != nil {
+		// A reorder or move can't hand the conflict to the other worktree:
+		// a restack there would not know about the reshape.
+		return stack.Newf(stack.KindInvalidArgs, "%s conflicts when rebased onto %s, and it is checked out in %s, so the conflict can't be resolved here", c.Branch, c.Onto, shortPath(wt)).
+			WithSteps("check out another branch there, then run " + run.command + " again")
+	}
 	if wt := local[c.Branch].Worktree; wt != "" && wt != run.repo.TopLevel {
 		e := conflictError(c.Branch, c.Onto, c.Files)
 		e.Msg += ", and it is checked out in " + shortPath(wt)
@@ -423,6 +430,10 @@ func (a *App) noRebaseActive(ctx context.Context, repo git.Repo) error {
 	if err != nil {
 		return err
 	}
+	if st != nil && st.Conflict == "" {
+		return stack.Newf(stack.KindRebaseActive, "a %s was interrupted before it finished", st.Command).
+			WithSteps("fix what stopped it, then git stack continue", "or give up with git stack abort")
+	}
 	if st != nil {
 		return stack.Newf(stack.KindRebaseActive, "a restack started by %s is waiting on conflicts in %s", st.Command, st.Conflict).
 			WithSteps("resolve them, git add the files, then git stack continue", "or give up with git stack abort")
@@ -468,12 +479,14 @@ func (a *App) restackContinue(ctx context.Context, repo git.Repo, stageAll bool)
 	if st == nil {
 		return RestackResult{}, a.nothingToResume(ctx, repo, "continue")
 	}
-	res := RestackResult{Branches: append([]string{st.Conflict}, st.Remaining...)}
+	res := RestackResult{Branches: st.branches()}
 	active, err := a.d.Git.RebaseInProgress(ctx, repo)
 	if err != nil {
 		return res, err
 	}
 	if active {
+		// With no conflict saved, any rebase in progress is someone else's
+		// and this refuses it.
 		if err := a.checkRestackRebase(ctx, repo, st); err != nil {
 			return res, err
 		}
@@ -491,7 +504,7 @@ func (a *App) restackContinue(ctx context.Context, repo git.Repo, stageAll bool)
 			return res, conflictError(st.Conflict, st.Onto, files)
 		}
 	}
-	if !a.isAncestor(ctx, repo, st.NewBase, st.Conflict) {
+	if st.Conflict != "" && !a.isAncestor(ctx, repo, st.NewBase, st.Conflict) {
 		// Finished by hand would have put the new base under the branch;
 		// this rebase was abandoned instead.
 		return res, stack.Newf(stack.KindInvalidArgs, "the rebase of %s was abandoned outside git-stack", st.Conflict).
@@ -505,6 +518,11 @@ func (a *App) restackContinue(ctx context.Context, repo git.Repo, stageAll bool)
 		}
 	}
 	err = a.progress(ctx, PhaseRestack, "Continuing the restack", func(ctx context.Context) error {
+		if st.Conflict == "" {
+			// A reshape that stopped without a conflict: carry on with the
+			// segment that failed. The state stays saved until it finishes.
+			return a.restackSegments(ctx, run, st.Then, &res)
+		}
 		if err := a.recordRebased(ctx, run, &res); err != nil {
 			return err
 		}
@@ -523,6 +541,14 @@ func (a *App) restackContinue(ctx context.Context, repo git.Repo, stageAll bool)
 	})
 	if err == nil {
 		res.Moved = withEarlierMoves(earlier, res.Moved, run.stackName)
+		return res, nil
+	}
+	if run.reshape != nil {
+		// A later segment can stop after an earlier one finished and cleared
+		// the state; save it again so the reshape stays one operation.
+		if cur, lerr := loadRestackState(repo); lerr == nil && cur == nil && len(run.moved) > 0 {
+			return res, a.saveStopped(run, err)
+		}
 	}
 	return res, err
 }
@@ -575,6 +601,7 @@ func (a *App) restackSegments(ctx context.Context, run *restackRun, segs []resta
 		}
 		res.Branches = append(res.Branches, seg.Branches...)
 		if err := a.restackBranches(ctx, run, branches, seg.Parent, res); err != nil {
+			run.then = segs[i:] // what is left if nothing saved the run
 			return err
 		}
 	}
@@ -605,7 +632,7 @@ func (a *App) restackAbort(ctx context.Context, repo git.Repo) (RestackResult, e
 	if st == nil {
 		return RestackResult{}, a.nothingToResume(ctx, repo, "abort")
 	}
-	res := RestackResult{Branches: append([]string{st.Conflict}, st.Remaining...)}
+	res := RestackResult{Branches: st.branches()}
 	err = a.progress(ctx, PhaseRestack, "Aborting the restack", func(ctx context.Context) error {
 		if active, err := a.d.Git.RebaseInProgress(ctx, repo); err != nil {
 			return err
