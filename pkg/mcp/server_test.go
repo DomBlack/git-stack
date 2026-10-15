@@ -219,7 +219,7 @@ func TestToolsAreListedWithAnnotationsAndSchemas(t *testing.T) {
 	for _, tool := range res.Tools {
 		got[tool.Name] = tool
 	}
-	for _, name := range []string{"stack_view", "stack_create", "stack_modify", "stack_restack", "stack_navigate", "stack_submit", "stack_sync"} {
+	for _, name := range []string{"stack_view", "stack_create", "stack_modify", "stack_absorb", "stack_restack", "stack_navigate", "stack_submit", "stack_sync"} {
 		if got[name] == nil {
 			t.Errorf("missing tool %s", name)
 		}
@@ -611,4 +611,43 @@ func mustAbs(t *testing.T, p string) string {
 
 func (f *fakeForge) PullRequestURL(_ context.Context, _ git.Repo, n int) (string, error) {
 	return fmt.Sprintf("https://forge.test/o/r/pull/%d", n), nil
+}
+
+// stack_absorb plans with dry_run and applies without one; the result
+// carries the plan either way.
+func TestAbsorb(t *testing.T) {
+	h := newHarness(t)
+	defer h.assertNoStdout()
+	oldA := gittest.Run(t, h.dir, "rev-parse", "a")
+	gittest.WriteFile(t, h.dir, "a.txt", "A")
+	gittest.Run(t, h.dir, "add", "a.txt")
+
+	var res app.AbsorbResult
+	h.call("stack_absorb", map[string]any{"dry_run": true}, &res)
+	if res.Applied || !res.DryRun || len(res.Plan.Hunks) != 1 || res.Plan.Hunks[0].Target == nil || res.Plan.Hunks[0].Target.Branch != "a" {
+		t.Fatalf("dry run = %+v", res)
+	}
+	if gittest.Run(t, h.dir, "rev-parse", "a") != oldA {
+		t.Error("dry run moved a")
+	}
+
+	h.call("stack_absorb", nil, &res)
+	if !res.Applied || len(res.Rewritten) != 2 || res.Rewritten[0].Name != "a" || res.Rewritten[1].Name != "b" {
+		t.Fatalf("absorb = %+v", res)
+	}
+	if got := gittest.Run(t, h.dir, "show", "a:a.txt"); got != "A" {
+		t.Errorf("a:a.txt = %q", got)
+	}
+	if _, err := gittest.RunErr(t, h.dir, "diff", "--cached", "--quiet"); err != nil {
+		t.Error("index should be clean")
+	}
+	if h.current() != "b" {
+		t.Errorf("current = %s", h.current())
+	}
+
+	// Nothing staged is a structured error with next steps in tool terms.
+	te := h.toolErr("stack_absorb", nil)
+	if te.Code != "invalid_args" || len(te.NextSteps) == 0 {
+		t.Errorf("error = %+v", te)
+	}
 }

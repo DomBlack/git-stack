@@ -19,6 +19,7 @@ that touches a stack:
 | See the stacks, PR state, what needs a restack | `stack_view` |
 | Start a branch on top of the current one (from trunk: a new stack) | `stack_create` — you write `message` |
 | Change the current branch's commit and rebase everything above | `stack_modify` |
+| Fold staged fixes into whichever commits of the stack last touched those lines | `stack_absorb` (`dry_run: true` to see the plan) |
 | Rebase the stack after edits lower down | `stack_restack` |
 | Move around | `stack_navigate` (`up`/`down`/`top`/`bottom` or `branch`) |
 | Push and open/update PRs | `stack_submit` — you write `pull_requests` `{branch: {title, body}}`; ready for review unless `draft: true` |
@@ -42,6 +43,6 @@ the one calling.
 
 ## CLI equivalents
 
-`git stack create -m "…"`, `git stack modify -a`, `git stack restack`, `git stack up/down/top/bottom`,
-`git stack checkout`, `git stack submit --no-edit`, `git stack sync -f`. Aliases: `git c`, `git m`,
+`git stack create -m "…"`, `git stack modify -a`, `git stack absorb`, `git stack restack`, `git stack up/down/top/bottom`,
+`git stack checkout`, `git stack submit --no-edit`, `git stack sync -f`. Aliases: `git c`, `git m`, `git ab`,
 `git rs`, `git u`, `git d`, `git t`, `git b`, `git co`, `git ss`.
