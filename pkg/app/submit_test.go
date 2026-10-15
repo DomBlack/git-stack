@@ -4,6 +4,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io/fs"
+	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -31,6 +34,14 @@ type submitFake struct {
 	// baseOnTrunk makes new PRs target trunk instead of their parent, the
 	// way gh stack does when the branches below are queued for merge.
 	baseOnTrunk bool
+	// unstacked records every Unstack call; unstackErr is what it returns.
+	unstacked  []int
+	unstackErr error
+}
+
+func (s *submitFake) Unstack(_ context.Context, _ git.Repo, number int) error {
+	s.unstacked = append(s.unstacked, number)
+	return s.unstackErr
 }
 
 func (s *submitFake) Submit(_ context.Context, _ git.Repo, o stack.SubmitOptions) (stack.SubmitResult, error) {
@@ -190,6 +201,55 @@ func TestSubmitDryRunAndDefaults(t *testing.T) {
 	}
 	if len(fg.updates) != 0 {
 		t.Error("dry run must not touch the forge")
+	}
+}
+
+func TestSubmitDissolvesPendingRemoteStacks(t *testing.T) {
+	deps, sf, _, repo, _ := submitFixture(t)
+	a := app.New(deps)
+	ctx := context.Background()
+	path := filepath.Join(repo.CommonDir, "git-stack", "remote-stacks.json")
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	pending := `{"dissolve":[{"id":"S1","number":7,"stack":"a"},{"id":"S2","number":8,"stack":"x"}]}`
+	if err := os.WriteFile(path, []byte(pending), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := a.Submit(ctx, repo, app.SubmitOptions{DryRun: true}); err != nil {
+		t.Fatal(err)
+	}
+	if len(sf.unstacked) != 0 {
+		t.Fatalf("a dry run must not dissolve anything: %v", sf.unstacked)
+	}
+
+	sf.unstackErr = errors.New("boom")
+	res, err := a.Submit(ctx, repo, app.SubmitOptions{Publish: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(sf.unstacked, []int{7, 8}) {
+		t.Errorf("unstacked %v", sf.unstacked)
+	}
+	if n := strings.Join(res.Notices, "\n"); !strings.Contains(n, "could not dissolve stack #7") || !strings.Contains(n, "#8") {
+		t.Errorf("notices = %v", res.Notices)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil || !strings.Contains(string(data), "S1") || !strings.Contains(string(data), "S2") {
+		t.Errorf("failed dissolves should stay pending: %q %v", data, err)
+	}
+
+	sf.unstackErr = nil
+	res, err = a.Submit(ctx, repo, app.SubmitOptions{Publish: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n := strings.Join(res.Notices, "\n"); !strings.Contains(n, "dissolved stack #7 on GitHub") {
+		t.Errorf("notices = %v", res.Notices)
+	}
+	if _, err := os.Stat(path); !errors.Is(err, fs.ErrNotExist) {
+		t.Errorf("nothing should be pending: %v", err)
 	}
 }
 

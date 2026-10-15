@@ -91,4 +91,11 @@ type Submitter interface {
 	// Link joins pull requests that already exist into a stack on the
 	// remote, without pushing any branch.
 	Link(ctx context.Context, repo git.Repo, o LinkOptions) (SubmitResult, error)
+
+	// Unstack dissolves the stack with the given number on the forge,
+	// leaving its pull requests open and unstacked, so the next Submit
+	// creates it again from the local order. A stack the forge no longer
+	// has is not an error. The number must not be tracked locally any
+	// more, or gh stack would remove the local record too.
+	Unstack(ctx context.Context, repo git.Repo, number int) error
 }

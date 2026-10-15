@@ -156,6 +156,7 @@ func (a *App) Submit(ctx context.Context, repo git.Repo, o SubmitOptions) (Submi
 	if o.DryRun {
 		return res, nil
 	}
+	a.dissolvePending(ctx, repo, &res)
 
 	texts := make(map[string]PRText, len(o.Texts))
 	for k, v := range o.Texts {
@@ -467,4 +468,31 @@ func (a *App) draftPR(ctx context.Context, repo git.Repo, trunk, parent, branch 
 		return err
 	})
 	return out, err
+}
+
+// dissolvePending works through the stacks a reorder or move left stale
+// on GitHub: each is dissolved so gh stack can create it again from the
+// local order. A failure keeps the entry for the next submit and says so.
+func (a *App) dissolvePending(ctx context.Context, repo git.Repo, res *SubmitResult) {
+	p, err := loadPendingRemote(repo)
+	if err != nil {
+		res.Notices = append(res.Notices, fmt.Sprintf("could not read the stacks waiting to be dissolved on GitHub: %v", err))
+		return
+	}
+	if p == nil {
+		return
+	}
+	var keep []remoteStack
+	for _, r := range p.Dissolve {
+		if err := a.d.Submit.Unstack(ctx, repo, r.Number); err != nil {
+			keep = append(keep, r)
+			res.Notices = append(res.Notices, fmt.Sprintf("could not dissolve stack #%d on GitHub (%v); the pull requests of %s's stack keep their old grouping until it can be", r.Number, err, r.Stack))
+			continue
+		}
+		res.Notices = append(res.Notices, fmt.Sprintf("dissolved stack #%d on GitHub so it can be created again in its new order", r.Number))
+	}
+	p.Dissolve = keep
+	if err := savePendingRemote(repo, p); err != nil {
+		res.Notices = append(res.Notices, fmt.Sprintf("could not update the list of stacks to dissolve: %v", err))
+	}
 }
