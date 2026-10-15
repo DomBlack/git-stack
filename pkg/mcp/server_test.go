@@ -577,6 +577,57 @@ func TestAbsorbConflictAboveKeepsTheResult(t *testing.T) {
 	}
 }
 
+// A conflict replaying a moved branch onto its new parent is an error, but
+// the move itself was recorded and the result comes back with it. Aborting
+// puts both stacks back.
+func TestMoveConflictKeepsTheResult(t *testing.T) {
+	h := newHarness(t)
+	defer h.assertNoStdout()
+	// p edits a.txt too, which clashes with a's own version of the file.
+	gittest.Run(t, h.dir, "switch", "-q", "-c", "p", "main")
+	gittest.Commit(t, h.dir, "a.txt", "p's version", "feat: p")
+	gittest.Run(t, h.dir, "switch", "-q", "b")
+	g := h.backend.Graph()
+	g.Stacks = append(g.Stacks, stack.Stack{Trunk: "main", Branches: []stack.Branch{{Name: "p"}}})
+	aBefore := gittest.Run(t, h.dir, "rev-parse", "a")
+	bBefore := gittest.Run(t, h.dir, "rev-parse", "b")
+
+	res, text := h.call("stack_move", map[string]any{"source": "a", "onto": "p"}, nil)
+	if !res.IsError {
+		t.Fatalf("want a tool error, got %+v", res.StructuredContent)
+	}
+	var te toolError
+	if err := json.Unmarshal([]byte(text), &te); err != nil || te.Code != stack.KindConflict.Code() {
+		t.Errorf("error = %q %v", text, err)
+	}
+	b, err := json.Marshal(res.StructuredContent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var mv app.MoveResult
+	if err := json.Unmarshal(b, &mv); err != nil {
+		t.Fatalf("structured result %s: %v", b, err)
+	}
+	if mv.Branch != "a" || mv.Onto != "p" || !slices.Equal(mv.Moved, []string{"a", "b"}) {
+		t.Errorf("move = %+v", mv)
+	}
+
+	h.call("stack_abort", map[string]any{}, nil)
+	g = h.backend.Graph()
+	if s, _, ok := g.StackOf("b"); !ok || !slices.Equal(s.Names(), []string{"a", "b"}) || s.Trunk != "main" {
+		t.Errorf("a's stack after abort = %+v", s)
+	}
+	if s, _, ok := g.StackOf("p"); !ok || !slices.Equal(s.Names(), []string{"p"}) {
+		t.Errorf("p's stack after abort = %+v", s)
+	}
+	if got := gittest.Run(t, h.dir, "rev-parse", "a"); got != aBefore {
+		t.Errorf("a = %s, want %s", got, aBefore)
+	}
+	if got := gittest.Run(t, h.dir, "rev-parse", "b"); got != bBefore {
+		t.Errorf("b = %s, want %s", got, bBefore)
+	}
+}
+
 func TestRepoResolution(t *testing.T) {
 	h := newHarness(t)
 	defer h.assertNoStdout()

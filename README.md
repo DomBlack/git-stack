@@ -342,8 +342,10 @@ trunk; to change the order within a stack use `git reorder`. Nothing is checked 
 (or any other stop after some branches moved) is finished with `git continue`, which covers the
 branches an `--only` left behind, or undone with `git abort`. A branch checked out with uncommitted
 changes in another worktree stops the move before anything changes. The next `git ss` dissolves
-the stale stack on GitHub and creates again only the one you submit; the notice names the other
-stack, so submit from its bottom branch to group its PRs again.
+the stale stack on GitHub, lets gh stack create the one you submit, and then creates the moved
+branches' old stack again itself, so it is grouped again by the same submit. The notices name each
+stack. Only a stack with fewer than two PRs (nothing to group) or a failed create is left to you,
+and the notice says to submit from it.
 
 ```
 # on billing-webhook-alerts

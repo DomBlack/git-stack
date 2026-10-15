@@ -17,7 +17,7 @@ that touches a stack:
 | Task | Tool |
 |---|---|
 | See the stacks, PR state, what needs a restack | `stack_view` |
-| Start a branch on top of the current one (from trunk: a new stack) | `stack_create` — you write `message` |
+| Start a branch on top of the current one (from trunk: a new stack) | `stack_create`; you write `message` |
 | Change the current branch's commit and rebase everything above | `stack_modify` |
 | Fold staged fixes into whichever commits of the stack last touched those lines | `stack_absorb` (`dry_run: true` to see the plan) |
 | Rebase the stack after edits lower down | `stack_restack` |
@@ -25,7 +25,7 @@ that touches a stack:
 | Move a branch and what's above it onto another stack or onto trunk | `stack_move` (`only: true` to leave the rest behind) |
 | Track branches made by hand as a stack | `stack_init` |
 | Move around | `stack_navigate` (`up`/`down`/`top`/`bottom` or `branch`) |
-| Push and open/update PRs | `stack_submit` — you write `pull_requests` `{branch: {title, body}}`; ready for review unless `draft: true` |
+| Push and open/update PRs | `stack_submit`; you write `pull_requests` `{branch: {title, body}}`; ready for review unless `draft: true` |
 | Pull trunk, restack, prune merged branches | `stack_sync` |
 
 Write commit messages and PR text yourself; `use_ai` exists but is not needed when you are
@@ -42,9 +42,11 @@ the one calling.
   again with `continue: true` (or `abort: true`); after `stack_absorb`, `stack_reorder` or
   `stack_move` that is `stack_continue` or `stack_abort` (abort also puts the old order back).
 - A branch checked out with uncommitted changes in another worktree makes `stack_reorder` and
-  `stack_move` refuse with nothing changed. After either, `stack_submit` dissolves the stale
-  GitHub stack and creates again only the stack it submits; call it from the other stack's bottom
-  branch, as its notice says, to group the rest.
+  `stack_move` refuse with nothing changed. After either, `stack_submit` dissolves every
+  stale GitHub stack, lets gh stack create the one it submits and creates the others again itself
+  (its notices name each), so a move's source stack is grouped again by the same submit. Only a
+  stack with fewer than two pull requests (nothing to group) or a failed create is left; the
+  notice then says to submit from it.
 - Plain git is fine for reading (`git status`, `git diff`, `git log`) and for staging files.
 - Run `stack_view` before `stack_submit` so you know which branches get new PRs and need
   titles and bodies.
