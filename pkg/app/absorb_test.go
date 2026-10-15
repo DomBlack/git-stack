@@ -244,3 +244,42 @@ func TestAbsorbNothingToAbsorbAndDeclined(t *testing.T) {
 		t.Errorf("declined should change nothing: %+v", res)
 	}
 }
+
+func TestAbsorbBottomBranchRebasedByHandOntoNewerTrunk(t *testing.T) {
+	f := newAbsorbFixture(t)
+	ctx := context.Background()
+	// main gains a commit that changes line 10, then a, b and c are rebased
+	// onto it with plain git. The recorded bases stay stale.
+	gittest.Run(t, f.dir, "switch", "-q", "main")
+	gittest.Commit(t, f.dir, "f.txt", withLine(numbered(), 10, "ten"), "trunk: ten")
+	gittest.Run(t, f.dir, "rebase", "-q", "main", "a")
+	gittest.Run(t, f.dir, "rebase", "-q", "--onto", "a", f.fb.graph.Stacks[0].Branches[0].Head, "b")
+	gittest.Run(t, f.dir, "rebase", "-q", "--onto", "b", f.fb.graph.Stacks[0].Branches[1].Head, "c")
+	gittest.Run(t, f.dir, "switch", "-q", "b")
+	for i := range f.fb.graph.Stacks[0].Branches {
+		br := &f.fb.graph.Stacks[0].Branches[i]
+		br.Head = f.rev(t, br.Name)
+	}
+
+	f.stageLine(t, 10, "TEN")
+	f.stageLine(t, 5, "FIVE")
+	res, err := f.app.Absorb(ctx, f.repo, app.AbsorbOptions{DryRun: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := targetsOf(res.Plan); !slices.Equal(got, []string{"a", "none"}) && !slices.Equal(got, []string{"none", "a"}) {
+		t.Fatalf("targets = %v", got)
+	}
+	for _, h := range res.Plan.Hunks {
+		switch h.OldStart {
+		case 5:
+			if h.Target == nil || h.Target.Branch != "a" {
+				t.Errorf("line 5 should target a: %+v", h)
+			}
+		case 10:
+			if h.Target != nil {
+				t.Errorf("line 10 was changed by trunk, so it should not be absorbed: %+v", h)
+			}
+		}
+	}
+}
