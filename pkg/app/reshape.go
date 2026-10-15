@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+	"strings"
 
 	"github.com/DomBlack/git-stack/pkg/git"
 	"github.com/DomBlack/git-stack/pkg/stack"
@@ -223,6 +224,7 @@ func (a *App) reshape(ctx context.Context, repo git.Repo, command, headline stri
 		return RestackResult{}, err
 	}
 	var pending []remoteStack
+	queued := false
 	err = a.d.Meta.Update(ctx, repo, func(g *stack.Graph) error {
 		before := parentsOf(g)
 		// The stacks to relink, and the names GitHub knows them by, are
@@ -230,7 +232,7 @@ func (a *App) reshape(ctx context.Context, repo git.Repo, command, headline stri
 		// its bottom branch elsewhere, and the edit only appends stacks and
 		// edits branches, so indexes hold.
 		var relink []int
-		pending = nil
+		pending, queued = nil, false
 		for _, name := range e.relink {
 			if s, _, ok := g.StackOf(name); ok && s.ID != "" {
 				if i := stackIndex(g, s); !slices.Contains(relink, i) {
@@ -266,15 +268,28 @@ func (a *App) reshape(ctx context.Context, repo git.Repo, command, headline stri
 		for _, i := range relink {
 			g.Stacks[i].ID, g.Stacks[i].Number = "", 0
 		}
+		// Queue the dissolves before the cleared ids are written, so a
+		// failed write never leaves an id gone with nothing queued.
+		if len(pending) > 0 {
+			if err := addPendingRemote(repo, pending); err != nil {
+				return err
+			}
+			queued = true
+		}
 		return nil
 	})
 	if err != nil {
-		return RestackResult{}, err
-	}
-	if len(pending) > 0 {
-		if err := addPendingRemote(repo, pending); err != nil {
-			return RestackResult{}, err
+		if queued {
+			// The ids were not cleared after all; forget the dissolves again.
+			ids := make([]string, len(pending))
+			for i, p := range pending {
+				ids[i] = p.ID
+			}
+			if derr := dropPendingRemote(repo, ids); derr != nil {
+				return RestackResult{}, errors.Join(err, derr)
+			}
 		}
+		return RestackResult{}, err
 	}
 	if len(e.segments) == 0 {
 		return RestackResult{}, nil
@@ -284,16 +299,41 @@ func (a *App) reshape(ctx context.Context, repo git.Repo, command, headline stri
 	err = a.progress(ctx, PhaseRestack, headline, func(ctx context.Context) error {
 		return a.restackSegments(ctx, run, e.segments, &res)
 	})
-	if err != nil && !errors.Is(err, &stack.Error{Kind: stack.KindConflict}) {
-		if len(run.moved) > 0 || a.refsMoved(ctx, repo, local) {
-			return res, asStackError(err).WithSteps("git stack restack finishes the rest")
-		}
+	if err == nil {
+		return res, nil
+	}
+	// A saved state means the engine stopped somewhere continue and abort
+	// can pick up (a conflict, usually); leave it to them. Without one,
+	// put the shape back if no ref moved, else save what was done so the
+	// reshape can still be finished or undone as one operation.
+	if st, lerr := loadRestackState(repo); lerr != nil || st != nil {
+		return res, err
+	}
+	if len(run.moved) == 0 && !a.refsMoved(ctx, repo, local) {
 		if rerr := a.restoreReshape(ctx, repo, snap); rerr != nil {
 			return res, asStackError(err).WithSteps(fmt.Sprintf("the stack's new shape was kept because putting it back failed (%v); git stack restack finishes it", rerr))
 		}
 		return res, asStackError(err).WithSteps("nothing was changed")
 	}
-	return res, err
+	return res, a.saveStopped(run, err)
+}
+
+// saveStopped saves a reshape that stopped without a conflict after some
+// refs moved: what moved, the segments still to do (the one that failed
+// first) and the snapshot, so git stack continue can finish it once the
+// problem is fixed and git stack abort can put everything back.
+func (a *App) saveStopped(run *restackRun, err error) error {
+	e := asStackError(err)
+	st := &restackState{
+		Command: run.command, OriginalBranch: run.originalBranch, Trunk: run.trunk,
+		Moved: run.moved, Then: run.then, Reshape: run.reshape,
+	}
+	if serr := saveRestackState(run.repo, st); serr != nil {
+		return e.WithSteps(fmt.Sprintf("the new shape was kept but could not be saved for git stack continue or abort (%v); git stack restack finishes it", serr))
+	}
+	verb := strings.TrimPrefix(run.command, "git stack ")
+	e.NextSteps = []string{"fix that, then git stack continue finishes the " + verb, "or git stack abort puts everything back"}
+	return e
 }
 
 // refsMoved reports whether any branch's head differs from before, or
