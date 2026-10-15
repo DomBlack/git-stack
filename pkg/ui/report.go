@@ -107,6 +107,7 @@ const (
 var phaseEmoji = map[app.Phase]string{
 	app.PhaseCreate:  "🌱",
 	app.PhaseModify:  "✏️",
+	app.PhaseAbsorb:  "🧽",
 	app.PhaseRestack: "🧱",
 	app.PhaseSubmit:  "🚀",
 	app.PhaseSync:    "🔄",
