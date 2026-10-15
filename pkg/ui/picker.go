@@ -17,6 +17,8 @@ import (
 // PickerOptions configures the checkout picker.
 type PickerOptions struct {
 	Rows []app.Row
+	// Title heads the picker; "Select a branch" when empty.
+	Title string
 	// Refresh, when set, is run in the background; its result updates the
 	// PR decorations while the picker is open.
 	Refresh func(ctx context.Context) ([]forge.PullRequest, error)
@@ -64,6 +66,7 @@ type Picker struct {
 	links   bool
 	prURL   func(int) string
 	status  string
+	title   string
 	result  PickerResult
 }
 
@@ -82,7 +85,11 @@ func NewPicker(ctx context.Context, o PickerOptions) *Picker {
 	if o.Styles != nil {
 		styles = *o.Styles
 	}
+	if o.Title == "" {
+		o.Title = "Select a branch"
+	}
 	p := &Picker{
+		title:   o.Title,
 		all:     BuildTree(o.Rows),
 		filter:  ti,
 		styles:  styles,
@@ -242,7 +249,7 @@ func (p *Picker) applyFilter() {
 func (p *Picker) View() tea.View {
 	var b strings.Builder
 	st := p.styles
-	b.WriteString(st.Title.Render("Select a branch"))
+	b.WriteString(st.Title.Render(p.title))
 	if p.status != "" {
 		b.WriteString("  " + st.Muted.Render(p.status))
 	}
