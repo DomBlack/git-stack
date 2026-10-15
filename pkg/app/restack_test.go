@@ -56,9 +56,11 @@ func (f *restackFixture) rev(t *testing.T, r string) string {
 }
 
 func (f *restackFixture) base(name string) string {
-	for _, b := range f.fb.graph.Stacks[0].Branches {
-		if b.Name == name {
-			return b.Base
+	for _, s := range f.fb.graph.Stacks {
+		for _, b := range s.Branches {
+			if b.Name == name {
+				return b.Base
+			}
 		}
 	}
 	return ""
