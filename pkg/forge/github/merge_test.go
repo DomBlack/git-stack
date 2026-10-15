@@ -62,7 +62,7 @@ func TestMergeStackFailures(t *testing.T) {
 
 	f.On("gh", "api", "--method", "PUT").Fail(1, "gh: Pull request is a draft (HTTP 400)\n{\"message\":\"Pull request is a draft\"}")
 	_, err = New(f).MergeStack(context.Background(), git.Repo{TopLevel: "/r"}, 5, forge.MergeSquash)
-	if !errors.As(err, &se) || se.Kind != stack.KindAPIFailure || !strings.Contains(se.Msg, "Pull request is a draft") || len(se.NextSteps) == 0 {
+	if !errors.As(err, &se) || se.Kind != stack.KindAPIFailure || se.Msg != "GitHub refused to merge the stack: Pull request is a draft" || len(se.NextSteps) == 0 {
 		t.Errorf("refused merge: %v", err)
 	}
 }

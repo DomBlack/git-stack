@@ -495,7 +495,7 @@ func (a *App) dissolvePending(ctx context.Context, repo git.Repo, graph *stack.G
 			continue
 		}
 		done = append(done, r)
-		res.Notices = append(res.Notices, dissolvedNotice(graph, s, r))
+		res.Notices = append(res.Notices, dissolvedNotice(graph, s, r, a.d.Forge != nil))
 	}
 	p.Dissolve = keep
 	if err := savePendingRemote(repo, p); err != nil {
@@ -530,13 +530,10 @@ func (a *App) recreateDissolved(ctx context.Context, repo git.Repo, s *stack.Sta
 			continue
 		}
 		seen = append(seen, r.Stack)
-		var numbers []int
-		for _, b := range own.Branches {
-			pr, has := after[b.Name]
-			if b.Merged() || !has || (pr.State != forge.StateOpen && pr.State != forge.StateDraft) {
-				continue
-			}
-			numbers = append(numbers, pr.Number)
+		numbers, gap := stackPRNumbers(own, after)
+		if gap != "" {
+			res.Notices = append(res.Notices, fmt.Sprintf("%s has no open pull request, so %s's stack was not created on GitHub; submit from it once it has one", gap, r.Stack))
+			continue
 		}
 		if len(numbers) < 2 {
 			res.Notices = append(res.Notices, fmt.Sprintf("%s's stack has fewer than two pull requests, so there is no stack to create on GitHub", r.Stack))
@@ -544,7 +541,7 @@ func (a *App) recreateDissolved(ctx context.Context, repo git.Repo, s *stack.Sta
 		}
 		ref, err := a.d.Forge.CreateStack(ctx, repo, numbers)
 		if err != nil {
-			res.Notices = append(res.Notices, fmt.Sprintf("could not create %s's stack on GitHub again (%v); submit from it to try again", r.Stack, err))
+			res.Notices = append(res.Notices, fmt.Sprintf("could not create %s's stack on GitHub again: %v. Submit from it to try again", r.Stack, err))
 			continue
 		}
 		bottom := r.Stack
@@ -564,13 +561,37 @@ func (a *App) recreateDissolved(ctx context.Context, repo git.Repo, s *stack.Sta
 	}
 }
 
+// stackPRNumbers lists the pull requests of s bottom to top for creating
+// it on GitHub, which needs an unbroken chain. Merged branches at the
+// bottom are left out; the first branch above them without an open or
+// draft pull request is returned as gap, since the chain would break there.
+func stackPRNumbers(s *stack.Stack, after map[string]forge.PullRequest) (numbers []int, gap string) {
+	bottom := true
+	for _, b := range s.Branches {
+		pr, has := after[b.Name]
+		if bottom && (b.Merged() || (has && pr.State == forge.StateMerged)) {
+			continue
+		}
+		bottom = false
+		if !has || (pr.State != forge.StateOpen && pr.State != forge.StateDraft) {
+			return nil, b.Name
+		}
+		numbers = append(numbers, pr.Number)
+	}
+	return numbers, ""
+}
+
 // dissolvedNotice words a successful dissolve by where the entry's stack
-// lives now. Another stack's notice is followed by recreateDissolved's.
-func dissolvedNotice(graph *stack.Graph, s *stack.Stack, r remoteStack) string {
+// lives now. With a forge, another stack's notice is followed by
+// recreateDissolved's; without one, it says how to group the stack again.
+func dissolvedNotice(graph *stack.Graph, s *stack.Stack, r remoteStack, hasForge bool) string {
 	if slices.Contains(s.Names(), r.Stack) {
 		return fmt.Sprintf("dissolved stack #%d on GitHub; it is created again in its new order below", r.Number)
 	}
-	if _, i, ok := graph.StackOf(r.Stack); ok && i == 0 {
+	if own, i, ok := graph.StackOf(r.Stack); ok && i == 0 {
+		if !hasForge {
+			return fmt.Sprintf("dissolved stack #%d on GitHub because its pull requests were regrouped by a reorder or move; submit from %s to group them again", r.Number, own.Bottom())
+		}
 		return fmt.Sprintf("dissolved stack #%d on GitHub because its pull requests were regrouped by a reorder or move", r.Number)
 	}
 	return fmt.Sprintf("dissolved stack #%d on GitHub; its pull requests now belong to the stack they were moved to", r.Number)

@@ -94,15 +94,15 @@ type recordingForge struct {
 	checks    map[int]forge.CheckSummary
 	checksErr error
 	checked   [][]int
-	// created records every CreateStack call; createRef and createErr are
+	// stacks records every CreateStack call; createRef and createErr are
 	// what it returns.
-	created   [][]int
+	stacks    [][]int
 	createRef forge.StackRef
 	createErr error
 }
 
 func (f *recordingForge) CreateStack(_ context.Context, _ git.Repo, numbers []int) (forge.StackRef, error) {
-	f.created = append(f.created, slices.Clone(numbers))
+	f.stacks = append(f.stacks, slices.Clone(numbers))
 	return f.createRef, f.createErr
 }
 
@@ -317,8 +317,8 @@ func TestSubmitCreatesAnotherDissolvedStackAgain(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !slices.EqualFunc(fg.created, [][]int{{20, 21}}, slices.Equal) {
-		t.Errorf("created %v, want x's stack as [20 21]", fg.created)
+	if !slices.EqualFunc(fg.stacks, [][]int{{20, 21}}, slices.Equal) {
+		t.Errorf("created %v, want x's stack as [20 21]", fg.stacks)
 	}
 	own, _, _ := mm.g.StackOf("x")
 	if own.ID != "4242" || own.Number != 30 {
@@ -342,8 +342,8 @@ func TestSubmitSaysWhenADissolvedStackIsTooSmallToCreate(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(fg.created) != 0 {
-		t.Errorf("nothing should be created: %v", fg.created)
+	if len(fg.stacks) != 0 {
+		t.Errorf("nothing should be created: %v", fg.stacks)
 	}
 	if own, _, _ := mm.g.StackOf("x"); own.ID != "" {
 		t.Errorf("x's stack records %q", own.ID)
@@ -362,14 +362,77 @@ func TestSubmitReportsAFailedCreateOfADissolvedStack(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(fg.created) != 1 {
-		t.Errorf("created %v", fg.created)
+	if len(fg.stacks) != 1 {
+		t.Errorf("created %v", fg.stacks)
 	}
 	if own, _, _ := mm.g.StackOf("x"); own.ID != "" || own.Number != 0 {
 		t.Errorf("x's stack records %q #%d", own.ID, own.Number)
 	}
-	want := "could not create x's stack on GitHub again (Pull request #21 is already in a stack); submit from it to try again"
+	want := "could not create x's stack on GitHub again: Pull request #21 is already in a stack. Submit from it to try again"
 	if n := strings.Join(res.Notices, "\n"); !strings.Contains(n, want) {
+		t.Errorf("notices = %v", res.Notices)
+	}
+}
+
+// A branch without an open pull request breaks the chain GitHub needs, so
+// nothing is created and the notice names the branch. Merged branches at
+// the bottom are left out of the chain.
+func TestSubmitStopsCreatingADissolvedStackAtABranchWithoutAPR(t *testing.T) {
+	a, fg, mm, repo := otherStackFixture(t, "y", "z", "w")
+	own, _, _ := mm.g.StackOf("x")
+	own.Branches[0].PR = &stack.PRRef{Number: 20, Merged: true}
+	fg.prs = slices.DeleteFunc(fg.prs, func(pr forge.PullRequest) bool { return pr.Head == "z" })
+	fg.prs = append(fg.prs, forge.PullRequest{Number: 40, Head: "z", Base: "y", State: forge.StateClosed})
+	res, err := a.Submit(context.Background(), repo, app.SubmitOptions{Publish: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(fg.stacks) != 0 {
+		t.Errorf("nothing should be created: %v", fg.stacks)
+	}
+	want := "z has no open pull request, so x's stack was not created on GitHub; submit from it once it has one"
+	if n := strings.Join(res.Notices, "\n"); !strings.Contains(n, want) {
+		t.Errorf("notices = %v", res.Notices)
+	}
+
+	// With z open again the merged x is left out and the rest is created.
+	for i := range fg.prs {
+		if fg.prs[i].Number == 40 {
+			fg.prs[i].State = forge.StateOpen
+		}
+	}
+	path := filepath.Join(repo.CommonDir, "git-stack", "remote-stacks.json")
+	if err := os.WriteFile(path, []byte(`{"dissolve":[{"id":"S2","number":8,"stack":"x"}]}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := a.Submit(context.Background(), repo, app.SubmitOptions{Publish: true}); err != nil {
+		t.Fatal(err)
+	}
+	if !slices.EqualFunc(fg.stacks, [][]int{{21, 40, 23}}, slices.Equal) {
+		t.Errorf("created %v, want [21 40 23]", fg.stacks)
+	}
+}
+
+// Without a forge nothing can be created, so the dissolve notice says how
+// to group the stack again.
+func TestSubmitWithoutAForgeSaysHowToGroupADissolvedStack(t *testing.T) {
+	deps, _, _, repo, _ := submitFixture(t)
+	deps.Forge = nil
+	path := filepath.Join(repo.CommonDir, "git-stack", "remote-stacks.json")
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(`{"dissolve":[{"id":"S2","number":8,"stack":"x"}]}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	mm := deps.Meta.(memMeta)
+	mm.g.Stacks = append(mm.g.Stacks, stack.Stack{Trunk: "main", Branches: []stack.Branch{{Name: "x"}, {Name: "y"}}})
+	res, err := app.New(deps).Submit(context.Background(), repo, app.SubmitOptions{Publish: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "dissolved stack #8 on GitHub because its pull requests were regrouped by a reorder or move; submit from x to group them again"
+	if !slices.Contains(res.Notices, want) {
 		t.Errorf("notices = %v", res.Notices)
 	}
 }

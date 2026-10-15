@@ -76,6 +76,45 @@ func mapError(err error) error {
 	return stack.New(stack.KindAPIFailure, "GitHub request failed").WithDetail(stderr).WithCause(err)
 }
 
+var reHTTPStatus = regexp.MustCompile(`\s*\(HTTP \d{3}\)$`)
+
+// apiErrorJSON is the body GitHub sends with a refused request.
+type apiErrorJSON struct {
+	Message string `json:"message"`
+	Errors  []struct {
+		Message string `json:"message"`
+	} `json:"errors"`
+}
+
+// apiMessage digs GitHub's own reason out of a failed gh api call. gh
+// prints "gh: <message> (HTTP 4xx)" on stderr and the response body on
+// stdout; for a validation failure stderr only says "Validation Failed"
+// and the reason is in the body's errors, so the body wins when it parses.
+// "" when neither says anything.
+func apiMessage(err error) string {
+	if ee, ok := errors.AsType[*exec.ExitError](err); ok {
+		var body apiErrorJSON
+		if json.Unmarshal(ee.Result.Stdout, &body) == nil && body.Message != "" {
+			var reasons []string
+			for _, e := range body.Errors {
+				if e.Message != "" {
+					reasons = append(reasons, e.Message)
+				}
+			}
+			if len(reasons) > 0 {
+				return body.Message + ": " + strings.Join(reasons, "; ")
+			}
+			return body.Message
+		}
+	}
+	se, ok := errors.AsType[*stack.Error](err)
+	if !ok {
+		return ""
+	}
+	line := strings.TrimSpace(strings.TrimPrefix(strings.SplitN(se.Detail, "\n", 2)[0], "gh:"))
+	return reHTTPStatus.ReplaceAllString(line, "")
+}
+
 // prJSON is gh's --json shape for the fields we ask for.
 type prJSON struct {
 	Number            int       `json:"number"`
