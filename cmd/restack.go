@@ -84,13 +84,14 @@ func renderRestack(rep *ui.Reporter, res app.RestackResult, aborted bool) {
 		rep.Warn("%s", n)
 	}
 	if aborted {
-		if len(res.Restored) > 0 {
-			what := strings.Join(res.Restored, ", ")
-			if res.OrderRestored {
-				what += " and the stack order"
-			}
+		switch what := strings.Join(res.Restored, ", "); {
+		case len(res.Restored) > 0 && res.OrderRestored:
+			rep.Success("Restack aborted; put back %s and the stack order", what)
+		case len(res.Restored) > 0:
 			rep.Success("Restack aborted; put back %s", what)
-		} else {
+		case res.OrderRestored:
+			rep.Success("Restack aborted; put back the stack order")
+		default:
 			rep.Success("Restack aborted")
 		}
 		return
