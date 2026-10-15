@@ -37,7 +37,10 @@ type RestackResult struct {
 	InPlace []string `json:"in_place,omitempty"`
 	// Restored are the branches an abort put back.
 	Restored []string `json:"restored,omitempty"`
-	Notices  []string `json:"notices,omitempty"`
+	// OrderRestored is true when an abort also put a reorder or move's
+	// stack shape back.
+	OrderRestored bool     `json:"order_restored,omitempty"`
+	Notices       []string `json:"notices,omitempty"`
 }
 
 const restackCommand = "git stack restack"
@@ -62,6 +65,10 @@ type restackRun struct {
 	command, trunk, stackName, originalBranch string
 	moved                                     []movedRef
 	state                                     *restackState
+	// then are the segments queued behind the one in progress, and
+	// reshape the snapshot abort puts back; both are saved on a conflict.
+	then    []restackSegment
+	reshape *reshapeSnapshot
 }
 
 // restack is the shared body of Restack and modify's restack. command
@@ -219,6 +226,7 @@ func (a *App) startConflictRebase(ctx context.Context, run *restackRun, p *resta
 		Conflict: c.Branch, Onto: c.Onto, NewBase: p.conflictNewBase,
 		ConflictTip: local[c.Branch].Head, ConflictOldBase: oldBase,
 		Remaining: remaining, Moved: run.moved,
+		Then: run.then, Reshape: run.reshape,
 	}
 	if err := saveRestackState(run.repo, run.state); err != nil {
 		return err
@@ -283,7 +291,11 @@ func (a *App) finishRun(ctx context.Context, run *restackRun) error {
 			}
 		}
 	}
-	return clearRestackState(run.repo)
+	if err := clearRestackState(run.repo); err != nil {
+		return err
+	}
+	run.state = nil
+	return nil
 }
 
 // checkCurrentMove refuses the run before anything moves when the branch
@@ -485,7 +497,7 @@ func (a *App) restackContinue(ctx context.Context, repo git.Repo, stageAll bool)
 			WithSteps("git stack abort to put the moved branches back, then " + st.Command + " again")
 	}
 	earlier := slices.Clone(st.Moved)
-	run := &restackRun{repo: repo, command: st.Command, trunk: st.Trunk, originalBranch: st.OriginalBranch, moved: st.Moved, state: st}
+	run := &restackRun{repo: repo, command: st.Command, trunk: st.Trunk, originalBranch: st.OriginalBranch, moved: st.Moved, state: st, then: st.Then, reshape: st.Reshape}
 	if g, err := a.d.Meta.Load(ctx, repo); err == nil {
 		if s, _, ok := g.StackOf(st.Conflict); ok {
 			run.stackName = s.Bottom()
@@ -495,14 +507,18 @@ func (a *App) restackContinue(ctx context.Context, repo git.Repo, stageAll bool)
 		if err := a.recordRebased(ctx, run, &res); err != nil {
 			return err
 		}
-		if len(st.Remaining) == 0 {
-			return a.finishRun(ctx, run)
-		}
-		graph, err := a.d.Meta.Load(ctx, repo)
-		if err != nil {
+		if len(st.Remaining) > 0 {
+			graph, err := a.d.Meta.Load(ctx, repo)
+			if err != nil {
+				return err
+			}
+			if err := a.restackBranches(ctx, run, branchesNamed(graph, st.Remaining), st.Conflict, &res); err != nil {
+				return err
+			}
+		} else if err := a.finishRun(ctx, run); err != nil {
 			return err
 		}
-		return a.restackBranches(ctx, run, branchesNamed(graph, st.Remaining), st.Conflict, &res)
+		return a.restackSegments(ctx, run, st.Then, &res)
 	})
 	if err == nil {
 		res.Moved = withEarlierMoves(earlier, res.Moved, run.stackName)
@@ -535,6 +551,32 @@ func withEarlierMoves(earlier []movedRef, now []BranchMove, stackName string) []
 		}
 	}
 	return append(out, now...)
+}
+
+// restackSegments restacks each queued segment in turn, bottom first,
+// with the rest queued on the run so a conflict saves them for continue.
+// Each segment is reported under its own stack.
+func (a *App) restackSegments(ctx context.Context, run *restackRun, segs []restackSegment, res *RestackResult) error {
+	for i, seg := range segs {
+		run.then = segs[i+1:]
+		graph, err := a.d.Meta.Load(ctx, run.repo)
+		if err != nil {
+			return err
+		}
+		branches := branchesNamed(graph, seg.Branches)
+		if len(branches) == 0 {
+			continue
+		}
+		if s, _, ok := graph.StackOf(branches[0].Name); ok {
+			run.stackName, run.trunk = s.Bottom(), s.Trunk
+		}
+		res.Branches = append(res.Branches, seg.Branches...)
+		if err := a.restackBranches(ctx, run, branches, seg.Parent, res); err != nil {
+			return err
+		}
+	}
+	run.then = nil
+	return nil
 }
 
 // branchesNamed looks the named branches up in the graph, keeping order
@@ -653,6 +695,12 @@ func (a *App) restackAbort(ctx context.Context, repo git.Repo) (RestackResult, e
 			return nil
 		}); err != nil {
 			return err
+		}
+		if st.Reshape != nil {
+			if err := a.restoreReshape(ctx, repo, st.Reshape); err != nil {
+				return err
+			}
+			res.OrderRestored = true
 		}
 		slices.Reverse(res.Restored) // report bottom to top
 		run := &restackRun{repo: repo, originalBranch: st.OriginalBranch, state: st}
