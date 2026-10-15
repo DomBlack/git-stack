@@ -331,9 +331,15 @@ func (a *App) saveStopped(run *restackRun, err error) error {
 	if serr := saveRestackState(run.repo, st); serr != nil {
 		return e.WithSteps(fmt.Sprintf("the new shape was kept but could not be saved for git stack continue or abort (%v); git stack restack finishes it", serr))
 	}
-	verb := strings.TrimPrefix(run.command, "git stack ")
-	e.NextSteps = []string{"fix that, then git stack continue finishes the " + verb, "or git stack abort puts everything back"}
+	e.NextSteps = resumeSteps(run.command)
 	return e
+}
+
+// resumeSteps is the way on from a reshape that stopped with its state
+// saved: fix what stopped it and continue, or abort.
+func resumeSteps(command string) []string {
+	verb := strings.TrimPrefix(command, "git stack ")
+	return []string{"fix that, then git stack continue finishes the " + verb, "or git stack abort puts everything back"}
 }
 
 // refsMoved reports whether any branch's head differs from before, or

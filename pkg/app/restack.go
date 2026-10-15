@@ -346,6 +346,7 @@ func (a *App) applyMoves(ctx context.Context, run *restackRun, p *restackPlan, r
 	var updates []git.RefUpdate
 	var others []plannedMove
 	heads := map[string]string{}
+	recorded := map[string]bool{}
 	for _, m := range p.moves {
 		heads[m.name] = m.to
 		switch {
@@ -353,6 +354,16 @@ func (a *App) applyMoves(ctx context.Context, run *restackRun, p *restackPlan, r
 			if err := a.d.Git.ResetKeep(ctx, run.repo, m.to); err != nil {
 				return stack.Newf(stack.KindInvalidArgs, "%s is checked out here with local changes in the way of its restack", m.name).
 					WithSteps("commit or stash them, then try again").WithCause(err)
+			}
+			// This branch has moved already. Remember it now, so abort can
+			// put it back if the transaction below fails.
+			run.moved = append(run.moved, movedRef{Name: m.name, From: m.from, To: m.to, OldBase: m.oldBase, Worktree: m.worktree, Stack: run.stackName})
+			recorded[m.name] = true
+			if run.state != nil {
+				run.state.Moved = run.moved
+				if err := saveRestackState(run.repo, run.state); err != nil {
+					return err
+				}
 			}
 		case m.worktree != "":
 			updates = append(updates, git.RefUpdate{Ref: "refs/heads/" + m.name, New: m.to, Old: m.from})
@@ -373,7 +384,9 @@ func (a *App) applyMoves(ctx context.Context, run *restackRun, p *restackPlan, r
 		}
 	}
 	for _, m := range p.moves {
-		run.moved = append(run.moved, movedRef{Name: m.name, From: m.from, To: m.to, OldBase: m.oldBase, Worktree: m.worktree, Stack: run.stackName})
+		if !recorded[m.name] {
+			run.moved = append(run.moved, movedRef{Name: m.name, From: m.from, To: m.to, OldBase: m.oldBase, Worktree: m.worktree, Stack: run.stackName})
+		}
 		res.Moved = append(res.Moved, BranchMove{Name: m.name, Stack: run.stackName, From: m.from, To: m.to})
 		if m.empty {
 			res.Notices = append(res.Notices, fmt.Sprintf("%s has no commits of its own any more; its changes are already in its parent", m.name))
@@ -521,7 +534,12 @@ func (a *App) restackContinue(ctx context.Context, repo git.Repo, stageAll bool)
 		if st.Conflict == "" {
 			// A reshape that stopped without a conflict: carry on with the
 			// segment that failed. The state stays saved until it finishes.
-			return a.restackSegments(ctx, run, st.Then, &res)
+			if err := a.restackSegments(ctx, run, st.Then, &res); err != nil {
+				return err
+			}
+			// Every queued segment may have been empty, which never reaches
+			// finishRun on its own.
+			return a.finishRun(ctx, run)
 		}
 		if err := a.recordRebased(ctx, run, &res); err != nil {
 			return err
@@ -543,12 +561,22 @@ func (a *App) restackContinue(ctx context.Context, repo git.Repo, stageAll bool)
 		res.Moved = withEarlierMoves(earlier, res.Moved, run.stackName)
 		return res, nil
 	}
-	if run.reshape != nil {
+	cur, lerr := loadRestackState(repo)
+	if lerr != nil {
+		return res, err
+	}
+	if cur != nil {
+		// The state stays saved, so a refusal's own "then run it again" no
+		// longer applies: the way on is continue, or abort.
+		if e, ok := errors.AsType[*stack.Error](err); ok && e.Kind == stack.KindInvalidArgs {
+			e.NextSteps = resumeSteps(cur.Command)
+		}
+		return res, err
+	}
+	if run.reshape != nil && len(run.moved) > 0 {
 		// A later segment can stop after an earlier one finished and cleared
 		// the state; save it again so the reshape stays one operation.
-		if cur, lerr := loadRestackState(repo); lerr == nil && cur == nil && len(run.moved) > 0 {
-			return res, a.saveStopped(run, err)
-		}
+		return res, a.saveStopped(run, err)
 	}
 	return res, err
 }
