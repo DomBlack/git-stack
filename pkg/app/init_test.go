@@ -110,3 +110,14 @@ func TestInitTrunkAndRefusals(t *testing.T) {
 		t.Errorf("two trunks: %+v %v", res, err)
 	}
 }
+
+func TestInitRefusesWhileAReshapeIsStopped(t *testing.T) {
+	f := reorderConflictFixture(t)
+	ctx := context.Background()
+	if _, err := f.app.Reorder(ctx, f.repo, app.ReorderOptions{Order: []string{"b", "a", "c"}}); !errors.Is(err, &stack.Error{Kind: stack.KindConflict}) {
+		t.Fatalf("want a conflict, got %v", err)
+	}
+	if _, err := f.app.Init(ctx, f.repo, app.InitOptions{Branches: []string{"c"}}); !errors.Is(err, &stack.Error{Kind: stack.KindRebaseActive}) {
+		t.Errorf("init = %v, want rebase_active", err)
+	}
+}

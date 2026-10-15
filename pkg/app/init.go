@@ -31,6 +31,9 @@ type InitResult struct {
 // Init records a new stack from branches that already exist. It changes
 // no ref and checks nothing out.
 func (a *App) Init(ctx context.Context, repo git.Repo, o InitOptions) (InitResult, error) {
+	if err := a.noRebaseActive(ctx, repo); err != nil {
+		return InitResult{}, err
+	}
 	graph, err := a.d.Meta.Load(ctx, repo)
 	if err != nil {
 		return InitResult{}, err

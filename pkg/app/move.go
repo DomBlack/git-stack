@@ -117,6 +117,12 @@ func (a *App) Move(ctx context.Context, repo git.Repo, o MoveOptions) (MoveResul
 		}
 	}
 	res.Onto = onto
+	if onto == source {
+		return res, stack.Newf(stack.KindInvalidArgs, "%s can't be moved onto itself", source)
+	}
+	if onto == oldParent {
+		return res, stack.Newf(stack.KindInvalidArgs, "%s is already on %s", source, onto)
+	}
 	var dst *stack.Stack
 	switch ds, di, ok := graph.StackOf(onto); {
 	case graph.IsTrunk(onto):
