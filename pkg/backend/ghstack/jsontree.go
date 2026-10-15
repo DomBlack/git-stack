@@ -5,6 +5,8 @@ import (
 	"encoding/json/jsontext"
 	"encoding/json/v2"
 	"fmt"
+	"slices"
+	"strconv"
 )
 
 // node is an ordered JSON tree. Objects keep their member order and anything
@@ -158,4 +160,30 @@ func stringNode(s string) *node {
 
 func objectNode(members ...member) *node {
 	return &node{kind: '{', members: members}
+}
+
+// del removes the member named key, if there is one.
+func (n *node) del(key string) {
+	n.members = slices.DeleteFunc(n.members, func(m member) bool { return m.key == key })
+}
+
+// num returns the member's integer value, 0 when missing or not a number.
+func (n *node) num(key string) int {
+	m := n.get(key)
+	if m == nil || m.kind != 0 {
+		return 0
+	}
+	var i int
+	if err := json.Unmarshal(m.raw, &i); err != nil {
+		return 0
+	}
+	return i
+}
+
+func intNode(i int) *node {
+	return &node{raw: jsontext.Value(strconv.Itoa(i))}
+}
+
+func arrayNode(items ...*node) *node {
+	return &node{kind: '[', items: items}
 }

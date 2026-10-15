@@ -165,3 +165,150 @@ func TestUpdateTimesOutOnHeldLock(t *testing.T) {
 		t.Errorf("want KindLocked, got %v", err)
 	}
 }
+
+func TestUpdateAppendsStackToCurrentWorktreeFile(t *testing.T) {
+	b, repo, mainPath, wtPath := updateFixture(t)
+	ctx := context.Background()
+	// From the main checkout the new stack lands in the main file.
+	err := b.Update(ctx, repo, func(g *stack.Graph) error {
+		g.Stacks = append(g.Stacks, stack.Stack{Trunk: "main", Branches: []stack.Branch{{Name: "n1", Head: "h1", Base: "t1"}, {Name: "n2"}}})
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, _ := os.ReadFile(mainPath)
+	s := string(data)
+	for _, want := range []string{`"branch": "n1"`, `"head": "h1"`, `"base": "t1"`, `"branch": "n2"`, `"future"`} {
+		if !strings.Contains(s, want) {
+			t.Errorf("main file lacks %s:\n%s", want, s)
+		}
+	}
+	if wt, _ := os.ReadFile(wtPath); strings.Contains(string(wt), "n1") {
+		t.Error("the worktree file got the stack too")
+	}
+	g, err := b.Load(ctx, repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s, _, ok := g.StackOf("n2"); !ok || s.Trunk != "main" || s.Bottom() != "n1" || s.ID != "" {
+		t.Errorf("stack of n2 = %+v", s)
+	}
+
+	// From the linked worktree it lands in that worktree's file.
+	wtRepo, err := git.New(exec.New()).Discover(ctx, worktreePath(filepath.Dir(wtPath)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = b.Update(ctx, wtRepo, func(g *stack.Graph) error {
+		g.Stacks = append(g.Stacks, stack.Stack{Trunk: "main", Branches: []stack.Branch{{Name: "w2"}}})
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if wt, _ := os.ReadFile(wtPath); !strings.Contains(string(wt), `"branch": "w2"`) {
+		t.Errorf("worktree file lacks w2:\n%s", wt)
+	}
+}
+
+func TestUpdateCreatesTheFileForTheFirstStack(t *testing.T) {
+	gittest.Isolate(t)
+	dir := gittest.InitRepo(t)
+	g := git.New(exec.New())
+	repo, err := g.Discover(context.Background(), dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b := New(exec.New(), g)
+	err = b.Update(context.Background(), repo, func(g *stack.Graph) error {
+		g.Stacks = append(g.Stacks, stack.Stack{Trunk: "main", Branches: []stack.Branch{{Name: "first", Base: "t0"}}})
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(filepath.Join(repo.CommonDir, FileName))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if f, err := parseFile(data); err != nil || len(f.Stacks) != 1 || f.Stacks[0].Trunk.Branch != "main" || f.Stacks[0].Branches[0].Base != "t0" {
+		t.Errorf("file = %s (%v)", data, err)
+	}
+}
+
+func TestUpdateRefusesBadNewStacks(t *testing.T) {
+	b, repo, _, _ := updateFixture(t)
+	for _, s := range []stack.Stack{{Branches: []stack.Branch{{Name: "x"}}}, {Trunk: "main"}} {
+		err := b.Update(context.Background(), repo, func(g *stack.Graph) error {
+			g.Stacks = append(g.Stacks, s)
+			return nil
+		})
+		if err == nil {
+			t.Errorf("appending %+v succeeded", s)
+		}
+	}
+	err := b.Update(context.Background(), repo, func(g *stack.Graph) error {
+		g.Stacks = g.Stacks[:1]
+		return nil
+	})
+	if err == nil {
+		t.Error("dropping a stack succeeded")
+	}
+}
+
+func TestUpdateClearsAndRestoresRemoteID(t *testing.T) {
+	b, repo, mainPath, _ := updateFixture(t)
+	ctx := context.Background()
+	err := b.Update(ctx, repo, func(g *stack.Graph) error {
+		g.Stacks[0].ID, g.Stacks[0].Number = "", 0
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, _ := os.ReadFile(mainPath)
+	if s := string(data); strings.Contains(s, `"id"`) || strings.Contains(s, `"number": 7`) || !strings.Contains(s, `"future"`) || !strings.Contains(s, `"extra": "yes"`) {
+		t.Errorf("id and number should be gone and the rest kept:\n%s", s)
+	}
+	err = b.Update(ctx, repo, func(g *stack.Graph) error {
+		g.Stacks[0].ID, g.Stacks[0].Number = "S9", 9
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, _ = os.ReadFile(mainPath)
+	if s := string(data); !strings.Contains(s, `"id": "S9"`) || !strings.Contains(s, `"number": 9`) {
+		t.Errorf("id and number should be back:\n%s", s)
+	}
+	g, _ := b.Load(ctx, repo)
+	if g.Stacks[0].ID != "S9" || g.Stacks[0].Number != 9 {
+		t.Errorf("loaded %q %d", g.Stacks[0].ID, g.Stacks[0].Number)
+	}
+}
+
+func TestUpdateReorderKeepsBranchRecords(t *testing.T) {
+	b, repo, mainPath, _ := updateFixture(t)
+	ctx := context.Background()
+	err := b.Update(ctx, repo, func(g *stack.Graph) error {
+		s := &g.Stacks[0]
+		s.Branches[0], s.Branches[1] = s.Branches[1], s.Branches[0]
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, _ := os.ReadFile(mainPath)
+	s := string(data)
+	if strings.Index(s, `"branch": "b"`) > strings.Index(s, `"branch": "a"`) {
+		t.Errorf("b should now come first:\n%s", s)
+	}
+	if !strings.Contains(s, `"pullRequest": {`) || !strings.Contains(s, `"extra": "yes"`) {
+		t.Errorf("a's pull request and extra member should travel with it:\n%s", s)
+	}
+	g, _ := b.Load(ctx, repo)
+	if names := g.Stacks[0].Names(); names[0] != "b" || names[1] != "a" || g.Stacks[0].Branches[1].PR == nil {
+		t.Errorf("loaded %+v", g.Stacks[0])
+	}
+}
