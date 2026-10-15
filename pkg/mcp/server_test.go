@@ -222,7 +222,7 @@ func TestToolsAreListedWithAnnotationsAndSchemas(t *testing.T) {
 	for _, tool := range res.Tools {
 		got[tool.Name] = tool
 	}
-	for _, name := range []string{"stack_view", "stack_create", "stack_modify", "stack_absorb", "stack_restack", "stack_navigate", "stack_submit", "stack_sync"} {
+	for _, name := range []string{"stack_view", "stack_create", "stack_modify", "stack_absorb", "stack_reorder", "stack_move", "stack_init", "stack_restack", "stack_navigate", "stack_submit", "stack_sync"} {
 		if got[name] == nil {
 			t.Errorf("missing tool %s", name)
 		}
@@ -691,5 +691,45 @@ func TestAbsorb(t *testing.T) {
 	te := h.toolErr("stack_absorb", nil)
 	if te.Code != "invalid_args" || len(te.NextSteps) == 0 {
 		t.Errorf("error = %+v", te)
+	}
+}
+
+func TestReorderMoveInit(t *testing.T) {
+	h := newHarness(t)
+	defer h.assertNoStdout()
+	var ro app.ReorderResult
+	h.call("stack_reorder", map[string]any{"order": []string{"b", "a"}}, &ro)
+	if !ro.Changed || len(ro.Restacked) != 2 {
+		t.Fatalf("reorder = %+v", ro)
+	}
+	if _, err := gittest.RunErr(t, h.dir, "cat-file", "-e", "b:a.txt"); err == nil {
+		t.Error("b still has a's file")
+	}
+	if te := h.toolErr("stack_reorder", map[string]any{"order": []string{"a"}}); te.Code != "invalid_args" {
+		t.Errorf("bad order = %+v", te)
+	}
+	if te := h.toolErr("stack_reorder", nil); te.Code != "invalid_args" {
+		t.Errorf("no order = %+v", te)
+	}
+
+	gittest.Run(t, h.dir, "switch", "-q", "-c", "p", "main")
+	gittest.Commit(t, h.dir, "p.txt", "p", "p")
+	var in app.InitResult
+	h.call("stack_init", nil, &in)
+	if in.Trunk != "main" || len(in.Branches) != 1 || in.Branches[0] != "p" {
+		t.Fatalf("init = %+v", in)
+	}
+
+	var mv app.MoveResult
+	h.call("stack_move", map[string]any{"source": "a", "onto": "p"}, &mv)
+	if mv.Branch != "a" || mv.Onto != "p" || len(mv.Moved) != 1 || mv.NewStack {
+		t.Fatalf("move = %+v", mv)
+	}
+	g := h.backend.Graph()
+	if s, _, ok := g.StackOf("a"); !ok || s.Bottom() != "p" {
+		t.Errorf("a's stack = %+v", s)
+	}
+	if te := h.toolErr("stack_move", map[string]any{"source": "a"}); te.Code != "invalid_args" {
+		t.Errorf("no onto = %+v", te)
 	}
 }
