@@ -297,21 +297,23 @@ func (b *Backend) writeBack(r *reading, fi int, root *node, pool map[string]*nod
 			changed = true
 			continue
 		}
-		if gs.ID == "" && gs.Number == 0 {
-			if rec.get("id") != nil || rec.get("number") != nil {
-				rec.del("id")
-				rec.del("number")
-				changed = true
-			}
-		} else {
-			if rec.str("id") != gs.ID {
-				rec.set("id", stringNode(gs.ID))
-				changed = true
-			}
-			if rec.num("number") != gs.Number {
-				rec.set("number", intNode(gs.Number))
-				changed = true
-			}
+		// A zero id or number is removed rather than written as "" or 0,
+		// so a record never carries an empty value.
+		switch {
+		case gs.ID == "" && rec.get("id") != nil:
+			rec.del("id")
+			changed = true
+		case gs.ID != "" && rec.str("id") != gs.ID:
+			rec.set("id", stringNode(gs.ID))
+			changed = true
+		}
+		switch {
+		case gs.Number == 0 && rec.get("number") != nil:
+			rec.del("number")
+			changed = true
+		case gs.Number != 0 && rec.num("number") != gs.Number:
+			rec.set("number", intNode(gs.Number))
+			changed = true
 		}
 		if gs.Trunk != "" {
 			if tn := rec.get("trunk"); tn == nil || tn.kind != '{' {
