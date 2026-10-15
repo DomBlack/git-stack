@@ -81,6 +81,44 @@ func TestParseSplitsOnContextLines(t *testing.T) {
 	}
 }
 
+// A deletion straight after a context line is a hunk of its own.
+func TestParseDeletionAfterContextLine(t *testing.T) {
+	diff := "diff --git a/f.txt b/f.txt\n--- a/f.txt\n+++ b/f.txt\n@@ -1,3 +1,1 @@\n l1\n-l2\n-l3\n"
+	files, err := Parse(diff)
+	if err != nil {
+		t.Fatal(err)
+	}
+	h := files[0].Hunks
+	if len(h) != 1 || h[0].OldStart != 2 || h[0].OldCount != 2 || h[0].NewStart != 1 || h[0].NewCount != 0 {
+		t.Errorf("hunks = %+v", h)
+	}
+}
+
+// A marker right after a context line has no open run to join, so it is dropped.
+func TestParseDropsMarkerAfterContextLine(t *testing.T) {
+	diff := "diff --git a/f.txt b/f.txt\n--- a/f.txt\n+++ b/f.txt\n@@ -1,2 +1,2 @@\n l1\n\\ No newline at end of file\n-l2\n+L2\n"
+	files, err := Parse(diff)
+	if err != nil {
+		t.Fatal(err)
+	}
+	h := files[0].Hunks
+	if len(h) != 1 || !slices.Equal(h[0].Lines, []string{"-l2", "+L2"}) {
+		t.Errorf("hunks = %+v", h)
+	}
+}
+
+// A mode only change on a non ASCII name has a quoted header and no ---/+++ lines.
+func TestParseQuotedHeaderModeOnlyChange(t *testing.T) {
+	diff := "diff --git \"a/caf\\303\\251.sh\" \"b/caf\\303\\251.sh\"\nold mode 100644\nnew mode 100755\n"
+	files, err := Parse(diff)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(files) != 1 || files[0].OldPath != "café.sh" || files[0].NewPath != "café.sh" {
+		t.Errorf("files = %+v", files)
+	}
+}
+
 func TestParseKeepsNoNewlineMarker(t *testing.T) {
 	diff := "diff --git a/f.txt b/f.txt\n--- a/f.txt\n+++ b/f.txt\n@@ -5 +5 @@ l4\n-l5\n\\ No newline at end of file\n+l5\n"
 	files, err := Parse(diff)

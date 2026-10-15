@@ -52,7 +52,7 @@ func Parse(diff string) ([]FileDiff, error) {
 			if m == nil {
 				return nil, fmt.Errorf("bad hunk header: %q", line)
 			}
-			next, err := hunkBody(cur, lines, i+1, atoi(m[1]), atoi(m[2], 1), atoi(m[3]), atoi(m[4], 1))
+			next, err := hunkBody(cur, lines, i+1, atoiDefault(m[1], 0), atoiDefault(m[2], 1), atoiDefault(m[3], 0), atoiDefault(m[4], 1))
 			if err != nil {
 				return nil, err
 			}
@@ -188,10 +188,11 @@ func unquotePath(s string) string {
 	return s
 }
 
-// atoi parses a hunk header number; an absent count defaults to 1.
-func atoi(s string, def ...int) int {
-	if s == "" && len(def) > 0 {
-		return def[0]
+// atoiDefault parses a hunk header number, giving def when it is absent.
+// The header regexp only lets digits through, so the error is ignored.
+func atoiDefault(s string, def int) int {
+	if s == "" {
+		return def
 	}
 	n, _ := strconv.Atoi(s)
 	return n
