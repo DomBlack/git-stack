@@ -31,8 +31,10 @@ two commits changed goes into the newer of the two. A change to lines no commit
 in the stack touched stays staged, as does a new or deleted file. On a
 terminal you see the plan and get asked before anything is rewritten.
 
--a, -u and -p stage first, dry run or not. The old tips are printed, so
-"git branch -f <branch> <old tip>" followed by "git stack restack" undoes it.`,
+-a, -u and -p stage first, dry run or not. The old tips are printed. If it
+picked the wrong commit, put things back with "git reset --soft <old tip of the
+branch you're on>" (your changes come back staged), "git branch -f <branch> <old
+tip>" for each other branch it rewrote, then "git stack restack".`,
 		Example: `  # stage your fixes, see where each one would go
   git add -p
   git absorb --dry-run

@@ -69,7 +69,7 @@ turn signing off.
 `conflict` from `stack_absorb` means the commits were rewritten (the structured result says which
 branches moved) and the restack of the branches above then stopped; `stack_continue` and
 `stack_abort` apply to that restack only, the absorb itself stays. `invalid_args` from it names the
-branch that needs restacking first, the merge commit it won't rewrite, or the checkout elsewhere
+branch that needs restacking first, the branch with a merge commit it won't rewrite, or the checkout elsewhere
 with uncommitted changes in the way; nothing has changed in those cases.
 `checks_failing` and `checks_pending` come from `stack_merge` when a pull request it would land
 has a check that failed, or (with none failed) one still queued or running, on its head commit.

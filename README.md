@@ -261,7 +261,7 @@ Flags:
 > Aliases: `git absorb`, `git ab`
 
 Takes whatever is staged and folds each changed run of lines into the commit in this stack that
-last changed those lines, i.e. the fix for a review comment three PRs down goes into that PR's
+last changed those lines, e.g. the fix for a review comment three PRs down goes into that PR's
 commit without you going there. It looks at the current branch's commits and the branches below
 it (never trunk, and never a branch whose PR has merged), rewrites the commit it picks and every
 commit above it keeping messages and authors, then restacks the branches above you. It doesn't
@@ -286,9 +286,10 @@ not split between them.
 ⚠ Still staged: 1 hunk
 ```
 
-On a terminal you see the plan and get asked first. The old tips are printed, so if it picked the
-wrong commit, `git branch -f billing-webhook-schema 9b1d2e0` followed by `git restack` puts things
-back. Every branch it needs to rewrite has to be sitting on its parent already (run `git restack`
+On a terminal you see the plan and get asked first. The old tips are printed. If it picked the
+wrong commit, put things back with `git reset --soft <old tip of the branch you're on>` (your changes
+come back staged), `git branch -f <branch> <old tip>` for each other branch it rewrote, then
+`git restack`. Every branch it needs to rewrite has to be sitting on its parent already (run `git restack`
 if not), and the bottom branch of the stack is fine behind main.
 
 Flags:
