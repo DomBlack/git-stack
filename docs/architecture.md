@@ -482,6 +482,16 @@ because deleting a branch on GitHub closes every open PR based on it, and it's t
 that moves the PR above onto the surviving branch; a remote branch something is still based on is
 kept and its delete stays queued.
 
+**Untrack is init's inverse, as a reshape.** A stack is a single line, so untracking a branch takes
+everything above it too and needs no restack: the edit drops those entries and touches no ref. With
+`--only` the branches above close the gap instead, and it runs like `move --only` without the
+destination: their parent changes, the base fixing keeps the untracked branch's commits out of
+them, and one segment restacks them onto its parent. The untracked branch is in no stack
+afterwards, so restoring the snapshot can't pick its entry up from the graph the way it does for a
+moved branch; the snapshot names it, with its head and base, and abort puts it back. Either way a
+stack GitHub knows is queued for dissolving like any reshape, and no pull request is closed, since
+the branches still exist and may be tracked again.
+
 **Merged branches are deleted by default.** `stack.sync.prune` decides: `always` (default)
 deletes branches whose PRs merged or closed, `ask` prompts on a terminal and keeps with a
 notice otherwise, `never` keeps. `-d` and `-f` delete regardless. A branch checked out in

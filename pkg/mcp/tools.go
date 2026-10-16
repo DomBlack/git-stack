@@ -2,6 +2,7 @@ package mcp
 
 import (
 	"context"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"strings"
@@ -285,6 +286,29 @@ func (s *Server) fold(ctx context.Context, req *mcp.CallToolRequest, in foldInpu
 	if err != nil {
 		return nil, app.FoldResult{}, wrapErr(err)
 	}
+	return nil, res, nil
+}
+
+type untrackInput struct {
+	repoArg
+	Branch string `json:"branch,omitempty" jsonschema:"the branch to untrack (default: the current branch)"`
+	Only   bool   `json:"only,omitempty" jsonschema:"untrack just this branch; the branches above it move down onto its parent and are restacked"`
+}
+
+func (s *Server) untrack(ctx context.Context, req *mcp.CallToolRequest, in untrackInput) (*mcp.CallToolResult, app.UntrackResult, error) {
+	repo, a, err := s.appFor(ctx, req, in.RepoPath)
+	if err != nil {
+		return nil, app.UntrackResult{}, wrapErr(err)
+	}
+	res, err := a.Untrack(ctx, repo, app.UntrackOptions{Branch: in.Branch, Only: in.Only})
+	if err != nil {
+		return nil, app.UntrackResult{}, wrapErr(err)
+	}
+	branches, err := json.Marshal(res.Untracked)
+	if err != nil {
+		return nil, app.UntrackResult{}, wrapErr(err)
+	}
+	res.NextSteps = []string{"call stack_init with branches: " + string(branches)}
 	return nil, res, nil
 }
 
@@ -614,6 +638,12 @@ func (s *Server) registerTools() {
 		Description: "Merge the current branch into the branch below it: one branch, one pull request, both sets of commits. The parent survives and is checked out (local changes come along); with keep: true the current branch survives and takes the parent's place. Nothing is rebased or pushed. The pull request of the branch that went is closed at the next stack_submit (closing in the result). Refuses with invalid_args on a stack's bottom branch, when the branch isn't on its parent yet (stack_restack first) or when the parent is checked out in another worktree.",
 		Annotations: &mcp.ToolAnnotations{DestructiveHint: boolp(true), OpenWorldHint: boolp(false)},
 	}, s.fold)
+	mcp.AddTool(s.mcp, &mcp.Tool{
+		Name:        "stack_untrack",
+		Title:       "Stop tracking a branch",
+		Description: "Take a branch (default the current one) and every branch above it out of its stack; a stack is a single line, so it can't keep a gap. No commit, ref or checkout changes, and a stack left empty goes away. With only: true just that branch is untracked and the branches above it are restacked onto its parent, dropping its commits; conflicts and undo work as for stack_reorder. Pull requests stay open; a stack GitHub knows is regrouped at the next stack_submit. next_steps says how to track the branches again. Refuses with invalid_args on a trunk or when a branch in the stack has merged (stack_sync first), and not_in_stack on an untracked branch.",
+		Annotations: &mcp.ToolAnnotations{DestructiveHint: boolp(true), OpenWorldHint: boolp(false)},
+	}, s.untrack)
 	mcp.AddTool(s.mcp, &mcp.Tool{
 		Name:        "stack_init",
 		Title:       "Track existing branches as a stack",
