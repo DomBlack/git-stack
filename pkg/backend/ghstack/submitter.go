@@ -17,9 +17,13 @@ var (
 
 // Submit runs `gh stack submit`. Non-interactive runs use --auto and are
 // captured; interactive runs hand gh-stack the real terminal so its own
-// PR editor can open.
+// PR editor can open. The current branch's stack is moved into this
+// worktree's file first, as that is the only one gh stack reads here.
 func (b *Backend) Submit(ctx context.Context, repo git.Repo, o stack.SubmitOptions) (stack.SubmitResult, error) {
 	if err := b.Preflight(ctx); err != nil {
+		return stack.SubmitResult{}, err
+	}
+	if err := b.adoptCurrent(ctx, repo); err != nil {
 		return stack.SubmitResult{}, err
 	}
 	args := []string{"submit"}

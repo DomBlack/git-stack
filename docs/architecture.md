@@ -117,6 +117,11 @@ no git config keys. The shape is roughly;
   stacks are strictly linear.
 - Trunk is per stack and several stacks can share one. A branch is in at most one stack.
 - `<git-dir>` is per worktree, so a linked worktree doesn't see the main checkout's stacks.
+  git-stack reads every worktree's file, but `gh stack submit` and `gh stack add` only find
+  a stack in the file of the worktree they run in. So before either, the backend moves the
+  current branch's stack record, untouched, into this worktree's file when it lives in another
+  (a stack started in the main checkout and then checked out in a worktree, say), and moves
+  it back the same way when the branch is next submitted from somewhere else.
 - `gh stack view --json` exists but only covers the current stack, calls the GitHub API,
   and writes the stack file as a side effect. Useless for completion or for listing every
   stack.

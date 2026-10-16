@@ -3,6 +3,7 @@ package ghstack
 import (
 	"context"
 	"errors"
+	"slices"
 	"strings"
 
 	"github.com/DomBlack/git-stack/pkg/git"
@@ -20,9 +21,14 @@ func (b *Backend) InitStack(ctx context.Context, repo git.Repo, trunk string, br
 	return b.gh(ctx, repo, args...)
 }
 
-// AddTop runs `gh stack add <name>` without committing (we commit natively).
+// AddTop runs `gh stack add <name>` without committing (we commit natively),
+// once the current branch's stack is in this worktree's file where gh stack
+// will look for it.
 func (b *Backend) AddTop(ctx context.Context, repo git.Repo, name string) error {
 	if err := b.Preflight(ctx); err != nil {
+		return err
+	}
+	if err := b.adoptCurrent(ctx, repo); err != nil {
 		return err
 	}
 	err := b.gh(ctx, repo, "add", name)
@@ -37,4 +43,25 @@ func (b *Backend) AddTop(ctx context.Context, repo git.Repo, name string) error 
 		return err
 	}
 	return nil
+}
+
+// adoptCurrent adopts the stack of the branch checked out here, if any.
+// When every stack is already in this worktree's file there is nothing to
+// move, so git isn't asked which branch that is.
+func (b *Backend) adoptCurrent(ctx context.Context, repo git.Repo) error {
+	r, err := b.read(repo)
+	if err != nil {
+		return err
+	}
+	if !slices.ContainsFunc(r.where, func(w recRef) bool { return r.files[w.file].src.gitDir != repo.GitDir }) {
+		return nil
+	}
+	branch, err := b.git.CurrentBranch(ctx, repo)
+	if errors.Is(err, git.ErrDetached) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	return b.adopt(ctx, repo, branch)
 }
