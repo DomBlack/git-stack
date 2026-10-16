@@ -70,8 +70,20 @@ type SubmitResult struct {
 	Draft        bool          `json:"draft"`
 	DryRun       bool          `json:"dryRun"`
 	// Output is the backend's own output (captured runs only).
-	Output  string   `json:"output,omitempty"`
-	Notices []string `json:"notices,omitempty"`
+	Output string `json:"output,omitempty"`
+	// Closed are the pull requests a pop or fold left behind that this
+	// submit closed.
+	Closed  []ClosedPR `json:"closed,omitempty"`
+	Notices []string   `json:"notices,omitempty"`
+}
+
+// ClosedPR is a queued pull request a submit closed.
+type ClosedPR struct {
+	Number int    `json:"number"`
+	Branch string `json:"branch"`
+	// BranchDeleted is false when the remote branch had to stay because an
+	// open pull request is still based on it.
+	BranchDeleted bool `json:"branchDeleted"`
 }
 
 // Submit pushes the current stack and creates or updates its pull requests.
@@ -259,6 +271,7 @@ func (a *App) Submit(ctx context.Context, repo git.Repo, o SubmitOptions) (Submi
 		}
 	}
 	a.recreateDissolved(ctx, repo, s, dissolved, after, &res)
+	a.closePending(ctx, repo, afterPRs, &res)
 	if (len(texts) > 0 || fixed) && a.d.Forge != nil {
 		// Titles or bases changed; refresh the cache so views show them.
 		if _, err := a.RefreshPRs(ctx, repo); err != nil {
@@ -595,4 +608,56 @@ func dissolvedNotice(graph *stack.Graph, s *stack.Stack, r remoteStack, hasForge
 		return fmt.Sprintf("dissolved stack #%d on GitHub because its pull requests were regrouped by a reorder or move", r.Number)
 	}
 	return fmt.Sprintf("dissolved stack #%d on GitHub; its pull requests now belong to the stack they were moved to", r.Number)
+}
+
+// closePending works through the pull requests a pop or fold queued: each
+// is closed with its comment and then its remote branch deleted. It runs
+// after the backend submit because that is what moves the pull requests
+// that were based on the removed branch onto its replacement, and GitHub
+// closes every open pull request based on a branch that is deleted; so a
+// branch something is still based on is kept, and its delete stays queued.
+func (a *App) closePending(ctx context.Context, repo git.Repo, prs []forge.PullRequest, res *SubmitResult) {
+	p, err := loadPendingRemote(repo)
+	if err != nil {
+		res.Notices = append(res.Notices, fmt.Sprintf("could not read %s (%v); delete it to forget the pull requests waiting to be closed", remoteStacksPath(repo), err))
+		return
+	}
+	if p == nil || len(p.Close) == 0 {
+		return
+	}
+	if a.d.Forge == nil {
+		res.Notices = append(res.Notices, fmt.Sprintf("no forge configured, so %s left behind by a pop or fold stayed open", pluralise(len(p.Close), "a pull request", "pull requests")))
+		return
+	}
+	var keep []pendingClose
+	for _, c := range p.Close {
+		if !c.Closed {
+			if err := a.d.Forge.ClosePR(ctx, repo, c.Number, c.Comment); err != nil {
+				keep = append(keep, c)
+				res.Notices = append(res.Notices, fmt.Sprintf("could not close #%d (%s): %v; the next submit tries again", c.Number, c.Branch, err))
+				continue
+			}
+			c.Closed = true
+		}
+		closed := ClosedPR{Number: c.Number, Branch: c.Branch}
+		if i := slices.IndexFunc(prs, func(pr forge.PullRequest) bool {
+			return pr.Base == c.Branch && pr.Number != c.Number && (pr.State == forge.StateOpen || pr.State == forge.StateDraft)
+		}); i >= 0 {
+			keep = append(keep, c)
+			res.Notices = append(res.Notices, fmt.Sprintf("kept %s on GitHub because #%d is still based on it; the next submit deletes it once that has moved", c.Branch, prs[i].Number))
+		} else if err := a.d.Git.DeleteRemoteBranch(ctx, repo, a.d.Git.RemoteFor(ctx, repo, c.Branch), c.Branch, c.Tip); err != nil {
+			// Gone already is fine; anything else (it moved on the remote,
+			// say) is left for whoever owns it.
+			if !strings.Contains(err.Error(), "remote ref does not exist") {
+				res.Notices = append(res.Notices, fmt.Sprintf("closed #%d but could not delete %s on GitHub: %v", c.Number, c.Branch, err))
+			}
+		} else {
+			closed.BranchDeleted = true
+		}
+		res.Closed = append(res.Closed, closed)
+	}
+	p.Close = keep
+	if err := savePendingRemote(repo, p); err != nil {
+		res.Notices = append(res.Notices, fmt.Sprintf("could not update the list of pull requests to close: %v", err))
+	}
 }

@@ -39,6 +39,7 @@ func (f *fakeForge) Checks(context.Context, git.Repo, []int) (map[int]forge.Chec
 func (f *fakeForge) CreateStack(context.Context, git.Repo, []int) (forge.StackRef, error) {
 	return forge.StackRef{}, nil
 }
+func (f *fakeForge) ClosePR(context.Context, git.Repo, int, string) error { return nil }
 
 func TestPRsForPrefersOpenThenMergedThenRecent(t *testing.T) {
 	t1 := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)

@@ -45,6 +45,7 @@ func (f *fakeForge) MergeStack(_ context.Context, _ git.Repo, n int, _ forge.Mer
 func (f *fakeForge) ListPRs(context.Context, git.Repo) ([]forge.PullRequest, error) {
 	return slices.Clone(f.prs), nil
 }
+func (f *fakeForge) ClosePR(context.Context, git.Repo, int, string) error { return nil }
 func (f *fakeForge) CreateStack(context.Context, git.Repo, []int) (forge.StackRef, error) {
 	return forge.StackRef{}, nil
 }

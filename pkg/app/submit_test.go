@@ -99,6 +99,27 @@ type recordingForge struct {
 	stacks    [][]int
 	createRef forge.StackRef
 	createErr error
+	// closed records every ClosePR call; closeErr is what it returns.
+	closed   []closeCall
+	closeErr error
+}
+
+type closeCall struct {
+	number  int
+	comment string
+}
+
+func (f *recordingForge) ClosePR(_ context.Context, _ git.Repo, n int, comment string) error {
+	if f.closeErr != nil {
+		return f.closeErr
+	}
+	f.closed = append(f.closed, closeCall{n, comment})
+	for i := range f.prs {
+		if f.prs[i].Number == n {
+			f.prs[i].State = forge.StateClosed
+		}
+	}
+	return nil
 }
 
 func (f *recordingForge) CreateStack(_ context.Context, _ git.Repo, numbers []int) (forge.StackRef, error) {

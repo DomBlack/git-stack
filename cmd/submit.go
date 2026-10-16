@@ -6,6 +6,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/DomBlack/git-stack/pkg/app"
+	"github.com/DomBlack/git-stack/pkg/forge"
 )
 
 func newSubmitCmd(c *cli) *cobra.Command {
@@ -115,6 +116,13 @@ really do want them gone.`,
 				default:
 					rep.Info("%s", rep.Branch(pr.Branch))
 				}
+			}
+			for _, c := range res.Closed {
+				gone := ", and deleted its branch"
+				if !c.BranchDeleted {
+					gone = ""
+				}
+				rep.Info("%s  %s closed%s", rep.Branch(c.Branch), rep.Ref(c.Number, "", forge.StateClosed), gone)
 			}
 			for _, n := range res.Notices {
 				rep.Warn("%s", n)

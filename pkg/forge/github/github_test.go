@@ -133,3 +133,26 @@ func TestListPRsCarriesMergeAndHeadCommits(t *testing.T) {
 		}
 	}
 }
+
+func TestClosePR(t *testing.T) {
+	f := exectest.New()
+	f.On("gh", "pr", "close").Reply("")
+	if err := New(f).ClosePR(context.Background(), git.Repo{TopLevel: "/repo"}, 12, "Folded into #11 (b)"); err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.Join(f.Calls()[0].Args, " "); got != "pr close 12 --comment Folded into #11 (b)" {
+		t.Errorf("args = %q", got)
+	}
+
+	// Already closed or merged counts as done; anything else is an error.
+	f = exectest.New()
+	f.On("gh", "pr", "close").Fail(1, "X Pull request #12 (old) can't be closed because it was already merged")
+	if err := New(f).ClosePR(context.Background(), git.Repo{}, 12, "x"); err != nil {
+		t.Errorf("already merged: %v", err)
+	}
+	f = exectest.New()
+	f.On("gh", "pr", "close").Fail(1, "GraphQL: Could not resolve to a PullRequest")
+	if err := New(f).ClosePR(context.Background(), git.Repo{}, 12, "x"); err == nil {
+		t.Error("a real failure should be an error")
+	}
+}
