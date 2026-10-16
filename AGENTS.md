@@ -63,5 +63,5 @@ git-stack is a CLI (`git stack <cmd>`) and stdio MCP server for GitHub's native 
 
 ## Releasing
 - Only when Dom asks for one, and only once CI on main is green.
-- Draft the notes from the PRs merged since the last tag (`gh api repos/DomBlack/git-stack/releases/generate-notes -f tag_name=<new> -f previous_tag_name=<last> --jq .body` lists them), in Dom's voice: a one line summary first, then what's new and why it matters to someone using git-stack, then anything to do after upgrading. Show Dom the draft before tagging.
+- Draft the notes from the PRs merged since the last tag (`gh api repos/DomBlack/git-stack/releases/generate-notes -f tag_name=<new> -f previous_tag_name=<last> --jq .body` lists them), in Dom's voice: a one line summary first (`git stack update` shows it in the terminal, so keep it short), then what's new and why it matters to someone using git-stack, then anything to do after upgrading. Show Dom the draft before tagging.
 - Tag with the notes as the message: `git tag -a vX.Y.Z --cleanup=verbatim -F notes.md`, then push the tag. Never a lightweight tag; the release workflow refuses one. Without `--cleanup=verbatim` git drops the markdown headings.

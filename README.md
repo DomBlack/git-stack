@@ -167,6 +167,18 @@ change before it happens, and `--uninstall` removes what it recorded installing 
 `checksums.txt` and swaps the binary in place. `--check` just tells you whether there's something
 newer.
 
+Either way it lists what you're getting: one line per release between yours and the latest
+(so if you skipped a couple you see those too), any breaking changes in them, and a link to the
+full release notes. Each version links to its own release page on a terminal.
+
+```
+❯ git stack update
+✔ Updated git-stack v0.2.3 to v0.3.1 (~/.local/bin/git-stack)
+  v0.3.1  git stack update now keeps your install up to date too, and continuing…
+  v0.3.0  This release adds absorb, reorder, move and init, so fixing a commit…
+  Release notes: https://github.com/DomBlack/git-stack/releases
+```
+
 Once the new binary is in place it brings whatever `git stack install` set up before in line with
 it, without asking: aliases the new version adds, the completion script, the MCP registration (if
 the binary moved) and the Claude Code and Codex skills, each only if you installed it in the first
@@ -179,7 +191,8 @@ you alone unless you pass `--force`; i.e. we assume you built it that way on pur
 Commands also check for a newer release in the background, at most once a day. It's a single
 request to the GitHub releases API and the answer is cached in your OS cache directory
 (`~/Library/Caches/git-stack` on macOS, `~/.cache/git-stack` on Linux). If you're behind you get a
-one line note after the command's own output. Nothing ever waits on it, it only runs on a terminal
+one line note after the command's own output, and `git stack update --check` shows what changed
+before you take it. Nothing ever waits on it, it only runs on a terminal
 (never for scripts, agents or the MCP server) and `GIT_STACK_NO_UPDATE_CHECK=1` turns it off.
 
 ### In the terminal
@@ -642,7 +655,8 @@ git push origin v0.3.2
 The tag has to be annotated (the release workflow refuses a lightweight one), and
 `--cleanup=verbatim` matters because git otherwise drops every line starting with `#`, i.e. your
 markdown headings. The notes are what people read first, so write them for someone who uses
-git-stack rather than someone who reads the diff: a one line summary as the first line, then what's
+git-stack rather than someone who reads the diff: a one line summary as the first line (`git stack
+update` shows it in the terminal, so keep it short; it's cut to fit), then what's
 new and why you'd care, then anything they have to do after upgrading (run `git stack install`
 again, say). The same text works as the announcement.
 

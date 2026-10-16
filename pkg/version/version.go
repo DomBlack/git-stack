@@ -141,6 +141,13 @@ func Compare(a, b string) int {
 	return 0
 }
 
+// IsRelease reports whether v is a release version (vX.Y.Z), not a dev
+// build or pseudo version.
+func IsRelease(v string) bool {
+	_, ok := parse(v)
+	return ok
+}
+
 func parse(v string) ([3]int, bool) {
 	var out [3]int
 	v = strings.TrimPrefix(v, "v")

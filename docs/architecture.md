@@ -474,7 +474,11 @@ the VCS details `go build` records for a checkout (so a dev build says `dev (3a9
 releases API and the asset URLs rather than going through `gh`, so updating doesn't need a
 login. It verifies the archive against goreleaser's `checksums.txt`, writes the new binary
 next to the old one and renames it into place. Dev builds aren't replaced without `--force`.
-After a swap, update runs the *new* binary's `install --refresh` (a hidden flag), since the
+Update also lists what's coming from GitHub's releases list (one more request, same plain
+HTTPS): the releases newer than this one up to the target, newest first, each as the one line
+summary its notes open with (the annotated tag's first line, see Releasing in the README), plus
+the PRs under "Breaking changes" in GitHub's generated list. A dev build only gets the target
+release, and failing to fetch the list never stops an update. After a swap, update runs the *new* binary's `install --refresh` (a hidden flag), since the
 completion script and the skill are built into the binary and the old one only knows its own
 versions of them. Refresh never prompts, only touches what's recorded as managed (or an agent
 registration that already exists) and only reports changes. Older binaries call it on newer

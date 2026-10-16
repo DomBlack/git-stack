@@ -16,6 +16,7 @@ import (
 	"testing"
 
 	"github.com/DomBlack/git-stack/pkg/update"
+	"github.com/DomBlack/git-stack/pkg/version"
 )
 
 // releaseServer serves one release with a darwin/arm64 and linux/amd64 (and
@@ -40,6 +41,14 @@ func releaseServer(t *testing.T, tag, body string) *httptest.Server {
 	mux.HandleFunc("/repos/DomBlack/git-stack/releases/latest", func(w http.ResponseWriter, _ *http.Request) {
 		fmt.Fprintf(w, `{"tag_name": %q, "assets": [{"name": %q, "browser_download_url": %q}, {"name": "checksums.txt", "browser_download_url": %q}]}`,
 			tag, name, srv.URL+"/dl/bin", srv.URL+"/dl/sums")
+	})
+	// The release list update shows notes from: this release, with a
+	// breaking change, and the one before it.
+	mux.HandleFunc("/repos/DomBlack/git-stack/releases", func(w http.ResponseWriter, _ *http.Request) {
+		fmt.Fprintf(w, `[{"tag_name": %q, "html_url": "https://github.com/DomBlack/git-stack/releases/tag/%s",
+			"body": "Summary of %s\n\n## What's Changed\n### Breaking changes\n* Change a default by @DomBlack in https://github.com/DomBlack/git-stack/pull/7\n"},
+			{"tag_name": "v9.9.8", "html_url": "https://github.com/DomBlack/git-stack/releases/tag/v9.9.8", "body": "Summary of v9.9.8"},
+			{"tag_name": "v1.0.0", "html_url": "https://github.com/DomBlack/git-stack/releases/tag/v1.0.0", "body": "Summary of v1.0.0"}]`, tag, tag, tag)
 	})
 	mux.HandleFunc("/dl/bin", func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write(archive) })
 	mux.HandleFunc("/dl/sums", func(w http.ResponseWriter, _ *http.Request) {
@@ -82,6 +91,11 @@ func TestUpdateCommand(t *testing.T) {
 	}
 	if !strings.Contains(out, "dev build") || !strings.Contains(out, "v9.9.9") || !strings.Contains(out, "--force") {
 		t.Errorf("dev build output = %q", out)
+	}
+	// A dev build only hears about the release it would get.
+	if !strings.Contains(out, "  v9.9.9  Summary of v9.9.9\n") || strings.Contains(out, "v9.9.8") ||
+		!strings.Contains(out, "Release notes: https://github.com/DomBlack/git-stack/releases/tag/v9.9.9") {
+		t.Errorf("dev build notes = %q", out)
 	}
 	if got, _ := os.ReadFile(target); string(got) != "old" {
 		t.Errorf("binary replaced without --force: %q", got)
@@ -150,5 +164,56 @@ func TestUpdateCommandReportsAFailedRefresh(t *testing.T) {
 	printError(&buf, err)
 	if !strings.Contains(buf.String(), "unknown flag: --refresh") || !strings.Contains(buf.String(), "git stack install") {
 		t.Errorf("error output = %q", buf.String())
+	}
+}
+
+func TestUpdateShowsEveryReleaseBeingSkipped(t *testing.T) {
+	srv := releaseServer(t, "v9.9.9", "new binary")
+	c := &cli{
+		streams:      testStreams(nil),
+		current:      version.Info{Version: "v1.0.0", Release: true},
+		updateTarget: filepath.Join(t.TempDir(), "git-stack"),
+		updateClient: &update.Client{HTTP: srv.Client(), BaseURL: srv.URL, Repo: "DomBlack/git-stack", UserAgent: "test"},
+	}
+	root := newRootCmd(c)
+	root.SetArgs([]string{"update", "--check"})
+	if err := root.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	out := c.streams.Out.(*bytes.Buffer).String()
+	want := "note: Update available: v9.9.9 is out, you have v1.0.0\n" +
+		"  v9.9.9  Summary of v9.9.9\n" +
+		"  v9.9.8  Summary of v9.9.8\n" +
+		"  breaking change in v9.9.9: Change a default #7\n" +
+		"  Release notes: https://github.com/DomBlack/git-stack/releases\n" +
+		"  - git stack update installs it\n"
+	if out != want {
+		t.Errorf("update --check output:\n%s\nwant:\n%s", out, want)
+	}
+}
+
+func TestUpdateGoesAheadWithoutTheNotes(t *testing.T) {
+	srv := releaseServer(t, "v9.9.9", "new binary")
+	// Only the latest release endpoint works; the release list fails.
+	mux := http.NewServeMux()
+	mux.HandleFunc("/repos/DomBlack/git-stack/releases/latest", func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, srv.URL+r.URL.Path, http.StatusTemporaryRedirect)
+	})
+	broken := httptest.NewServer(mux)
+	t.Cleanup(broken.Close)
+	c := &cli{
+		streams:      testStreams(nil),
+		current:      version.Info{Version: "v1.0.0", Release: true},
+		updateTarget: filepath.Join(t.TempDir(), "git-stack"),
+		updateClient: &update.Client{HTTP: broken.Client(), BaseURL: broken.URL, Repo: "DomBlack/git-stack", UserAgent: "test"},
+	}
+	root := newRootCmd(c)
+	root.SetArgs([]string{"update", "--check"})
+	if err := root.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	out := c.streams.Out.(*bytes.Buffer).String() + c.streams.Err.(*bytes.Buffer).String()
+	if !strings.Contains(out, "Update available: v9.9.9") || !strings.Contains(out, "Couldn't fetch what changed; the release notes are at https://github.com/DomBlack/git-stack/releases") {
+		t.Errorf("output without notes = %q", out)
 	}
 }
