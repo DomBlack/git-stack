@@ -24,6 +24,9 @@ type CreateOptions struct {
 	// UseAI drafts the branch name (and the message when none is given).
 	UseAI    bool
 	NoVerify bool
+	// Insert puts the branch directly above the current one, in the middle
+	// of its stack, and restacks the branches that were above onto it.
+	Insert bool
 }
 
 // CreateResult reports what happened.
@@ -33,6 +36,10 @@ type CreateResult struct {
 	Commit *CommitInfo `json:"commit,omitempty"`
 	// NewStack is true when the branch started a new stack on trunk.
 	NewStack bool `json:"newStack"`
+	// Inserted is true when the branch went in below other branches of the
+	// stack; Restacked lists the ones moved onto it, bottom to top.
+	Inserted  bool     `json:"inserted,omitempty"`
+	Restacked []string `json:"restacked,omitempty"`
 }
 
 // recentSubjectsCount is how many trunk subjects feed the AI prompt.
@@ -43,7 +50,9 @@ const recentSubjectsCount = 10
 const undoTimeout = 30 * time.Second
 
 // Create stages, creates a branch on top of the current one, commits and
-// registers the branch with the backend.
+// registers the branch with the backend. With Insert on a branch that is
+// not the top of its stack, the branch goes in right above the current one
+// and the branches above are restacked onto it afterwards.
 func (a *App) Create(ctx context.Context, repo git.Repo, o CreateOptions) (CreateResult, error) {
 	if a.d.Tracker == nil {
 		return CreateResult{}, stack.New(stack.KindUnsupported, "no stack backend configured")
@@ -61,15 +70,30 @@ func (a *App) Create(ctx context.Context, repo git.Repo, o CreateOptions) (Creat
 	}
 
 	var trunk string
-	newStack := false
+	newStack, insert := false, false
+	var snap *reshapeSnapshot
 	switch s, i, ok := graph.StackOf(current); {
 	case graph.IsTrunk(current) || a.isDefaultBranch(ctx, repo, graph, current):
+		if o.Insert {
+			return CreateResult{}, stack.Newf(stack.KindInvalidArgs, "%s is a trunk; --insert puts a branch in the middle of a stack", current).
+				WithSteps("drop --insert to start a new stack here")
+		}
 		trunk, newStack = current, true
 	case ok && i == len(s.Branches)-1:
 		trunk = s.Trunk
+	case ok && o.Insert:
+		if err := a.noRebaseActive(ctx, repo); err != nil {
+			return CreateResult{}, err
+		}
+		if err := noMergedBranches(s); err != nil {
+			return CreateResult{}, err
+		}
+		trunk, insert = s.Trunk, true
+		snap = snapshotOf(graph, []string{s.Bottom()})
 	case ok:
 		return CreateResult{}, stack.Newf(stack.KindNotAtTop, "%s is not the top of its stack (top is %s)", current, s.Top()).
 			WithSteps("run `git stack top` and create the branch there",
+				"or pass --insert to put it right above "+current,
 				"gh stack can only add branches at the top of a stack")
 	default:
 		return CreateResult{}, stack.Newf(stack.KindNotInStack, "%s is not in a stack", current).
@@ -88,34 +112,96 @@ func (a *App) Create(ctx context.Context, repo git.Repo, o CreateOptions) (Creat
 	}
 
 	err = a.progress(ctx, PhaseCreate, fmt.Sprintf("Creating branch %s", name), func(ctx context.Context) error {
-		if newStack {
+		switch {
+		case newStack:
 			return a.d.Tracker.InitStack(ctx, repo, trunk, []string{name})
+		case insert:
+			return a.insertBranch(ctx, repo, name, current)
 		}
 		return a.d.Tracker.AddTop(ctx, repo, name)
 	})
 	if err != nil {
 		return CreateResult{}, err
 	}
-	res := CreateResult{Branch: name, Parent: current, NewStack: newStack}
+	res := CreateResult{Branch: name, Parent: current, NewStack: newStack, Inserted: insert}
 	if !staged {
+		// The new branch is the current one's tip, so the branches above
+		// are already on it.
 		return res, nil
 	}
 	sha, err := a.d.Git.Commit(ctx, repo, git.CommitOptions{Message: message, NoVerify: o.NoVerify})
 	if err != nil {
-		return CreateResult{}, a.undoCreate(ctx, repo, name, current, commitError(err, "pass -m <message>"))
+		return CreateResult{}, a.undoCreate(ctx, repo, name, current, snap, commitError(err, "pass -m <message>"))
 	}
 	info := a.commitInfo(ctx, repo, sha)
 	res.Commit = &info
-	return res, nil
+	if !insert {
+		return res, nil
+	}
+	// The branches above move onto the new commit like after a modify; a
+	// conflict stops there, and abort puts them back, leaving the new
+	// branch and its commit in the stack.
+	n := len(upstack(graph, current))
+	headline := fmt.Sprintf("Restacking %d %s above %s", n, pluralise(n, "branch", "branches"), name)
+	rr, err := a.restack(ctx, repo, RestackOptions{Scope: stack.ScopeUpstack}, restackCommand, headline)
+	res.Restacked = movedNames(rr)
+	return res, err
 }
+
+// insertBranch creates name on parent, checks it out and records it in
+// parent's stack right above it, which makes the stack's pull requests
+// stale on GitHub: its remote id is cleared and queued for dissolving, as
+// a reorder does. Nothing else moves yet; name is parent's tip.
+func (a *App) insertBranch(ctx context.Context, repo git.Repo, name, parent string) error {
+	if err := a.d.Git.CreateBranch(ctx, repo, name, parent); err != nil {
+		return err
+	}
+	if err := a.d.Git.Switch(ctx, repo, name); err != nil {
+		if derr := a.d.Git.DeleteBranch(ctx, repo, name); derr != nil {
+			a.d.Log.Debug("undo insert", "branch", name, "err", derr)
+		}
+		return err
+	}
+	graph, err := a.d.Meta.Load(ctx, repo)
+	if err != nil {
+		return err
+	}
+	s, _, ok := graph.StackOf(parent)
+	if !ok {
+		return stack.Newf(stack.KindNotInStack, "%s is not in a stack", parent)
+	}
+	bottom := s.Bottom()
+	e := reshapeEdit{
+		touched: []string{bottom},
+		relink:  []string{bottom},
+		edit: func(g *stack.Graph) error {
+			s, i, ok := g.StackOf(parent)
+			if !ok {
+				return stack.Newf(stack.KindInvalidArgs, "%s is no longer in a stack", parent)
+			}
+			s.Branches = slices.Insert(s.Branches, i+1, stack.Branch{Name: name})
+			return nil
+		},
+	}
+	if _, err := a.reshape(ctx, repo, createCommand, "", e); err != nil {
+		if uerr := errors.Join(a.d.Git.Switch(ctx, repo, parent), a.d.Git.DeleteBranch(ctx, repo, name)); uerr != nil {
+			a.d.Log.Debug("undo insert", "branch", name, "err", uerr)
+		}
+		return err
+	}
+	return nil
+}
+
+const createCommand = "git stack create"
 
 // undoCreate makes a failed create all or nothing: the branch was already
 // created, checked out and registered before the commit failed (a locked
 // signing key, a hook saying no), so forget it, go back to the parent and
-// delete it. The staged changes survive, both branches point at the same
-// commit. The error says to run create again, or, when undoing failed too,
-// what was left behind and how to commit on it instead.
-func (a *App) undoCreate(ctx context.Context, repo git.Repo, name, parent string, cause error) error {
+// delete it. snap, when the branch was inserted, is the stack's shape from
+// before, put back first. The staged changes survive, both branches point
+// at the same commit. The error says to run create again, or, when undoing
+// failed too, what was left behind and how to commit on it instead.
+func (a *App) undoCreate(ctx context.Context, repo git.Repo, name, parent string, snap *reshapeSnapshot, cause error) error {
 	err := asStackError(cause)
 	// The commit may have failed because ctx was cancelled; the undo still
 	// has to run, so give it its own bounded context.
@@ -126,10 +212,19 @@ func (a *App) undoCreate(ctx context.Context, repo git.Repo, name, parent string
 	// and must stay: deleting it would orphan the work.
 	if tip, ok, terr := a.d.Git.Tip(ctx, repo, name); terr == nil && ok {
 		if parentTip, _, perr := a.d.Git.Tip(ctx, repo, parent); perr == nil && tip != parentTip {
-			return err.WithSteps(fmt.Sprintf("%s has a commit after all, so it was kept and is tracked; check `git stack log`", name))
+			err = err.WithSteps(fmt.Sprintf("%s has a commit after all, so it was kept and is tracked; check `git stack log`", name))
+			if snap != nil {
+				err = err.WithSteps("git stack restack moves the branches above onto it")
+			}
+			return err
 		}
 	}
 	undo := func() error {
+		if snap != nil {
+			if err := a.restoreReshape(ctx, repo, snap); err != nil {
+				return fmt.Errorf("put the stack back: %w", err)
+			}
+		}
 		if err := a.d.Meta.Update(ctx, repo, func(g *stack.Graph) error {
 			for i := range g.Stacks {
 				g.Stacks[i].Branches = slices.DeleteFunc(g.Stacks[i].Branches, func(b stack.Branch) bool { return b.Name == name })
