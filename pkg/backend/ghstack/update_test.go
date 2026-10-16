@@ -212,6 +212,36 @@ func TestUpdateAppendsStackToCurrentWorktreeFile(t *testing.T) {
 	}
 }
 
+func TestUpdateAppendsStackToNewWorktreeFile(t *testing.T) {
+	b, repo, mainPath, _ := updateFixture(t)
+	ctx := context.Background()
+	// A second worktree with no file of its own: gh stack only reads the
+	// worktree's file there, so the new stack must not go in the main one.
+	dir := filepath.Join(t.TempDir(), "fresh")
+	gittest.Run(t, repo.TopLevel, "worktree", "add", "-q", "-b", "f", dir)
+	wtRepo, err := git.New(exec.New()).Discover(ctx, dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = b.Update(ctx, wtRepo, func(g *stack.Graph) error {
+		g.Stacks = append(g.Stacks, stack.Stack{Trunk: "main", Branches: []stack.Branch{{Name: "f"}}})
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(filepath.Join(wtRepo.GitDir, FileName))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if f, err := parseFile(data); err != nil || len(f.Stacks) != 1 || f.Stacks[0].Branches[0].Branch != "f" {
+		t.Errorf("worktree file = %s (%v)", data, err)
+	}
+	if main, _ := os.ReadFile(mainPath); string(main) != mainFile {
+		t.Errorf("the main file changed:\n%s", main)
+	}
+}
+
 func TestUpdateCreatesTheFileForTheFirstStack(t *testing.T) {
 	gittest.Isolate(t)
 	dir := gittest.InitRepo(t)

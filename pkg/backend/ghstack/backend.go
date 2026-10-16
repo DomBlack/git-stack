@@ -152,11 +152,11 @@ func (b *Backend) Load(_ context.Context, repo git.Repo) (*stack.Graph, error) {
 // and writes each file back, editing the JSON in place so members we don't
 // model, PR records and ordering survive. A file whose stacks fn didn't
 // change is not rewritten. fn may also append stacks (each with a trunk and
-// at least one branch; they are written to the current worktree's file, else
-// the main checkout's, else a new file in the common dir) and may set or
-// clear a stack's ID and Number (clearing removes them from the record). It
-// must not remove or reorder existing stacks; a stack left with no branches
-// is removed.
+// at least one branch; they are written to the current worktree's file,
+// created if need be, since that is the only one gh stack reads there) and
+// may set or clear a stack's ID and Number (clearing removes them from the
+// record). It must not remove or reorder existing stacks; a stack left with
+// no branches is removed.
 func (b *Backend) Update(ctx context.Context, repo git.Repo, fn func(*stack.Graph) error) error {
 	var dirs []string
 	for _, src := range sources(repo) {
@@ -164,10 +164,10 @@ func (b *Backend) Update(ctx context.Context, repo git.Repo, fn func(*stack.Grap
 			dirs = append(dirs, src.gitDir)
 		}
 	}
-	// The common dir is always locked, even with no file yet: Update may
-	// create the first stack's file there and two writers must not race it.
-	if !slices.Contains(dirs, repo.CommonDir) {
-		dirs = append(dirs, repo.CommonDir)
+	// The current git dir is always locked, even with no file yet: Update
+	// may create its file for a new stack and two writers must not race it.
+	if !slices.Contains(dirs, repo.GitDir) {
+		dirs = append(dirs, repo.GitDir)
 	}
 	slices.Sort(dirs)
 	var unlocks []func()
@@ -254,19 +254,18 @@ func (r *reading) parseAll() ([]*node, map[string]*node, error) {
 	return roots, pool, nil
 }
 
-// fileFor picks the file new stacks are written to: the current worktree's
-// when it has one, else the main checkout's, else a fresh file in the
-// common dir, which is where gh stack keeps it today.
+// fileFor picks the file new stacks are written to: the current worktree's,
+// created when it has none yet. gh stack only reads the file in the git dir
+// it runs in, so a stack written anywhere else would be invisible to it from
+// here (in the main checkout that is the common dir).
 func (r *reading) fileFor(repo git.Repo) int {
-	for _, dir := range []string{repo.GitDir, repo.CommonDir} {
-		for i, f := range r.files {
-			if f.src.gitDir == dir {
-				return i
-			}
+	for i, f := range r.files {
+		if f.src.gitDir == repo.GitDir {
+			return i
 		}
 	}
 	r.files = append(r.files, loaded{
-		src:  source{repo.CommonDir, filepath.Dir(repo.CommonDir)},
+		src:  source{repo.GitDir, repo.TopLevel},
 		data: []byte("{\n  \"schemaVersion\": 1,\n  \"stacks\": []\n}\n"),
 		f:    &file{SchemaVersion: SchemaVersion},
 	})
