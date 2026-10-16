@@ -18,6 +18,7 @@ that touches a stack:
 |---|---|
 | See the stacks, PR state, what needs a restack | `stack_view` |
 | Start a branch on top of the current one (from trunk: a new stack) | `stack_create`; you write `message` |
+| Add a branch in the middle of a stack, right above the current one | `stack_create` with `insert: true` (restacks the branches above onto it) |
 | Change the current branch's commit and rebase everything above | `stack_modify` |
 | Fold staged fixes into whichever commits of the stack last touched those lines | `stack_absorb` (`dry_run: true` to see the plan) |
 | Rebase the stack after edits lower down | `stack_restack` |
@@ -37,8 +38,8 @@ the one calling.
 
 - Never `git rebase`, `git commit --amend` or `git push --force` by hand on a stacked branch:
   the branches above would be left behind. Use `stack_modify` / `stack_restack`.
-- New work goes on a **new branch on top** (`stack_create`); gh stack cannot insert a branch
-  in the middle. To change something lower down, `stack_navigate` there, edit, then
+- New work goes on a **new branch on top** (`stack_create`), or with `insert: true` right above
+  the current branch when it belongs lower down. To change something lower down, `stack_navigate` there, edit, then
   `stack_modify` (it restacks the rest).
 - On `code: "conflict"`: resolve the listed files, `git add` them, then call the same tool
   again with `continue: true` (or `abort: true`); after `stack_absorb`, `stack_reorder` or

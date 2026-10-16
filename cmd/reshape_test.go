@@ -88,3 +88,24 @@ func TestInitCommand(t *testing.T) {
 		t.Errorf("tracked branch: %v", err)
 	}
 }
+
+func TestCreateInsertCommand(t *testing.T) {
+	dir, run := stackOf3(t)
+	gittest.Run(t, dir, "switch", "-q", "a")
+	gittest.WriteFile(t, dir, "n.txt", "n")
+	out, errOut, err := run("create", "-i", "-a", "-m", "feat: n", "n")
+	if err != nil || !strings.Contains(out, "ok: Created n above a  ") || !strings.Contains(out, "Restacked 2 branches above n") {
+		t.Errorf("create --insert: %q %q %v", out, errOut, err)
+	}
+	if _, err := gittest.RunErr(t, dir, "cat-file", "-e", "c:n.txt"); err != nil {
+		t.Error("c should sit on n")
+	}
+	out, _, err = run("log")
+	if err != nil || strings.Index(out, "○ b\n") > strings.Index(out, "● n\n") || strings.Index(out, "● n\n") > strings.Index(out, "○ a\n") {
+		t.Errorf("log after insert: %q %v", out, err)
+	}
+	gittest.Run(t, dir, "switch", "-q", "main")
+	if _, _, err = run("create", "--insert", "x"); err == nil || !strings.Contains(err.Error(), "is a trunk") {
+		t.Errorf("--insert on trunk: %v", err)
+	}
+}

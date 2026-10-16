@@ -192,8 +192,8 @@ rather than a confusing git error.
 
 **`create` from trunk runs `gh stack init`, from the top runs `gh stack add`, and we
 always commit natively.** This sidesteps both `add` quirks above. From the middle of a
-stack you get a `not_at_top` error with next steps; from an untracked branch you get told
-the branch isn't in a stack. The branch is created, checked out and registered before the
+stack you get a `not_at_top` error with next steps (unless you pass `--insert`, see below);
+from an untracked branch you get told the branch isn't in a stack. The branch is created, checked out and registered before the
 commit, so when the commit fails (a signing key that isn't unlocked, a hook saying no) create
 undoes all of that, forgetting the branch through `Update`, switching back and deleting it,
 and the staged changes are still staged; the error says to run it again. If the undo itself
@@ -434,6 +434,18 @@ so `continue` runs it at the end, and `abort` only has to put the dropped branch
 metadata (the snapshot lists it), since it was never deleted and HEAD never moved. Its open PR
 goes on the close queue next to the dissolves, so the next submit closes it once gh stack has
 moved the PR above it onto the new parent.
+
+**`create --insert` is a reshape, then a commit, then a restack like modify's.** gh stack can't add
+a branch below the top, so we create and check out the branch with git, and a reshape with no
+restack segments puts it in the list right above the current branch, fixes the base of the
+branch that was above, and clears and queues the stack's GitHub id like a reorder. Then we
+commit, and if that fails it's undone like any create (the snapshot goes back first). Only then
+are the branches above restacked onto the new commit, as a plain restack rather than part of the
+reshape, so a conflict's abort puts those branches back but leaves the new branch in the stack
+with its commit, the same as aborting the restack after a `modify`. Putting the order back on
+abort would have left the new branch untracked, holding a commit with nowhere to go, and
+undoing the create from inside abort would mean moving that commit back into the index after
+the fact. On the top branch `--insert` is a plain create.
 
 **GitHub's stack is dissolved and made again, not edited.** The stacks API can create a stack
 from a list of PRs and add PRs to the top of one, and that's all. Left alone, `gh stack submit`
