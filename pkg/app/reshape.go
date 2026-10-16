@@ -19,6 +19,12 @@ type reshapeSnapshot struct {
 	// Created names the bottom branch of each stack the reshape added;
 	// restoring empties them, which removes them.
 	Created []string `json:"created,omitempty"`
+	// Dropped names the branches the reshape took out of their stack;
+	// restoring puts back each one that still exists.
+	Dropped []string `json:"dropped,omitempty"`
+	// Closes are the pull requests the reshape queued to close; restoring
+	// forgets them again.
+	Closes []int `json:"closes,omitempty"`
 }
 
 type snapshotStack struct {
@@ -75,6 +81,16 @@ func stackIndex(g *stack.Graph, s *stack.Stack) int {
 // Stacks the reshape created are emptied, which removes them; any other
 // branch the snapshot does not name stays on the stack it is on now.
 func (a *App) restoreReshape(ctx context.Context, repo git.Repo, snap *reshapeSnapshot) error {
+	dropped := map[string]stack.Branch{}
+	for _, name := range snap.Dropped {
+		tip, ok, err := a.d.Git.Tip(ctx, repo, "refs/heads/"+name)
+		if err != nil {
+			return err
+		}
+		if ok {
+			dropped[name] = stack.Branch{Name: name, Head: tip}
+		}
+	}
 	var ids []string
 	err := a.d.Meta.Update(ctx, repo, func(g *stack.Graph) error {
 		ids = nil
@@ -114,6 +130,11 @@ func (a *App) restoreReshape(ctx context.Context, repo git.Repo, snap *reshapeSn
 				}
 			}
 			g.Stacks[i].Branches = nil
+		}
+		for name, b := range dropped {
+			if _, _, tracked := g.StackOf(name); !tracked {
+				pool[name] = b
+			}
 		}
 		// Each stack goes home to the first free slot, in index order, that
 		// still carries its remote id; else that has its bottom branch at
@@ -181,6 +202,9 @@ func (a *App) restoreReshape(ctx context.Context, repo git.Repo, snap *reshapeSn
 	if err != nil {
 		return err
 	}
+	if err := dropPendingClose(repo, snap.Closes); err != nil {
+		return err
+	}
 	return dropPendingRemote(repo, ids)
 }
 
@@ -200,6 +224,13 @@ type reshapeEdit struct {
 	// membership changed; its remote id is cleared and the stack queued
 	// for dissolving on the next submit.
 	relink []string
+	// dropped names the branches edit takes out of their stack, and closes
+	// their pull requests to close at the next submit.
+	dropped []string
+	closes  []pendingClose
+	// finish runs once the segments are restacked, here or at the end of
+	// git stack continue.
+	finish *reshapeFinish
 }
 
 // reshape runs an edit: snapshot, metadata update with bases fixed, remote
@@ -214,7 +245,10 @@ func (a *App) reshape(ctx context.Context, repo git.Repo, command, headline stri
 		return RestackResult{}, err
 	}
 	snap := snapshotOf(graph, e.touched)
-	snap.Created = e.created
+	snap.Created, snap.Dropped = e.created, e.dropped
+	for _, c := range e.closes {
+		snap.Closes = append(snap.Closes, c.Number)
+	}
 	local, err := a.localBranches(ctx, repo)
 	if err != nil {
 		return RestackResult{}, err
@@ -224,7 +258,7 @@ func (a *App) reshape(ctx context.Context, repo git.Repo, command, headline stri
 		return RestackResult{}, err
 	}
 	var pending []remoteStack
-	queued := false
+	queued, closing := false, false
 	err = a.d.Meta.Update(ctx, repo, func(g *stack.Graph) error {
 		before := parentsOf(g)
 		// The stacks to relink, and the names GitHub knows them by, are
@@ -232,7 +266,7 @@ func (a *App) reshape(ctx context.Context, repo git.Repo, command, headline stri
 		// its bottom branch elsewhere, and the edit only appends stacks and
 		// edits branches, so indexes hold.
 		var relink []int
-		pending, queued = nil, false
+		pending, queued, closing = nil, false, false
 		for _, name := range e.relink {
 			if s, _, ok := g.StackOf(name); ok && s.ID != "" {
 				if i := stackIndex(g, s); !slices.Contains(relink, i) {
@@ -268,6 +302,12 @@ func (a *App) reshape(ctx context.Context, repo git.Repo, command, headline stri
 		for _, i := range relink {
 			g.Stacks[i].ID, g.Stacks[i].Number = "", 0
 		}
+		if len(e.closes) > 0 {
+			if err := addPendingClose(repo, e.closes); err != nil {
+				return err
+			}
+			closing = true
+		}
 		// Queue the dissolves before the cleared ids are written, so a
 		// failed write never leaves an id gone with nothing queued.
 		if len(pending) > 0 {
@@ -279,6 +319,11 @@ func (a *App) reshape(ctx context.Context, repo git.Repo, command, headline stri
 		return nil
 	})
 	if err != nil {
+		if closing {
+			if derr := dropPendingClose(repo, snap.Closes); derr != nil {
+				err = errors.Join(err, derr)
+			}
+		}
 		if queued {
 			// The ids were not cleared after all; forget the dissolves again.
 			ids := make([]string, len(pending))
@@ -291,16 +336,28 @@ func (a *App) reshape(ctx context.Context, repo git.Repo, command, headline stri
 		}
 		return RestackResult{}, err
 	}
-	if len(e.segments) == 0 {
-		return RestackResult{}, nil
-	}
-	run := &restackRun{repo: repo, command: command, originalBranch: current, reshape: snap}
+	run := &restackRun{repo: repo, command: command, originalBranch: current, reshape: snap, finish: e.finish}
 	res := RestackResult{Scope: stack.ScopeUpstack}
+	if len(e.segments) == 0 {
+		if err := a.finishReshape(ctx, run, &res); err != nil {
+			return res, a.saveStopped(run, err)
+		}
+		return res, nil
+	}
+	restacked := false
 	err = a.progress(ctx, PhaseRestack, headline, func(ctx context.Context) error {
-		return a.restackSegments(ctx, run, e.segments, &res)
+		if err := a.restackSegments(ctx, run, e.segments, &res); err != nil {
+			return err
+		}
+		restacked = true
+		return a.finishReshape(ctx, run, &res)
 	})
 	if err == nil {
 		return res, nil
+	}
+	if restacked {
+		// Only the finish is left; continue does it again.
+		return res, a.saveStopped(run, err)
 	}
 	// A saved state means the engine stopped somewhere continue and abort
 	// can pick up (a conflict, usually); leave it to them. Without one,
@@ -318,6 +375,27 @@ func (a *App) reshape(ctx context.Context, repo git.Repo, command, headline stri
 	return res, a.saveStopped(run, err)
 }
 
+// finishReshape runs the reshape's finish step, if it has one, once every
+// segment is restacked and the user is back on the branch they started
+// from.
+func (a *App) finishReshape(ctx context.Context, run *restackRun, res *RestackResult) error {
+	if run.finish == nil {
+		return nil
+	}
+	if run.finish.Pop != "" {
+		if err := a.finishPop(ctx, run.repo, run.finish); err != nil {
+			// HEAD may already be on the parent with the changes staged; a
+			// retry must not switch back to the popped branch.
+			if cur, _ := a.d.Git.CurrentBranch(ctx, run.repo); cur == run.finish.Parent {
+				run.originalBranch = cur
+			}
+			return err
+		}
+		res.Popped = run.finish.Pop
+	}
+	return nil
+}
+
 // saveStopped saves a reshape that stopped without a conflict after some
 // refs moved: what moved, the segments still to do (the one that failed
 // first) and the snapshot, so git stack continue can finish it once the
@@ -326,7 +404,7 @@ func (a *App) saveStopped(run *restackRun, err error) error {
 	e := asStackError(err)
 	st := &restackState{
 		Command: run.command, OriginalBranch: run.originalBranch, Trunk: run.trunk,
-		Moved: run.moved, Then: run.then, Reshape: run.reshape,
+		Moved: run.moved, Then: run.then, Reshape: run.reshape, Finish: run.finish,
 	}
 	if serr := saveRestackState(run.repo, st); serr != nil {
 		return e.WithSteps(fmt.Sprintf("the new shape was kept but could not be saved for git stack continue or abort (%v); git stack restack finishes it", serr))
