@@ -146,7 +146,7 @@ Claude Code and Codex if you have them installed**. Each of those is on by defau
 change before it happens, and `--uninstall` removes what it recorded installing and nothing else
 (that record lives in `git config --global stack.managed*`).
 
-- **Aliases** (`--aliases`): `git create|modify|absorb|reorder|move|fold|untrack|track|pop|restack|continue|abort|submit|sync|up|down|top|bottom|pr`
+- **Aliases** (`--aliases`): `git create|modify|absorb|reorder|move|fold|rename|untrack|track|pop|restack|continue|abort|submit|sync|up|down|top|bottom|pr`
   and the short ones `git c|m|ab|rs|ss|u|d|t|b|co`, written with `git config --global`. Anything that
   clashes with a git builtin or an installed command is skipped, and an alias you already have is
   only replaced if you pass `--force` or say yes when asked.
@@ -423,6 +423,30 @@ nothing is based on it any more.
 
 Flags:
 - `--keep` keep this branch's name and pull request instead of the parent's
+
+### `git stack rename <name>`
+
+> Alias: `git rename`
+
+Gives the current branch a new name, for when the work turned out to be about something else. It
+keeps its place in the stack, its commits and its PR, and nothing is rebased; the branch above now
+sits on the new name. The name is used as you give it, without `stack.branchPrefix`.
+
+If the branch has been pushed it's renamed on GitHub first, which keeps the PR attached and
+retargets any PR based on it, and only then here (the upstream follows it). If GitHub won't do it,
+because you're offline or don't have permission, nothing changes and the error says so. `--local`
+renames just this copy: the PR stays on the old branch name and the next `git ss` opens a new one.
+It won't rename a trunk, a branch that isn't in a stack or one whose PR has merged, or take a name
+that's already in use here or on GitHub.
+
+```
+# on billing-webhook-alerts
+❯ git rename billing-webhook-retries
+✔ Renamed billing-webhook-alerts to billing-webhook-retries here and on origin
+```
+
+Flags:
+- `--local` rename only on this machine, leaving the remote branch and its pull request alone
 
 ### `git stack init [branch...]`
 

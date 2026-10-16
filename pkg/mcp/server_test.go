@@ -228,7 +228,7 @@ func TestToolsAreListedWithAnnotationsAndSchemas(t *testing.T) {
 	for _, tool := range res.Tools {
 		got[tool.Name] = tool
 	}
-	for _, name := range []string{"stack_view", "stack_create", "stack_modify", "stack_absorb", "stack_reorder", "stack_move", "stack_fold", "stack_untrack", "stack_init", "stack_pop", "stack_restack", "stack_navigate", "stack_submit", "stack_sync"} {
+	for _, name := range []string{"stack_view", "stack_create", "stack_modify", "stack_absorb", "stack_reorder", "stack_move", "stack_fold", "stack_rename", "stack_untrack", "stack_init", "stack_pop", "stack_restack", "stack_navigate", "stack_submit", "stack_sync"} {
 		if got[name] == nil {
 			t.Errorf("missing tool %s", name)
 		}
@@ -893,5 +893,24 @@ func TestUntrack(t *testing.T) {
 	}
 	if te := h.toolErr("stack_untrack", nil); te.Code != "not_in_stack" {
 		t.Errorf("untracked = %+v", te)
+	}
+}
+
+func TestRename(t *testing.T) {
+	h := newHarness(t)
+	defer h.assertNoStdout()
+	var res app.RenameResult
+	h.call("stack_rename", map[string]any{"name": "b2"}, &res)
+	if res.From != "b" || res.To != "b2" || res.Remote != "origin" || !slices.Equal(h.forge.renamed, []string{"b -> b2"}) {
+		t.Fatalf("rename = %+v, renamed on the forge: %v", res, h.forge.renamed)
+	}
+	if s, i, ok := h.backend.Graph().StackOf("b2"); !ok || i != 1 || s.Bottom() != "a" {
+		t.Errorf("b2's stack = %+v", s)
+	}
+	if h.current() != "b2" {
+		t.Errorf("current = %s", h.current())
+	}
+	if te := h.toolErr("stack_rename", map[string]any{"name": "a"}); te.Code != "invalid_args" || !strings.Contains(te.Message, "already exists") {
+		t.Errorf("taken = %+v", te)
 	}
 }

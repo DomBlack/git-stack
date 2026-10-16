@@ -115,6 +115,7 @@ var phaseEmoji = map[app.Phase]string{
 	app.PhaseUpdate:  "📦",
 	app.PhaseInstall: "🔧",
 	app.PhaseMerge:   "🔀",
+	app.PhaseRename:  "🏷️",
 	app.PhaseRefresh: "📥",
 }
 
