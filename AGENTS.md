@@ -51,3 +51,17 @@ git-stack is a CLI (`git stack <cmd>`) and stdio MCP server for GitHub's native 
 - Small, focused commits; each leaves the tree green.
 - Update `README.md` (command table) and `docs/` in the same change as behaviour changes.
 - Pushing a stack and opening or updating its PRs (`git stack submit` / `stack_submit`) is fine. Never merge a PR or a stack (`git stack merge` / `stack_merge`, `gh pr merge`) unless Dom has said so for that stack, and don't create remotes.
+- Label every PR as soon as it's open (`gh pr edit <number> --add-label <label>`; submit can't set labels). The label picks its section in the release notes (`.github/release.yml`), so pick by what someone using git-stack would notice, one label per PR:
+  - `breaking-change`: something that used to work now works differently or not at all (a flag, an alias, config, MCP tool arguments or results).
+  - `enhancement`: a new command, flag, tool or behaviour.
+  - `bug`: fixes something that was broken.
+  - `documentation`: docs only.
+  - `internal`: nothing a user would notice (refactors, tests, CI, release tooling).
+  - `ignore-for-release`: leave it out of the notes altogether (a revert of something never released, say).
+
+  In a stack, label each PR by its own change; lower PRs that only lay groundwork for a feature on top are `internal`.
+
+## Releasing
+- Only when Dom asks for one, and only once CI on main is green.
+- Draft the notes from the PRs merged since the last tag (`gh api repos/DomBlack/git-stack/releases/generate-notes -f tag_name=<new> -f previous_tag_name=<last> --jq .body` lists them), in Dom's voice: a one line summary first, then what's new and why it matters to someone using git-stack, then anything to do after upgrading. Show Dom the draft before tagging.
+- Tag with the notes as the message: `git tag -a vX.Y.Z --cleanup=verbatim -F notes.md`, then push the tag. Never a lightweight tag; the release workflow refuses one. Without `--cleanup=verbatim` git drops the markdown headings.

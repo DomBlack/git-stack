@@ -25,9 +25,11 @@ archives:
 checksum:
   name_template: checksums.txt
 
+# GitHub's own release notes: one line per merged pull request since the
+# last tag, sorted into sections by label (.github/release.yml), with new
+# contributors and a compare link.
 changelog:
-  use: git
-  sort: asc
+  use: github-native
 
 release:
   github:
@@ -35,3 +37,15 @@ release:
     name: git-stack
   draft: false
   prerelease: auto
+  # The written notes come from the annotated tag's message (see Releasing in
+  # the README); the release workflow refuses a lightweight tag, which would
+  # put the tagged commit's message here instead.
+  header: |
+    {{ .TagSubject }}
+
+    {{ .TagBody }}
+  footer: |
+    ## Upgrading
+
+    `git stack update` swaps the binary in place, after checking the archive against
+    `checksums.txt`. New to git-stack? Start with the [install guide](https://github.com/DomBlack/git-stack#install).
