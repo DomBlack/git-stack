@@ -23,8 +23,9 @@ func (c *Client) Tip(ctx context.Context, repo Repo, ref string) (string, bool, 
 	return res.Out(), true, nil
 }
 
-// RefUpdate moves Ref to New. When Old is set the ref must currently be at
-// Old, and the whole transaction fails if any Old is stale.
+// RefUpdate moves Ref to New, or deletes it when New is empty. When Old is
+// set the ref must currently be at Old, and the whole transaction fails if
+// any Old is stale.
 type RefUpdate struct {
 	Ref, New, Old string
 }
@@ -37,6 +38,10 @@ func (c *Client) UpdateRefs(ctx context.Context, repo Repo, updates []RefUpdate)
 	var in strings.Builder
 	in.WriteString("start\n")
 	for _, u := range updates {
+		if u.New == "" {
+			fmt.Fprintf(&in, "delete %s %s\n", u.Ref, u.Old)
+			continue
+		}
 		if u.Old != "" {
 			fmt.Fprintf(&in, "update %s %s %s\n", u.Ref, u.New, u.Old)
 		} else {
@@ -70,6 +75,19 @@ func (c *Client) RenameBranch(ctx context.Context, repo Repo, from, to string) e
 	if err != nil {
 		if ee, ok := errors.AsType[*exec.ExitError](err); ok {
 			return fmt.Errorf("rename branch %q: %s", from, ee.Result.Err())
+		}
+		return err
+	}
+	return nil
+}
+
+// ResetSoft moves the checked out branch to rev, leaving the index and the
+// working tree alone.
+func (c *Client) ResetSoft(ctx context.Context, repo Repo, rev string) error {
+	_, err := c.gitIn(ctx, repo, "reset", "--soft", "-q", rev)
+	if err != nil {
+		if ee, ok := errors.AsType[*exec.ExitError](err); ok && LockPath(err) == "" {
+			return fmt.Errorf("reset: %s", firstLine(ee.Result.Err()))
 		}
 		return err
 	}

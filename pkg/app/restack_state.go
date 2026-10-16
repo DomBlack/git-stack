@@ -48,6 +48,10 @@ type restackState struct {
 	// Finish is what the reshape still has to do once every branch is
 	// restacked: a pop's move of HEAD and delete of its branch.
 	Finish *reshapeFinish `json:"finish,omitempty"`
+	// Undo is the before state of the covered command that started this
+	// run; continue records it for undo once the command finishes, abort
+	// drops it.
+	Undo *undoSnapshot `json:"undo,omitempty"`
 }
 
 // branches are the branches the state still has to restack, the

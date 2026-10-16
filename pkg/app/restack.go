@@ -60,7 +60,13 @@ func (a *App) Restack(ctx context.Context, repo git.Repo, o RestackOptions) (Res
 	case o.Abort:
 		return a.restackAbort(ctx, repo)
 	}
-	return a.restack(ctx, repo, o, restackCommand, "")
+	var res RestackResult
+	err := a.undoable(ctx, repo, restackCommand, undoKeep, func(ctx context.Context) error {
+		var err error
+		res, err = a.restack(ctx, repo, o, restackCommand, "")
+		return err
+	})
+	return res, err
 }
 
 // restackRun is one restack operation in flight; on a conflict it is what
@@ -76,6 +82,9 @@ type restackRun struct {
 	then    []restackSegment
 	reshape *reshapeSnapshot
 	finish  *reshapeFinish
+	// undo is the covered command's before state, saved with the run so
+	// continue can record it.
+	undo *undoSnapshot
 }
 
 // restack is the shared body of Restack and modify's restack. command
@@ -124,7 +133,7 @@ func (a *App) restack(ctx context.Context, repo git.Repo, o RestackOptions, comm
 	if headline == "" {
 		headline = "Restacking " + joinNames(res.Branches)
 	}
-	run := &restackRun{repo: repo, command: command, trunk: s.Trunk, stackName: s.Bottom(), originalBranch: current}
+	run := &restackRun{repo: repo, command: command, trunk: s.Trunk, stackName: s.Bottom(), originalBranch: current, undo: undoFrom(ctx)}
 	err = a.progress(ctx, PhaseRestack, headline, func(ctx context.Context) error {
 		return a.restackBranches(ctx, run, slices.Clone(s.Branches[lo:hi]), parent, &res)
 	})
@@ -240,7 +249,7 @@ func (a *App) startConflictRebase(ctx context.Context, run *restackRun, p *resta
 		Conflict: c.Branch, Onto: c.Onto, NewBase: p.conflictNewBase,
 		ConflictTip: local[c.Branch].Head, ConflictOldBase: oldBase,
 		Remaining: remaining, Moved: run.moved,
-		Then: run.then, Reshape: run.reshape, Finish: run.finish,
+		Then: run.then, Reshape: run.reshape, Finish: run.finish, Undo: run.undo,
 	}
 	if err := saveRestackState(run.repo, run.state); err != nil {
 		return err
@@ -530,7 +539,7 @@ func (a *App) restackContinue(ctx context.Context, repo git.Repo, stageAll bool)
 			WithSteps("git stack abort to put the moved branches back, then " + st.Command + " again")
 	}
 	earlier := slices.Clone(st.Moved)
-	run := &restackRun{repo: repo, command: st.Command, trunk: st.Trunk, originalBranch: st.OriginalBranch, moved: st.Moved, state: st, then: st.Then, reshape: st.Reshape, finish: st.Finish}
+	run := &restackRun{repo: repo, command: st.Command, trunk: st.Trunk, originalBranch: st.OriginalBranch, moved: st.Moved, state: st, then: st.Then, reshape: st.Reshape, finish: st.Finish, undo: st.Undo}
 	if g, err := a.d.Meta.Load(ctx, repo); err == nil {
 		if s, _, ok := g.StackOf(st.Conflict); ok {
 			run.stackName = s.Bottom()
@@ -571,6 +580,11 @@ func (a *App) restackContinue(ctx context.Context, repo git.Repo, stageAll bool)
 	})
 	if err == nil {
 		res.Moved = withEarlierMoves(earlier, res.Moved, run.stackName)
+		if st.Undo != nil {
+			if rerr := a.recordUndo(ctx, repo, *st.Undo); rerr != nil {
+				a.d.Log.Warn("could not record the command for undo", "command", st.Undo.Command, "err", rerr)
+			}
+		}
 		return res, nil
 	}
 	cur, lerr := loadRestackState(repo)

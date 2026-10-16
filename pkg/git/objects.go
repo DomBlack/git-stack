@@ -99,6 +99,36 @@ func (c *Client) CommitTree(ctx context.Context, repo Repo, tree, parent string,
 	return res.Out(), nil
 }
 
+// keepAliveEnv names the author and committer of commits git-stack makes
+// only to keep other commits reachable, so they never need the user's
+// identity.
+var keepAliveEnv = []string{
+	"GIT_AUTHOR_NAME=git-stack", "GIT_AUTHOR_EMAIL=git-stack@localhost",
+	"GIT_COMMITTER_NAME=git-stack", "GIT_COMMITTER_EMAIL=git-stack@localhost",
+}
+
+// EmptyTreeCommit creates a commit with an empty tree and the given
+// parents. Nothing ever checks it out; a ref pointing at it keeps every
+// parent from being garbage collected.
+func (c *Client) EmptyTreeCommit(ctx context.Context, repo Repo, parents []string, msg string) (string, error) {
+	res, err := c.gitInput(ctx, repo, strings.NewReader(""), nil, "hash-object", "-w", "-t", "tree", "--stdin")
+	if err != nil {
+		return "", err
+	}
+	args := []string{"commit-tree", res.Out()}
+	for _, p := range parents {
+		args = append(args, "-p", p)
+	}
+	res, err = c.gitInput(ctx, repo, strings.NewReader(msg+"\n"), keepAliveEnv, append(args, "-F", "-")...)
+	if err != nil {
+		if ee, ok := errors.AsType[*exec.ExitError](err); ok {
+			return "", fmt.Errorf("commit-tree: %s", ee.Result.Err())
+		}
+		return "", err
+	}
+	return res.Out(), nil
+}
+
 // PatchIDs maps the patch id of every non merge commit in from..to to that
 // commit, so two histories can be compared for the same changes regardless
 // of where they were rebased. The ids are verbatim: unlike --stable they
