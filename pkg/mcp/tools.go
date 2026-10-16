@@ -265,6 +265,23 @@ func (s *Server) move(ctx context.Context, req *mcp.CallToolRequest, in moveInpu
 	return nil, res, nil
 }
 
+type foldInput struct {
+	repoArg
+	Keep bool `json:"keep,omitempty" jsonschema:"keep the current branch's name and pull request instead of the parent's"`
+}
+
+func (s *Server) fold(ctx context.Context, req *mcp.CallToolRequest, in foldInput) (*mcp.CallToolResult, app.FoldResult, error) {
+	repo, a, err := s.appFor(ctx, req, in.RepoPath)
+	if err != nil {
+		return nil, app.FoldResult{}, wrapErr(err)
+	}
+	res, err := a.Fold(ctx, repo, app.FoldOptions{Keep: in.Keep})
+	if err != nil {
+		return nil, app.FoldResult{}, wrapErr(err)
+	}
+	return nil, res, nil
+}
+
 type initInput struct {
 	repoArg
 	Branches []string `json:"branches,omitempty" jsonschema:"existing branches to track, bottom to top (default: the current branch)"`
@@ -564,6 +581,12 @@ func (s *Server) registerTools() {
 		Description: "Move a branch (and, unless only is true, everything above it) onto the top of another stack, or onto a trunk as a new stack, then restack. A branch can't be moved within its own stack (use stack_reorder) or under another stack's branch. Conflicts and undo work as for stack_reorder.",
 		Annotations: &mcp.ToolAnnotations{DestructiveHint: boolp(true), OpenWorldHint: boolp(false)},
 	}, s.move)
+	mcp.AddTool(s.mcp, &mcp.Tool{
+		Name:        "stack_fold",
+		Title:       "Fold the current branch into its parent",
+		Description: "Merge the current branch into the branch below it: one branch, one pull request, both sets of commits. The parent survives and is checked out (local changes come along); with keep: true the current branch survives and takes the parent's place. Nothing is rebased or pushed. The pull request of the branch that went is closed at the next stack_submit (closing in the result). Refuses with invalid_args on a stack's bottom branch, when the branch isn't on its parent yet (stack_restack first) or when the parent is checked out in another worktree.",
+		Annotations: &mcp.ToolAnnotations{DestructiveHint: boolp(true), OpenWorldHint: boolp(false)},
+	}, s.fold)
 	mcp.AddTool(s.mcp, &mcp.Tool{
 		Name:        "stack_init",
 		Title:       "Track existing branches as a stack",

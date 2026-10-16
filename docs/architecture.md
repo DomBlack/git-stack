@@ -445,6 +445,19 @@ already gone counts as done, and a failure to dissolve keeps the entry and says 
 Keeping the two apart also means the reshape itself works offline. PRs that are queued for merge or have auto merge on stay stacked on
 GitHub's side, so creating the new stack fails with gh stack's usual warning until they land.
 
+**Fold is a reshape without a restack.** Folding C into its parent P only works when C already
+sits on P, so after it every branch above still has every commit involved and only its recorded
+parent changes. The reshape step does the metadata (P's head becomes C's tip and C is dropped, or
+with `--keep` P is dropped and C takes its base) and the dissolve as usual, with no segments to
+run. Then P's ref is fast forwarded to C's tip and switched to, which leaves the working tree alone
+because they're the same commit, and C is deleted. P can't be checked out anywhere else, since its
+ref moves (or is deleted) under that checkout. A failure before the switch puts the ref and the
+snapshot back. The PR of the branch that went goes on a second list in the same queue file, closed
+at the next submit with a comment saying where it went. That happens after the backend submit,
+because deleting a branch on GitHub closes every open PR based on it, and it's the backend submit
+that moves the PR above onto the surviving branch; a remote branch something is still based on is
+kept and its delete stays queued.
+
 **Merged branches are deleted by default.** `stack.sync.prune` decides: `always` (default)
 deletes branches whose PRs merged or closed, `ask` prompts on a terminal and keeps with a
 notice otherwise, `never` keeps. `-d` and `-f` delete regardless. A branch checked out in

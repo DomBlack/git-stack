@@ -218,6 +218,7 @@ var cliToTool = []struct{ from, to string }{
 	{"git stack absorb", "stack_absorb"},
 	{"git stack reorder", "stack_reorder"},
 	{"git stack move", "stack_move"},
+	{"git stack fold", "stack_fold"},
 	{"git stack init", "stack_init"},
 	{"git stack track", "stack_init"},
 	{"git stack continue", "call stack_continue"},
