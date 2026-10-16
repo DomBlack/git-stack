@@ -85,6 +85,13 @@ const syncSteps = "run git stack sync to tidy the stack's metadata"
 // last changed those lines, rewrites that commit and everything above it
 // up to the current branch, and restacks the branches above.
 func (a *App) Absorb(ctx context.Context, repo git.Repo, o AbsorbOptions) (AbsorbResult, error) {
+	return undoableResult(a, ctx, repo, absorbCommand, undoSoft, func(ctx context.Context) (AbsorbResult, error) {
+		return a.absorb(ctx, repo, o)
+	})
+}
+
+// absorb is Absorb's body.
+func (a *App) absorb(ctx context.Context, repo git.Repo, o AbsorbOptions) (AbsorbResult, error) {
 	if err := a.noRebaseActive(ctx, repo); err != nil {
 		return AbsorbResult{}, err
 	}

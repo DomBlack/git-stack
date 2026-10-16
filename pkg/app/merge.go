@@ -136,6 +136,11 @@ func (a *App) Merge(ctx context.Context, repo git.Repo, o MergeOptions) (MergeRe
 	if err != nil {
 		return res, err
 	}
+	// GitHub has changed, so nothing before this can be undone, and the
+	// sync below isn't recorded either.
+	if cerr := a.clearUndo(ctx, repo); cerr != nil {
+		a.d.Log.Warn("could not clear the undo history", "err", cerr)
+	}
 	if res.Status == forge.MergeEnqueued {
 		res.Notices = append(res.Notices, fmt.Sprintf("%s has a merge queue; the pull requests land when it gets to them, then git stack sync tidies up", s.Trunk))
 		return res, nil
@@ -143,7 +148,7 @@ func (a *App) Merge(ctx context.Context, repo git.Repo, o MergeOptions) (MergeRe
 	if o.NoSync {
 		return res, nil
 	}
-	sync, err := a.Sync(ctx, repo, SyncOptions{})
+	sync, err := a.Sync(withoutUndo(ctx), repo, SyncOptions{})
 	res.Sync = &sync
 	return res, err
 }

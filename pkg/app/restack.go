@@ -60,13 +60,9 @@ func (a *App) Restack(ctx context.Context, repo git.Repo, o RestackOptions) (Res
 	case o.Abort:
 		return a.restackAbort(ctx, repo)
 	}
-	var res RestackResult
-	err := a.undoable(ctx, repo, restackCommand, undoKeep, func(ctx context.Context) error {
-		var err error
-		res, err = a.restack(ctx, repo, o, restackCommand, "")
-		return err
+	return undoableResult(a, ctx, repo, restackCommand, undoKeep, func(ctx context.Context) (RestackResult, error) {
+		return a.restack(ctx, repo, o, restackCommand, "")
 	})
-	return res, err
 }
 
 // restackRun is one restack operation in flight; on a conflict it is what

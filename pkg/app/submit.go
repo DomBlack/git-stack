@@ -90,6 +90,19 @@ type ClosedPR struct {
 // With Down or Branch it stops at a branch; when branches above it are left
 // out, submitPart does the work instead of gh stack submit.
 func (a *App) Submit(ctx context.Context, repo git.Repo, o SubmitOptions) (SubmitResult, error) {
+	res, err := a.submit(ctx, repo, o)
+	if err == nil && !o.DryRun {
+		// GitHub has the stack now; undoing what came before would only
+		// make the local branches disagree with it.
+		if cerr := a.clearUndo(ctx, repo); cerr != nil {
+			a.d.Log.Warn("could not clear the undo history", "err", cerr)
+		}
+	}
+	return res, err
+}
+
+// submit is Submit's body.
+func (a *App) submit(ctx context.Context, repo git.Repo, o SubmitOptions) (SubmitResult, error) {
 	if a.d.Submit == nil {
 		return SubmitResult{}, stack.New(stack.KindUnsupported, "no submit backend configured")
 	}

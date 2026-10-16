@@ -48,6 +48,17 @@ func (a *App) Modify(ctx context.Context, repo git.Repo, o ModifyOptions) (Modif
 		_, err := a.restackAbort(ctx, repo)
 		return ModifyResult{Branch: branchAfter(ctx, a, repo)}, err
 	}
+	command := "git stack modify"
+	if o.NewCommit {
+		command += " --commit"
+	}
+	return undoableResult(a, ctx, repo, command, undoSoft, func(ctx context.Context) (ModifyResult, error) {
+		return a.modify(ctx, repo, o)
+	})
+}
+
+// modify is Modify's body once it isn't resuming a restack.
+func (a *App) modify(ctx context.Context, repo git.Repo, o ModifyOptions) (ModifyResult, error) {
 	if err := a.noRebaseActive(ctx, repo); err != nil {
 		return ModifyResult{}, err
 	}

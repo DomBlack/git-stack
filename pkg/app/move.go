@@ -53,6 +53,14 @@ type MoveResult struct {
 
 const moveCommand = "git stack move"
 
+// moveCommandLine is the move as undo lists it.
+func moveCommandLine(o MoveOptions) string {
+	if o.Only {
+		return moveCommand + " --only"
+	}
+	return moveCommand
+}
+
 // MoveDestinations lists where source could go: every trunk, then the top
 // of every stack other than source's own, in graph order.
 func (a *App) MoveDestinations(graph *stack.Graph, source string) []MoveDestination {
@@ -74,6 +82,13 @@ func (a *App) MoveDestinations(graph *stack.Graph, source string) []MoveDestinat
 // another stack or on a trunk as a new stack, then restacks what moved and
 // what was left behind. Nothing is checked out.
 func (a *App) Move(ctx context.Context, repo git.Repo, o MoveOptions) (MoveResult, error) {
+	return undoableResult(a, ctx, repo, moveCommandLine(o), undoKeep, func(ctx context.Context) (MoveResult, error) {
+		return a.move(ctx, repo, o)
+	})
+}
+
+// move is Move's body.
+func (a *App) move(ctx context.Context, repo git.Repo, o MoveOptions) (MoveResult, error) {
 	if err := a.noRebaseActive(ctx, repo); err != nil {
 		return MoveResult{}, err
 	}
