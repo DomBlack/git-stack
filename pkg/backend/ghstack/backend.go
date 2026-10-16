@@ -449,13 +449,20 @@ func writeFile(gitDir string, root *node) error {
 }
 
 // branchNodes renders a stack's branches, reusing each branch's node from
-// pool so its pull request record and unmodelled members travel with it,
-// and reports whether any head or base it wrote differs from the node.
+// pool so its pull request record and unmodelled members travel with it
+// (under its old name for a renamed branch), and reports whether any name,
+// head or base it wrote differs from the node.
 func branchNodes(branches []stack.Branch, pool map[string]*node) ([]*node, bool) {
 	edited := false
 	out := make([]*node, 0, len(branches))
 	for _, gb := range branches {
 		n := pool[gb.Name]
+		if n == nil && gb.RenamedFrom != "" {
+			if n = pool[gb.RenamedFrom]; n != nil {
+				n.set("branch", stringNode(gb.Name))
+				edited = true
+			}
+		}
 		if n == nil {
 			n = objectNode(member{"branch", stringNode(gb.Name)})
 			edited = true

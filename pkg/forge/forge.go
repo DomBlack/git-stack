@@ -132,6 +132,11 @@ type Forge interface {
 	// comment on it first. One that is already closed or merged is not an
 	// error.
 	ClosePR(ctx context.Context, repo git.Repo, number int, comment string) error
+	// RenameBranch renames branch from to to on the forge, which keeps its
+	// pull request attached and retargets the pull requests based on it. A
+	// refusal (the name is taken, no permission) comes back as a
+	// *stack.Error of kind api_failure carrying the forge's message.
+	RenameBranch(ctx context.Context, repo git.Repo, from, to string) error
 	// PullRequestURL is the web address of pull request number, worked out
 	// from local configuration only (never the network), so output can
 	// link a PR the forge hasn't been asked about. "" when it can't tell.

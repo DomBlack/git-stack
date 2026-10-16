@@ -37,7 +37,8 @@ type Metadata interface {
 	Load(ctx context.Context, repo git.Repo) (*Graph, error)
 	// Update loads the graph fresh under the backend's lock, lets fn edit it
 	// and writes the result back. fn may edit each stack's Branches (remove
-	// entries, change Head and Base) and may also append stacks (each with a
+	// entries, change Head and Base, rename one by setting Name and
+	// RenamedFrom) and may also append stacks (each with a
 	// trunk and at least one branch; they are written to the current
 	// worktree's file, else the main checkout's, else a new file in the
 	// common dir) and may set or clear a stack's ID and Number (clearing

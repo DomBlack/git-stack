@@ -132,6 +132,38 @@ func TestUpdateWritesEachWorktreeFile(t *testing.T) {
 	}
 }
 
+// A branch renamed with RenamedFrom keeps its record: pull request,
+// members we don't model and its place in the stack.
+func TestUpdateRenamesABranch(t *testing.T) {
+	b, repo, mainPath, _ := updateFixture(t)
+	err := b.Update(context.Background(), repo, func(g *stack.Graph) error {
+		s, i, _ := g.StackOf("a")
+		s.Branches[i].Name, s.Branches[i].RenamedFrom = "a2", "a"
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, _ := os.ReadFile(mainPath)
+	s := string(got)
+	for _, want := range []string{`"branch": "a2"`, `"extra": "yes"`, `"number": 1`, `"head": "ha"`} {
+		if !strings.Contains(s, want) {
+			t.Errorf("missing %s in:\n%s", want, s)
+		}
+	}
+	if strings.Contains(s, `"branch": "a"`) {
+		t.Errorf("the old name should be gone:\n%s", s)
+	}
+	g, err := b.Load(context.Background(), repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	st, i, ok := g.StackOf("a2")
+	if !ok || i != 0 || st.Branches[1].Name != "b" || st.Branches[0].PR == nil || st.Branches[0].PR.Number != 1 {
+		t.Errorf("reload = %+v", st)
+	}
+}
+
 func TestUpdateFnErrorWritesNothing(t *testing.T) {
 	b, repo, mainPath, _ := updateFixture(t)
 	before, _ := os.ReadFile(mainPath)

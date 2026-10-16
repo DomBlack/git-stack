@@ -304,3 +304,27 @@ func TestPointHEADKeepsTheIndexAndWorkingTree(t *testing.T) {
 		t.Error("PointHEAD must refuse a branch that does not exist")
 	}
 }
+
+// A rename moves the ref, the checkout and the branch's config with it.
+func TestRenameBranch(t *testing.T) {
+	c, repo, dir := remoteFixture(t)
+	ctx := context.Background()
+	gittest.Run(t, dir, "switch", "-q", "-c", "f")
+	tip := gittest.Commit(t, dir, "f.txt", "f", "f")
+	gittest.Run(t, dir, "push", "-q", "-u", "origin", "f")
+	if err := c.RenameBranch(ctx, repo, "f", "g"); err != nil {
+		t.Fatal(err)
+	}
+	if cur := gittest.Run(t, dir, "branch", "--show-current"); cur != "g" || gittest.Run(t, dir, "rev-parse", "g") != tip {
+		t.Errorf("current = %s", cur)
+	}
+	if _, ok, _ := c.Tip(ctx, repo, "refs/heads/f"); ok {
+		t.Error("f should be gone")
+	}
+	if remote := c.RemoteFor(ctx, repo, "g"); remote != "origin" {
+		t.Errorf("g's remote = %s", remote)
+	}
+	if err := c.RenameBranch(ctx, repo, "g", "main"); err == nil || !strings.Contains(err.Error(), "already exists") {
+		t.Errorf("renaming onto main = %v", err)
+	}
+}
