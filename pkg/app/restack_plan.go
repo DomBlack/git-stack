@@ -65,6 +65,10 @@ type planInput struct {
 	// own. command names the CLI command for the next step.
 	strict  bool
 	command string
+	// done names branches whose work has landed (sync kept them, say
+	// because they are checked out elsewhere). They stay where they are and
+	// the branches above go onto the parent past them.
+	done map[string]bool
 }
 
 // plannedMove is one branch's rebase, computed but not applied.
@@ -105,6 +109,10 @@ func (a *App) planMoves(ctx context.Context, in planInput) restackPlan {
 			continue
 		}
 		tip := lb.Head
+		if in.done[b.Name] {
+			oldParent = tip
+			continue
+		}
 		if lb.Worktree != "" && lb.Worktree != in.currentWorktree && in.dirty.isDirty(ctx, a.d.Git, in.repo, lb.Worktree) {
 			if in.strict {
 				p.err = stack.Newf(stack.KindInvalidArgs, "%s is checked out in %s with uncommitted changes, so it can't be moved", b.Name, shortPath(lb.Worktree)).

@@ -334,6 +334,9 @@ the parent's old tip, so when a squash merged parent was deleted and no base was
 the parent's commits get replayed again, which is why the metadata base matters. A
 replayed commit whose changes are already in the new parent comes out with the parent's
 tree and is dropped, as `git rebase` drops it, so that case costs nothing either.
+A branch cleanup wanted to delete but kept (checked out in another worktree, declined by
+`stack.sync.prune`, and so on) is done, so the restack leaves it where it is and the branches
+above it go straight onto the trunk, its old tip standing in as their parent's old tip.
 Stacks are computed in parallel since that only creates objects, then each stack's branches
 move in one `git update-ref --stdin` transaction with expected old values, so a stack moves
 whole or not at all. A branch checked out in a clean worktree gets `reset --hard` there; a
