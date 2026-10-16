@@ -51,7 +51,10 @@ func releaseServer(t *testing.T, tag, body string) *httptest.Server {
 }
 
 func TestUpdateCommand(t *testing.T) {
-	srv := releaseServer(t, "v9.9.9", "new binary")
+	// The "release" is a script standing in for the new binary, so the
+	// hand-off to its install --refresh can be seen.
+	newBinary := "#!/bin/sh\necho \"ok: new binary ran $*\"\n"
+	srv := releaseServer(t, "v9.9.9", newBinary)
 	target := filepath.Join(t.TempDir(), "git-stack")
 	if err := os.WriteFile(target, []byte("old"), 0o755); err != nil {
 		t.Fatal(err)
@@ -93,11 +96,18 @@ func TestUpdateCommand(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(out, "ok: Updated git-stack ") || !strings.Contains(out, "to v9.9.9") || !strings.Contains(out, target) {
+	if !strings.Contains(out, "Downloading git-stack v9.9.9...") || !strings.Contains(out, "ok: Updated git-stack ") || !strings.Contains(out, "to v9.9.9") || !strings.Contains(out, target) {
 		t.Errorf("--force output = %q", out)
 	}
-	if got, _ := os.ReadFile(target); string(got) != "new binary" {
+	if got, _ := os.ReadFile(target); string(got) != newBinary {
 		t.Errorf("binary after --force = %q", got)
+	}
+	// The new binary then refreshes what install set up, and its output is
+	// passed on after ours.
+	updated := strings.Index(out, "ok: Updated git-stack ")
+	ran := strings.Index(out, "ok: new binary ran install --refresh --no-interactive")
+	if ran < 0 || ran < updated {
+		t.Errorf("install --refresh not handed to the new binary after the update:\n%s", out)
 	}
 }
 
@@ -119,5 +129,26 @@ func TestUpdateCommandRendersAPIErrors(t *testing.T) {
 	printError(&buf, err)
 	if !strings.Contains(buf.String(), "go install github.com/DomBlack/git-stack@latest") {
 		t.Errorf("next steps missing: %q", buf.String())
+	}
+}
+
+func TestUpdateCommandReportsAFailedRefresh(t *testing.T) {
+	srv := releaseServer(t, "v9.9.9", "#!/bin/sh\necho 'unknown flag: --refresh' >&2\nexit 1\n")
+	target := filepath.Join(t.TempDir(), "git-stack")
+	c := &cli{
+		streams:      testStreams(nil),
+		updateTarget: target,
+		updateClient: &update.Client{HTTP: srv.Client(), BaseURL: srv.URL, Repo: "DomBlack/git-stack", UserAgent: "test"},
+	}
+	root := newRootCmd(c)
+	root.SetArgs([]string{"update", "--force"})
+	err := root.Execute()
+	if err == nil || !strings.Contains(err.Error(), "refreshing what git stack install set up failed") {
+		t.Fatalf("expected the refresh error, got %v", err)
+	}
+	var buf bytes.Buffer
+	printError(&buf, err)
+	if !strings.Contains(buf.String(), "unknown flag: --refresh") || !strings.Contains(buf.String(), "git stack install") {
+		t.Errorf("error output = %q", buf.String())
 	}
 }

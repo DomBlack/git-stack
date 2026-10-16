@@ -46,6 +46,9 @@ type Installer struct {
 	// Exe is the absolute path of the git-stack binary for agent registration.
 	Exe string
 	Env shell.Env
+	// CodexHome is Codex's config directory ($CODEX_HOME); empty means
+	// ~/.codex.
+	CodexHome string
 	// CobraScript generates cobra's completion script for a shell.
 	CobraScript func(sh shell.Shell) (string, error)
 	// Prompter is nil when non-interactive.
@@ -251,14 +254,52 @@ func (i *Installer) SkillPath() string {
 	return filepath.Join(i.Env.Home, ".claude", "skills", "git-stack", "SKILL.md")
 }
 
+// CodexSkillPath is where the Codex user skill is written.
+func (i *Installer) CodexSkillPath() string {
+	return filepath.Join(i.codexHome(), "skills", "git-stack", "SKILL.md")
+}
+
+func (i *Installer) codexHome() string {
+	if i.CodexHome != "" {
+		return i.CodexHome
+	}
+	return filepath.Join(i.Env.Home, ".codex")
+}
+
+// skillTarget is one agent the skill can be installed for.
+type skillTarget struct {
+	agent string
+	// home is the agent's config directory; the skill is only written for
+	// an agent whose directory exists, i.e. one that has been used here.
+	home string
+	path string
+}
+
+func (i *Installer) skillTargets() []skillTarget {
+	return []skillTarget{
+		{agent: "Claude Code", home: filepath.Join(i.Env.Home, ".claude"), path: i.SkillPath()},
+		{agent: "Codex", home: i.codexHome(), path: i.CodexSkillPath()},
+	}
+}
+
 func (i *Installer) installSkill(ctx context.Context, o Options) error {
+	var targets []skillTarget
+	for _, t := range i.skillTargets() {
+		if st, err := os.Stat(t.home); err == nil && st.IsDir() {
+			targets = append(targets, t)
+		}
+	}
 	want := false
 	switch {
 	case o.Skill != nil:
 		want = *o.Skill
-	case i.Prompter != nil && !o.DryRun:
+	case i.Prompter != nil && !o.DryRun && len(targets) > 0:
+		names := make([]string, len(targets))
+		for idx, t := range targets {
+			names[idx] = t.agent
+		}
 		var err error
-		want, err = i.Prompter.Confirm("Install a Claude Code skill that teaches agents the stacked workflow (~/.claude/skills/git-stack)?", true)
+		want, err = i.Prompter.Confirm("Install a skill that teaches "+strings.Join(names, " and ")+" the stacked workflow?", true)
 		if err != nil {
 			return err
 		}
@@ -266,19 +307,27 @@ func (i *Installer) installSkill(ctx context.Context, o Options) error {
 	if !want {
 		return nil
 	}
-	path := i.SkillPath()
-	if existing, err := os.ReadFile(path); err == nil && string(existing) == skillTemplate {
-		i.say("  skill  already installed at %s", path)
+	if len(targets) == 0 {
+		i.say("  skill  no Claude Code (~/.claude) or Codex (~/.codex) config found, skipped")
 		return nil
 	}
-	i.say("  skill  write %s", path)
-	if o.DryRun {
-		return nil
+	for _, t := range targets {
+		if existing, err := os.ReadFile(t.path); err == nil && string(existing) == skillTemplate {
+			i.say("  skill  %-12s already installed at %s", t.agent, t.path)
+			continue
+		}
+		i.say("  skill  %-12s write %s", t.agent, t.path)
+		if o.DryRun {
+			continue
+		}
+		if err := writeFile(t.path, skillTemplate); err != nil {
+			return err
+		}
+		if err := i.recordFile(ctx, t.path); err != nil {
+			return err
+		}
 	}
-	if err := writeFile(path, skillTemplate); err != nil {
-		return err
-	}
-	return i.recordFile(ctx, path)
+	return nil
 }
 
 func (i *Installer) recordFile(ctx context.Context, path string) error {
