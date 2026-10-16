@@ -61,7 +61,7 @@ read as section markers rather than confetti because they never show up anywhere
 | submit | 🚀 | Submitting stack… |
 | sync | 🔄 | Syncing with origin… |
 | Claude | 🤖 | Drafting pull request for feat-a… |
-| update | 📦 | Checking for updates… |
+| update | 📦 | Checking for updates…, then Downloading git-stack v0.3.1… |
 | merge | 🔀 | Merging 3 pull requests into main… |
 | refresh | 📥 | Fetching pull requests… (only when the PR cache is stale) |
 | install | 🔧 | (install prints a report, no spinner) |

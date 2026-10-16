@@ -156,14 +156,22 @@ change before it happens, and `--uninstall` removes what it recorded installing 
 - **Agents** (`--agents`): registers `git stack mcp` with
   Claude Code (`claude mcp add -s user`) and Codex (`codex mcp add`) using the absolute path of the
   binary. If neither is installed this does nothing. See [`docs/mcp.md`](docs/mcp.md).
-- **Skill** (`--skill`, off unless you pass it or say yes when asked): a Claude Code skill at
-  `~/.claude/skills/git-stack/SKILL.md` describing the stacked workflow.
+- **Skill** (`--skill`, off unless you pass it or say yes when asked): a skill describing the
+  stacked workflow, at `~/.claude/skills/git-stack/SKILL.md` for Claude Code and
+  `~/.codex/skills/git-stack/SKILL.md` for Codex (`$CODEX_HOME` if you set it). Each one is only
+  written if you have that agent's config directory.
 
 ### Updating
 
 `git stack update` fetches the latest GitHub release, checks the archive against the release's
 `checksums.txt` and swaps the binary in place. `--check` just tells you whether there's something
 newer.
+
+Once the new binary is in place it brings whatever `git stack install` set up before in line with
+it, without asking: aliases the new version adds, the completion script, the MCP registration (if
+the binary moved) and the Claude Code and Codex skills, each only if you installed it in the first
+place. It only prints what it changed, so if nothing did you just get the update line. An alias
+you've pointed somewhere else, or a completion file that isn't ours, is left alone.
 
 If you built from source, `git stack version` says `dev` along with the commit, and `update` leaves
 you alone unless you pass `--force`; i.e. we assume you built it that way on purpose.

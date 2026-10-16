@@ -57,6 +57,7 @@ func TestInstallAndUninstall(t *testing.T) {
 	var out bytes.Buffer
 	in := newInstaller(t, f, &out)
 	home := in.Env.Home
+	mkdirs(t, filepath.Join(home, ".claude"))
 	gittest.Run(t, home, "config", "--global", "alias.co", "checkout")
 	ctx := context.Background()
 	yes := true
@@ -199,11 +200,15 @@ func TestSkillOptInIsAsked(t *testing.T) {
 	var out bytes.Buffer
 	in := newInstaller(t, f, &out)
 	in.Prompter = yesPrompter{answer: true}
+	mkdirs(t, filepath.Join(in.Env.Home, ".claude"))
 	if err := in.Run(context.Background(), Options{}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := os.Stat(in.SkillPath()); err != nil {
 		t.Error("skill should be installed after a yes")
+	}
+	if _, err := os.Stat(in.CodexSkillPath()); err == nil {
+		t.Error("Codex skill written without a ~/.codex")
 	}
 	// Non-interactive without an explicit flag: skipped.
 	in2 := newInstaller(t, exectest.New(), &out)
@@ -217,6 +222,127 @@ func TestSkillOptInIsAsked(t *testing.T) {
 		t.Error("unreachable")
 	}
 	_ = agents.ServerName
+}
+
+func TestSkillGoesToEveryAgentInUse(t *testing.T) {
+	var out bytes.Buffer
+	in := newInstaller(t, exectest.New(), &out)
+	yes := true
+	if err := in.Run(context.Background(), Options{Skill: &yes}); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out.String(), "no Claude Code (~/.claude) or Codex (~/.codex) config found") {
+		t.Errorf("report without either agent:\n%s", out.String())
+	}
+
+	in.CodexHome = filepath.Join(t.TempDir(), "codex")
+	mkdirs(t, filepath.Join(in.Env.Home, ".claude"), in.CodexHome)
+	if err := in.Run(context.Background(), Options{Skill: &yes}); err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range []string{in.SkillPath(), filepath.Join(in.CodexHome, "skills", "git-stack", "SKILL.md")} {
+		if b, err := os.ReadFile(path); err != nil || !strings.HasPrefix(string(b), "---\nname: git-stack") {
+			t.Errorf("skill not written at %s: %v", path, err)
+		}
+	}
+	managed := gittest.Run(t, in.Env.Home, "config", "--global", "--get-all", "stack.managedFiles")
+	if !strings.Contains(managed, in.CodexSkillPath()) {
+		t.Errorf("Codex skill not recorded as managed: %q", managed)
+	}
+}
+
+func TestRefreshTouchesOnlyWhatWasInstalled(t *testing.T) {
+	f := exectest.New()
+	f.On("claude", "--version").Reply("2.1")
+	f.On("claude", "mcp", "get").Fail(1, `No MCP server named "git-stack"`)
+	f.On("codex").NotFound()
+	var out bytes.Buffer
+	in := newInstaller(t, f, &out)
+	home := in.Env.Home
+	ctx := context.Background()
+
+	// Nothing installed: nothing to do and nothing said.
+	if err := in.Refresh(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if out.Len() != 0 {
+		t.Errorf("refresh with nothing installed said:\n%s", out.String())
+	}
+	if _, err := os.Stat(in.Env.InstallPath(shell.Fish)); err == nil {
+		t.Error("refresh wrote completion that was never installed")
+	}
+
+	mkdirs(t, filepath.Join(home, ".claude"), filepath.Join(home, ".codex"))
+	gittest.Run(t, home, "config", "--global", "alias.co", "checkout")
+	yes := true
+	if err := in.Run(ctx, Options{Aliases: true, Completion: true, Skill: &yes, Shells: []shell.Shell{shell.Fish}}); err != nil {
+		t.Fatal(err)
+	}
+
+	// An older binary installed all of this: an alias it didn't have yet,
+	// its own completion script and skill, and the MCP server at its path.
+	gittest.Run(t, home, "config", "--global", "--unset", "alias.ab")
+	fishPath := in.Env.InstallPath(shell.Fish)
+	old := "# " + marker + " (older)\n"
+	for _, path := range []string{fishPath, in.SkillPath(), in.CodexSkillPath()} {
+		if err := os.WriteFile(path, []byte(old), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	f.On("claude", "mcp", "get").Reply("git-stack:\n  Command: /old/bin/git-stack\n")
+	f.On("claude", "mcp", "remove").Reply("")
+	f.On("claude", "mcp", "add").Reply("")
+
+	out.Reset()
+	if err := in.Refresh(ctx); err != nil {
+		t.Fatal(err)
+	}
+	report := out.String()
+	for _, want := range []string{
+		"ok: Refreshed the git-stack install (5 changes)",
+		"alias  git ab       → git stack absorb",
+		"completion  fish  updated " + fishPath,
+		"agent  Claude Code  re-registered with the new path",
+		"skill  Claude Code  updated " + in.SkillPath(),
+		"skill  Codex        updated " + in.CodexSkillPath(),
+	} {
+		if !strings.Contains(report, want) {
+			t.Errorf("refresh report is missing %q:\n%s", want, report)
+		}
+	}
+	if strings.Contains(report, "git co") {
+		t.Errorf("refresh mentioned the alias it leaves alone:\n%s", report)
+	}
+	if v := gittest.Run(t, home, "config", "--global", "alias.co"); v != "checkout" {
+		t.Errorf("refresh replaced a conflicting alias: %q", v)
+	}
+	if v := gittest.Run(t, home, "config", "--global", "alias.ab"); v != "stack absorb" {
+		t.Errorf("alias ab = %q", v)
+	}
+	for _, path := range []string{in.SkillPath(), in.CodexSkillPath()} {
+		if b, _ := os.ReadFile(path); string(b) != skillTemplate {
+			t.Errorf("skill at %s not refreshed", path)
+		}
+	}
+
+	// Everything current: silent.
+	f.On("claude", "mcp", "get").Reply("git-stack:\n  Command: /opt/bin/git-stack\n")
+	out.Reset()
+	if err := in.Refresh(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if out.Len() != 0 {
+		t.Errorf("second refresh said:\n%s", out.String())
+	}
+}
+
+func mkdirs(t *testing.T, dirs ...string) {
+	t.Helper()
+	for _, d := range dirs {
+		if err := os.MkdirAll(d, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
 }
 
 // bufReport collects the installer's report the way the piped reporter

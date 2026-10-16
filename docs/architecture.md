@@ -474,6 +474,13 @@ the VCS details `go build` records for a checkout (so a dev build says `dev (3a9
 releases API and the asset URLs rather than going through `gh`, so updating doesn't need a
 login. It verifies the archive against goreleaser's `checksums.txt`, writes the new binary
 next to the old one and renames it into place. Dev builds aren't replaced without `--force`.
+After a swap, update runs the *new* binary's `install --refresh` (a hidden flag), since the
+completion script and the skill are built into the binary and the old one only knows its own
+versions of them. Refresh never prompts, only touches what's recorded as managed (or an agent
+registration that already exists) and only reports changes. Older binaries call it on newer
+ones, so the flag has to keep working in every release. On a terminal the child writes
+straight to it (with terminal status off, the parent owns that); otherwise its output is
+passed on.
 Releases are cut by tagging; the workflow runs goreleaser for linux and darwin on amd64 and
 arm64. Every interactive command also starts `update.Checker` from the root command's
 PersistentPreRun: it answers at once from a user wide cache (`os.UserCacheDir()/git-stack`),

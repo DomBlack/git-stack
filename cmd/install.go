@@ -19,6 +19,7 @@ func newInstallCmd(c *cli) *cobra.Command {
 		skill                         bool
 		shells                        []string
 		dryRun, uninstall, force      bool
+		refresh                       bool
 	)
 	cmd := &cobra.Command{
 		Use:   "install",
@@ -35,7 +36,8 @@ skips one.
               "git stack <TAB>" and the aliases complete (bash, zsh, fish).
   agents      registers "git stack mcp" with Claude Code and Codex at user
               scope, through their own CLIs (claude mcp / codex mcp).
-  skill       optionally installs a Claude Code skill describing the workflow.
+  skill       optionally installs a skill describing the workflow for Claude
+              Code and Codex (each one you have a config directory for).
 
 --dry-run shows every change without making it. --uninstall removes what it
 recorded installing and nothing else.`,
@@ -86,7 +88,11 @@ recorded installing and nothing else.`,
 					}
 					return buf.String(), err
 				},
-				Report: c.report(),
+				CodexHome: os.Getenv("CODEX_HOME"),
+				Report:    c.report(),
+			}
+			if refresh {
+				return in.Refresh(ctx)
 			}
 			if rt.Interactive {
 				in.Prompter = ui.Prompter{In: rt.Streams.In, Out: rt.Streams.Err, Ctx: ctx}
@@ -104,12 +110,17 @@ recorded installing and nothing else.`,
 	cmd.Flags().BoolVar(&aliases, "aliases", true, "install git aliases")
 	cmd.Flags().BoolVar(&completion, "completion", true, "install shell completion with git integration")
 	cmd.Flags().BoolVar(&agentsOn, "agents", true, "register the MCP server with Claude Code and Codex")
-	cmd.Flags().BoolVar(&skill, "skill", false, "install the Claude Code skill (asked interactively when not given)")
+	cmd.Flags().BoolVar(&skill, "skill", false, "install the Claude Code and Codex skill (asked interactively when not given)")
 	cmd.Flags().StringArrayVar(&shells, "shell", nil, "shell(s) to install completion for (default: from $SHELL)")
 	must(cmd.RegisterFlagCompletionFunc("shell", completeShells))
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "show every change without making it")
 	cmd.Flags().BoolVar(&uninstall, "uninstall", false, "remove everything git-stack installed")
 	cmd.Flags().BoolVar(&force, "force", false, "replace existing aliases and completion files")
+	// --refresh is how git stack update hands over to the new binary once
+	// it is in place; see Installer.Refresh. Keep it working in every
+	// release, since older binaries call it on newer ones.
+	cmd.Flags().BoolVar(&refresh, "refresh", false, "bring what install set up before in line with this binary, without prompting")
+	must(cmd.Flags().MarkHidden("refresh"))
 	return cmd
 }
 

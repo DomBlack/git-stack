@@ -130,29 +130,56 @@ func (c *Client) Latest(ctx context.Context) (Release, error) {
 // Run compares the running binary with the latest release and, unless told
 // otherwise, downloads and installs it.
 func (c *Client) Run(ctx context.Context, o Options) (Result, error) {
+	p, err := c.Plan(ctx, o)
+	if err != nil || !p.Install {
+		return p.Result, err
+	}
+	return c.Install(ctx, p, o)
+}
+
+// Plan is what Run would do: the latest release, and whether it is to be
+// installed (Result.Status says why not when it isn't).
+type Plan struct {
+	Result  Result
+	Release Release
+	Install bool
+}
+
+// Plan fetches the latest release and decides, without downloading
+// anything, whether Run would install it. The CLI uses Plan and Install as
+// two steps so the download gets its own headline.
+func (c *Client) Plan(ctx context.Context, o Options) (Plan, error) {
 	rel, err := c.Latest(ctx)
 	if err != nil {
-		return Result{}, err
+		return Plan{}, err
 	}
 	res := Result{Current: o.Current.Version, Latest: rel.Tag, DevBuild: !o.Current.Release, Target: o.Target}
+	p := Plan{Result: res, Release: rel}
 	if !o.Force {
 		switch {
 		case res.DevBuild:
-			res.Status = StatusAvailable
-			return res, nil
+			p.Result.Status = StatusAvailable
+			return p, nil
 		case version.Compare(o.Current.Version, rel.Tag) == 0:
-			res.Status = StatusUpToDate
-			return res, nil
+			p.Result.Status = StatusUpToDate
+			return p, nil
 		case version.Compare(o.Current.Version, rel.Tag) > 0:
-			res.Status = StatusAhead
-			return res, nil
+			p.Result.Status = StatusAhead
+			return p, nil
 		}
 	}
 	if o.Check {
-		res.Status = StatusAvailable
-		return res, nil
+		p.Result.Status = StatusAvailable
+		return p, nil
 	}
+	p.Install = true
+	return p, nil
+}
 
+// Install downloads the planned release, verifies it against the release's
+// checksums.txt and replaces o.Target with it.
+func (c *Client) Install(ctx context.Context, p Plan, o Options) (Result, error) {
+	rel, res := p.Release, p.Result
 	name := assetName(rel.Tag, o.GOOS, o.GOARCH)
 	archiveURL, ok := rel.Assets[name]
 	if !ok {
