@@ -400,8 +400,9 @@ stack. All three go through one reshape step in `pkg/app`. It snapshots the stac
 to change, rewrites them in a single `Update`, then hands the branches whose parent changed to
 the native restack, so nothing is checked out (init stops after the `Update` and just says which
 branches need a restack). `Update` grew for this: its callback may now append stacks (written to
-the worktree's own file when it has one, else the common one, which is created with
-`schemaVersion: 1` if there isn't one yet) and clear or set a stack's id and number, though it
+the current worktree's own file, which is created with `schemaVersion: 1` if there isn't one
+yet; gh stack only reads the file in the git dir it runs in, so a stack put in the main
+checkout's file from a linked worktree was invisible to `gh stack submit` there) and clear or set a stack's id and number, though it
 still can't drop or reorder stacks. In that same `Update` every branch whose parent changed gets
 its recorded base fixed to where its own commits start (the recorded base if it's still in the
 branch's history, else the merge base with its old parent), because the restack replays
