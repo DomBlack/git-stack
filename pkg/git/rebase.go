@@ -129,10 +129,12 @@ func (c *Client) RebaseOnto(ctx context.Context, repo Repo, onto, upstream, bran
 // failure is an error.
 func (c *Client) RebaseContinue(ctx context.Context, repo Repo) (stopped bool, err error) {
 	_, err = c.gitInput(ctx, repo, nil, rebaseEnv, "rebase", "--continue")
-	if ee, ok := errors.AsType[*exec.ExitError](err); ok && strings.Contains(ee.Result.Err(), stagedChangesMarker) {
-		// A pick whose commit failed (signing, say) is left staged and git
-		// refuses to continue over it, telling you to commit it yourself.
-		// Do that: git takes the author and message from its own rebase
+	if ee, ok := errors.AsType[*exec.ExitError](err); ok && leftStaged(ee.Result.Err()) {
+		// A pick whose commit failed (signing, say) is left staged. Git
+		// before 2.56 refuses to continue over it, telling you to commit it
+		// yourself; 2.56 tries the commit itself, but with the signing the
+		// rebase started with, so it fails again after signing was turned
+		// off. Either way, commit it ourselves: git takes the author and message from its own rebase
 		// state, and the rebase then drops the rescheduled pick as already
 		// applied. --no-verify skips pre-commit and commit-msg, the two
 		// hooks a pick skips too (both run prepare-commit-msg and
@@ -146,9 +148,17 @@ func (c *Client) RebaseContinue(ctx context.Context, repo Repo) (stopped bool, e
 	return c.rebaseOutcome(ctx, repo, err)
 }
 
-// stagedChangesMarker is git rebase --continue's refusal when the previous
-// pick was applied but never committed.
-const stagedChangesMarker = "you have staged changes in your working tree"
+// stagedChangesMarker is git rebase --continue's refusal (before 2.56) when
+// the previous pick was applied but never committed; commitStagedMarker is
+// what 2.56 says when its own attempt to commit that pick fails.
+const (
+	stagedChangesMarker = "you have staged changes in your working tree"
+	commitStagedMarker  = "could not commit staged changes"
+)
+
+func leftStaged(stderr string) bool {
+	return strings.Contains(stderr, stagedChangesMarker) || strings.Contains(stderr, commitStagedMarker)
+}
 
 // RebaseAbort abandons a rebase in progress; git puts the branch it was
 // rebasing back and checks it out.
