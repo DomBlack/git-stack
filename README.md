@@ -632,16 +632,31 @@ and how the CLI should look and talk is in [`docs/style.md`](docs/style.md).
 
 ### Releasing
 
-Tag and push, that's it;
+Once main is green, write the release notes and tag with them as the message;
 
 ```sh
-git tag v0.1.0
-git push origin v0.1.0
+git tag -a v0.3.2 --cleanup=verbatim -F notes.md
+git push origin v0.3.2
 ```
 
+The tag has to be annotated (the release workflow refuses a lightweight one), and
+`--cleanup=verbatim` matters because git otherwise drops every line starting with `#`, i.e. your
+markdown headings. The notes are what people read first, so write them for someone who uses
+git-stack rather than someone who reads the diff: a one line summary as the first line, then what's
+new and why you'd care, then anything they have to do after upgrading (run `git stack install`
+again, say). The same text works as the announcement.
+
 The release workflow runs goreleaser, which builds Linux and macOS on amd64 and arm64, stamps the
-version in, and publishes the archives plus `checksums.txt` to a GitHub release. `git stack update`
-and `go install github.com/DomBlack/git-stack@latest` both pick it up.
+version in, and publishes the archives plus `checksums.txt` to a GitHub release. The release
+page is your notes, then GitHub's list of every pull request merged since the last tag, sorted
+into sections by label (see [`.github/release.yml`](.github/release.yml)), then how to upgrade.
+To see that list before tagging;
+
+```sh
+gh api repos/DomBlack/git-stack/releases/generate-notes -f tag_name=v0.3.2 -f previous_tag_name=v0.3.1 --jq .body
+```
+
+`git stack update` and `go install github.com/DomBlack/git-stack@latest` both pick the release up.
 
 ## License
 

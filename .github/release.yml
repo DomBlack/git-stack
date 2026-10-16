@@ -1,0 +1,27 @@
+# Sections for GitHub's generated release notes, which goreleaser uses for
+# every release (changelog.use: github-native). A pull request goes in the
+# first section whose label it has; label every PR when it's opened (see
+# AGENTS.md).
+changelog:
+  exclude:
+    labels:
+      - ignore-for-release
+  categories:
+    - title: Breaking changes
+      labels:
+        - breaking-change
+    - title: New features
+      labels:
+        - enhancement
+    - title: Fixes
+      labels:
+        - bug
+    - title: Documentation
+      labels:
+        - documentation
+    - title: Under the hood
+      labels:
+        - internal
+    - title: Other changes
+      labels:
+        - "*"
