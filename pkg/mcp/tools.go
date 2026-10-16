@@ -312,6 +312,24 @@ func (s *Server) untrack(ctx context.Context, req *mcp.CallToolRequest, in untra
 	return nil, res, nil
 }
 
+type renameInput struct {
+	repoArg
+	Name  string `json:"name" jsonschema:"the current branch's new name, used as given"`
+	Local bool   `json:"local,omitempty" jsonschema:"rename only in this repository, leaving the remote branch and its pull request under the old name"`
+}
+
+func (s *Server) rename(ctx context.Context, req *mcp.CallToolRequest, in renameInput) (*mcp.CallToolResult, app.RenameResult, error) {
+	repo, a, err := s.appFor(ctx, req, in.RepoPath)
+	if err != nil {
+		return nil, app.RenameResult{}, wrapErr(err)
+	}
+	res, err := a.Rename(ctx, repo, app.RenameOptions{Name: in.Name, Local: in.Local})
+	if err != nil {
+		return nil, app.RenameResult{}, wrapErr(err)
+	}
+	return nil, res, nil
+}
+
 type initInput struct {
 	repoArg
 	Branches []string `json:"branches,omitempty" jsonschema:"existing branches to track, bottom to top (default: the current branch)"`
@@ -644,6 +662,12 @@ func (s *Server) registerTools() {
 		Description: "Take a branch (default the current one) and every branch above it out of its stack; a stack is a single line, so it can't keep a gap. No commit, ref or checkout changes, and a stack left empty goes away. With only: true just that branch is untracked and the branches above it are restacked onto its parent, dropping its commits; conflicts and undo work as for stack_reorder. Pull requests stay open; a stack GitHub knows is regrouped at the next stack_submit. next_steps says how to track the branches again. Refuses with invalid_args on a trunk or when a branch in the stack has merged (stack_sync first), and not_in_stack on an untracked branch.",
 		Annotations: &mcp.ToolAnnotations{DestructiveHint: boolp(true), OpenWorldHint: boolp(false)},
 	}, s.untrack)
+	mcp.AddTool(s.mcp, &mcp.Tool{
+		Name:        "stack_rename",
+		Title:       "Rename the current branch",
+		Description: "Give the current branch a new name, keeping its place in the stack, its commits and its base; nothing is rebased or pushed. A branch that has been pushed is renamed on GitHub first (remote in the result), which keeps its pull request attached and retargets pull requests based on it; if GitHub refuses, nothing changes. With local: true only this repository changes and the pull request stays on the old name (a notice says so). Refuses with invalid_args on a trunk or a name already taken here or on the remote, and not_in_stack on an untracked branch.",
+		Annotations: &mcp.ToolAnnotations{DestructiveHint: boolp(true), OpenWorldHint: boolp(true)},
+	}, s.rename)
 	mcp.AddTool(s.mcp, &mcp.Tool{
 		Name:        "stack_init",
 		Title:       "Track existing branches as a stack",

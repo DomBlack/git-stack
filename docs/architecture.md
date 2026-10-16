@@ -492,6 +492,16 @@ moved branch; the snapshot names it, with its head and base, and abort puts it b
 stack GitHub knows is queued for dissolving like any reshape, and no pull request is closed, since
 the branches still exist and may be tracked again.
 
+**Rename goes to GitHub first.** A pushed branch is renamed with GitHub's branch rename endpoint
+before anything local changes, because that rename keeps the PR attached and retargets the PRs
+based on it, which pushing a new branch and deleting the old one wouldn't do; and if it's refused
+(offline, no permission, the name taken) there's nothing to put back. Then `git branch -m`, which
+carries the reflog and config, and one `Update` that renames the branch's record in place
+(`RenamedFrom` tells the backend to reuse the old node, PR record and all). The remote tracking ref
+and the upstream are moved to the new name so the next submit's lease check sees the same tip, and
+the PR cache is dropped since it names the old head. The stack on GitHub is left alone: same PRs,
+same order. `--local` skips GitHub and drops the PR record, since that PR still has the old head.
+
 **Merged branches are deleted by default.** `stack.sync.prune` decides: `always` (default)
 deletes branches whose PRs merged or closed, `ask` prompts on a terminal and keeps with a
 notice otherwise, `never` keeps. `-d` and `-f` delete regardless. A branch checked out in

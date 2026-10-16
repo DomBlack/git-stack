@@ -220,6 +220,8 @@ var cliToTool = []struct{ from, to string }{
 	{"git stack move", "stack_move"},
 	{"git stack fold", "stack_fold"},
 	{"git stack untrack", "stack_untrack"},
+	{"git stack rename --local", "stack_rename with local: true and name"},
+	{"git stack rename", "stack_rename"},
 	{"git stack init", "stack_init"},
 	{"git stack track", "stack_init"},
 	{"git stack pop", "stack_pop"},

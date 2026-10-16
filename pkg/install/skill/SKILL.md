@@ -25,6 +25,7 @@ that touches a stack:
 | Change the order of a stack's branches | `stack_reorder` (`order` bottom to top) |
 | Move a branch and what's above it onto another stack or onto trunk | `stack_move` (`only: true` to leave the rest behind) |
 | Merge the current branch into the one below it (one branch, one PR) | `stack_fold` (`keep: true` keeps the current branch's name and PR) |
+| Rename the current branch (on GitHub too once pushed; its PR follows) | `stack_rename` (`local: true` renames only this repository) |
 | Track branches made by hand as a stack | `stack_init` |
 | Take the current branch out of its stack, keeping its changes staged on its parent | `stack_pop` |
 | Stop tracking a branch and what's above it, leaving the branches alone | `stack_untrack` (`only: true` drops just that branch and restacks the rest onto its parent) |
@@ -58,7 +59,7 @@ the one calling.
 ## CLI equivalents
 
 `git stack create -m "…"`, `git stack modify -a`, `git stack absorb`, `git stack reorder a b c`,
-`git stack move --onto <branch>`, `git stack fold`, `git stack untrack`, `git stack init a b`, `git stack pop`, `git stack restack`,
+`git stack move --onto <branch>`, `git stack fold`, `git stack rename <name>`, `git stack untrack`, `git stack init a b`, `git stack pop`, `git stack restack`,
 `git stack up/down/top/bottom`, `git stack checkout`, `git stack submit --no-edit`,
-`git stack sync -f`, `git stack pr --print` (a branch's PR URL; `stack_view` has them all). Aliases: `git c`, `git m`, `git ab`, `git reorder`, `git move`, `git fold`, `git untrack`, `git track`, `git pop`,
+`git stack sync -f`, `git stack pr --print` (a branch's PR URL; `stack_view` has them all). Aliases: `git c`, `git m`, `git ab`, `git reorder`, `git move`, `git fold`, `git rename`, `git untrack`, `git track`, `git pop`,
 `git rs`, `git u`, `git d`, `git t`, `git b`, `git co`, `git ss`, `git pr`.
