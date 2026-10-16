@@ -40,8 +40,10 @@ type RestackResult struct {
 	Restored []string `json:"restored,omitempty"`
 	// OrderRestored is true when an abort also put a reorder or move's
 	// stack shape back.
-	OrderRestored bool     `json:"order_restored,omitempty"`
-	Notices       []string `json:"notices,omitempty"`
+	OrderRestored bool `json:"order_restored,omitempty"`
+	// Popped is the branch a continue finished popping.
+	Popped  string   `json:"popped,omitempty"`
+	Notices []string `json:"notices,omitempty"`
 }
 
 const restackCommand = "git stack restack"
@@ -66,10 +68,12 @@ type restackRun struct {
 	command, trunk, stackName, originalBranch string
 	moved                                     []movedRef
 	state                                     *restackState
-	// then are the segments queued behind the one in progress, and
-	// reshape the snapshot abort puts back; both are saved on a conflict.
+	// then are the segments queued behind the one in progress, reshape
+	// the snapshot abort puts back and finish the reshape's last step; all
+	// are saved on a conflict.
 	then    []restackSegment
 	reshape *reshapeSnapshot
+	finish  *reshapeFinish
 }
 
 // restack is the shared body of Restack and modify's restack. command
@@ -234,7 +238,7 @@ func (a *App) startConflictRebase(ctx context.Context, run *restackRun, p *resta
 		Conflict: c.Branch, Onto: c.Onto, NewBase: p.conflictNewBase,
 		ConflictTip: local[c.Branch].Head, ConflictOldBase: oldBase,
 		Remaining: remaining, Moved: run.moved,
-		Then: run.then, Reshape: run.reshape,
+		Then: run.then, Reshape: run.reshape, Finish: run.finish,
 	}
 	if err := saveRestackState(run.repo, run.state); err != nil {
 		return err
@@ -524,7 +528,7 @@ func (a *App) restackContinue(ctx context.Context, repo git.Repo, stageAll bool)
 			WithSteps("git stack abort to put the moved branches back, then " + st.Command + " again")
 	}
 	earlier := slices.Clone(st.Moved)
-	run := &restackRun{repo: repo, command: st.Command, trunk: st.Trunk, originalBranch: st.OriginalBranch, moved: st.Moved, state: st, then: st.Then, reshape: st.Reshape}
+	run := &restackRun{repo: repo, command: st.Command, trunk: st.Trunk, originalBranch: st.OriginalBranch, moved: st.Moved, state: st, then: st.Then, reshape: st.Reshape, finish: st.Finish}
 	if g, err := a.d.Meta.Load(ctx, repo); err == nil {
 		if s, _, ok := g.StackOf(st.Conflict); ok {
 			run.stackName = s.Bottom()
@@ -539,7 +543,10 @@ func (a *App) restackContinue(ctx context.Context, repo git.Repo, stageAll bool)
 			}
 			// Every queued segment may have been empty, which never reaches
 			// finishRun on its own.
-			return a.finishRun(ctx, run)
+			if err := a.finishRun(ctx, run); err != nil {
+				return err
+			}
+			return a.finishReshape(ctx, run, &res)
 		}
 		if err := a.recordRebased(ctx, run, &res); err != nil {
 			return err
@@ -555,7 +562,10 @@ func (a *App) restackContinue(ctx context.Context, repo git.Repo, stageAll bool)
 		} else if err := a.finishRun(ctx, run); err != nil {
 			return err
 		}
-		return a.restackSegments(ctx, run, st.Then, &res)
+		if err := a.restackSegments(ctx, run, st.Then, &res); err != nil {
+			return err
+		}
+		return a.finishReshape(ctx, run, &res)
 	})
 	if err == nil {
 		res.Moved = withEarlierMoves(earlier, res.Moved, run.stackName)

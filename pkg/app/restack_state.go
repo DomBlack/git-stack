@@ -45,6 +45,9 @@ type restackState struct {
 	// Reshape is the metadata as it was before the reorder or move that
 	// started this run, for abort to put back.
 	Reshape *reshapeSnapshot `json:"reshape,omitempty"`
+	// Finish is what the reshape still has to do once every branch is
+	// restacked: a pop's move of HEAD and delete of its branch.
+	Finish *reshapeFinish `json:"finish,omitempty"`
 }
 
 // branches are the branches the state still has to restack, the
@@ -61,6 +64,13 @@ func (s *restackState) branches() []string {
 type restackSegment struct {
 	Parent   string   `json:"parent"`
 	Branches []string `json:"branches"`
+}
+
+// reshapeFinish is work a reshape does once its restack is done.
+type reshapeFinish struct {
+	// Pop is the branch to delete after pointing HEAD at Parent.
+	Pop    string `json:"pop"`
+	Parent string `json:"parent"`
 }
 
 // movedRef is one branch move, with what abort needs to undo it.
