@@ -228,7 +228,7 @@ func TestToolsAreListedWithAnnotationsAndSchemas(t *testing.T) {
 	for _, tool := range res.Tools {
 		got[tool.Name] = tool
 	}
-	for _, name := range []string{"stack_view", "stack_create", "stack_modify", "stack_absorb", "stack_reorder", "stack_move", "stack_fold", "stack_rename", "stack_untrack", "stack_init", "stack_pop", "stack_restack", "stack_navigate", "stack_submit", "stack_sync"} {
+	for _, name := range []string{"stack_view", "stack_create", "stack_modify", "stack_absorb", "stack_reorder", "stack_move", "stack_fold", "stack_rename", "stack_untrack", "stack_init", "stack_pop", "stack_restack", "stack_undo", "stack_navigate", "stack_submit", "stack_sync"} {
 		if got[name] == nil {
 			t.Errorf("missing tool %s", name)
 		}

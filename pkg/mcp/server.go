@@ -227,6 +227,8 @@ var cliToTool = []struct{ from, to string }{
 	{"git stack pop", "stack_pop"},
 	{"git stack continue", "call stack_continue"},
 	{"git stack abort", "call stack_abort"},
+	{"git stack undo --force", "stack_undo with force: true"},
+	{"git stack undo", "stack_undo"},
 	{"git stack top", "stack_navigate {direction: \"top\"}"},
 	{"git stack checkout --trunk", "stack_navigate {direction: \"bottom\"} then {direction: \"down\"}"},
 	{"git stack checkout", "stack_navigate {branch: ...}"},

@@ -52,6 +52,10 @@ the one calling.
   (its notices name each), so a move's source stack is grouped again by the same submit. A stack
   with fewer than two pull requests has nothing to group and the notice says so; a branch with
   no open pull request, or a failed create, gets a notice saying to submit from that stack.
+- `stack_undo` takes back the last stack command run in this worktree (call it again to go
+  further back); after `stack_create`, `stack_modify` or `stack_absorb` the changes come back
+  staged. A successful `stack_submit` or `stack_merge` clears what can be undone. Only pass
+  `force: true` when the user has said to throw away commits made since.
 - Plain git is fine for reading (`git status`, `git diff`, `git log`) and for staging files.
 - Run `stack_view` before `stack_submit` so you know which branches get new PRs and need
   titles and bodies.
@@ -61,5 +65,5 @@ the one calling.
 `git stack create -m "…"`, `git stack modify -a`, `git stack absorb`, `git stack reorder a b c`,
 `git stack move --onto <branch>`, `git stack fold`, `git stack rename <name>`, `git stack untrack`, `git stack init a b`, `git stack pop`, `git stack restack`,
 `git stack up/down/top/bottom`, `git stack checkout`, `git stack submit --no-edit`,
-`git stack sync -f`, `git stack pr --print` (a branch's PR URL; `stack_view` has them all). Aliases: `git c`, `git m`, `git ab`, `git reorder`, `git move`, `git fold`, `git rename`, `git untrack`, `git track`, `git pop`,
-`git rs`, `git u`, `git d`, `git t`, `git b`, `git co`, `git ss`, `git pr`.
+`git stack sync -f`, `git stack undo`, `git stack pr --print` (a branch's PR URL; `stack_view` has them all). Aliases: `git c`, `git m`, `git ab`, `git reorder`, `git move`, `git fold`, `git rename`, `git untrack`, `git track`, `git pop`,
+`git rs`, `git u`, `git d`, `git t`, `git b`, `git co`, `git ss`, `git pr`, `git undo`.
