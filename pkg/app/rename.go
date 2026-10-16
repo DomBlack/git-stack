@@ -39,6 +39,25 @@ const renameCommand = "git stack rename"
 // leaves everything here as it was. With Local only this repository
 // changes.
 func (a *App) Rename(ctx context.Context, repo git.Repo, o RenameOptions) (RenameResult, error) {
+	command := renameCommand
+	if o.Local {
+		command += " --local"
+	}
+	res, err := undoableResult(a, ctx, repo, command, undoKeep, func(ctx context.Context) (RenameResult, error) {
+		return a.rename(ctx, repo, o)
+	})
+	if err == nil && res.Remote != "" {
+		// GitHub has the new name now, and undo only ever puts local state
+		// back, so like a submit this is as far back as undo can go.
+		if cerr := a.clearUndo(ctx, repo); cerr != nil {
+			a.d.Log.Warn("could not clear the undo history", "err", cerr)
+		}
+	}
+	return res, err
+}
+
+// rename is Rename's body.
+func (a *App) rename(ctx context.Context, repo git.Repo, o RenameOptions) (RenameResult, error) {
 	if err := a.noRebaseActive(ctx, repo); err != nil {
 		return RenameResult{}, err
 	}

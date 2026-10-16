@@ -37,6 +37,17 @@ const foldCommand = "git stack fold"
 // its parent, so nothing needs restacking: the branches above already have
 // every commit involved and only their recorded parent changes.
 func (a *App) Fold(ctx context.Context, repo git.Repo, o FoldOptions) (FoldResult, error) {
+	command := foldCommand
+	if o.Keep {
+		command += " --keep"
+	}
+	return undoableResult(a, ctx, repo, command, undoKeep, func(ctx context.Context) (FoldResult, error) {
+		return a.fold(ctx, repo, o)
+	})
+}
+
+// fold is Fold's body.
+func (a *App) fold(ctx context.Context, repo git.Repo, o FoldOptions) (FoldResult, error) {
 	if err := a.noRebaseActive(ctx, repo); err != nil {
 		return FoldResult{}, err
 	}
