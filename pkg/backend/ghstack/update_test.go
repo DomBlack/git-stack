@@ -472,3 +472,63 @@ func TestUpdateMoveAcrossFilesKeepsBranchRecords(t *testing.T) {
 		t.Errorf("worktree file should only hold w2 now:\n%s", wtData)
 	}
 }
+
+func TestAdoptMovesStackRecordToCurrentWorktree(t *testing.T) {
+	b, repo, mainPath, _ := updateFixture(t)
+	ctx := context.Background()
+	gittest.Run(t, repo.TopLevel, "branch", "b")
+	dir := filepath.Join(t.TempDir(), "fresh")
+	gittest.Run(t, repo.TopLevel, "worktree", "add", "-q", dir, "b")
+	wtRepo, err := b.git.Discover(ctx, dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// b's stack lives in the main checkout's file; from the worktree where b
+	// is checked out it moves over whole.
+	if err := b.adoptCurrent(ctx, wtRepo); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(filepath.Join(wtRepo.GitDir, FileName))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{`"id": "S1"`, `"number": 7`, `"extra": "yes"`, `"branch": "b"`} {
+		if !strings.Contains(string(data), want) {
+			t.Errorf("worktree file lacks %s:\n%s", want, data)
+		}
+	}
+	main, _ := os.ReadFile(mainPath)
+	if strings.Contains(string(main), `"S1"`) || !strings.Contains(string(main), `"branch": "done"`) || !strings.Contains(string(main), `"future"`) {
+		t.Errorf("main file should keep everything but S1:\n%s", main)
+	}
+	g, err := b.Load(ctx, wtRepo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s, _, ok := g.StackOf("b"); !ok || s.ID != "S1" || s.Bottom() != "a" || s.Worktree != wtRepo.TopLevel {
+		t.Errorf("stack of b = %+v", s)
+	}
+
+	// Already here: nothing is rewritten.
+	before, _ := os.ReadFile(filepath.Join(wtRepo.GitDir, FileName))
+	if err := b.adoptCurrent(ctx, wtRepo); err != nil {
+		t.Fatal(err)
+	}
+	if after, _ := os.ReadFile(filepath.Join(wtRepo.GitDir, FileName)); string(after) != string(before) {
+		t.Errorf("a second adopt changed the file:\n%s", after)
+	}
+
+	// And back to the main checkout once b is checked out there.
+	gittest.Run(t, dir, "switch", "-q", "--detach")
+	gittest.Run(t, repo.TopLevel, "switch", "-q", "b")
+	if err := b.adoptCurrent(ctx, repo); err != nil {
+		t.Fatal(err)
+	}
+	if main, _ := os.ReadFile(mainPath); !strings.Contains(string(main), `"S1"`) {
+		t.Errorf("S1 should be back in the main file:\n%s", main)
+	}
+	if wt, _ := os.ReadFile(filepath.Join(wtRepo.GitDir, FileName)); strings.Contains(string(wt), `"S1"`) {
+		t.Errorf("S1 should have left the worktree file:\n%s", wt)
+	}
+}

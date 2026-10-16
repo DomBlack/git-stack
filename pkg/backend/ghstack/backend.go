@@ -158,31 +158,11 @@ func (b *Backend) Load(_ context.Context, repo git.Repo) (*stack.Graph, error) {
 // record). It must not remove or reorder existing stacks; a stack left with
 // no branches is removed.
 func (b *Backend) Update(ctx context.Context, repo git.Repo, fn func(*stack.Graph) error) error {
-	var dirs []string
-	for _, src := range sources(repo) {
-		if _, err := os.Stat(filepath.Join(src.gitDir, FileName)); err == nil {
-			dirs = append(dirs, src.gitDir)
-		}
+	unlock, err := lockAll(ctx, repo)
+	if err != nil {
+		return err
 	}
-	// The current git dir is always locked, even with no file yet: Update
-	// may create its file for a new stack and two writers must not race it.
-	if !slices.Contains(dirs, repo.GitDir) {
-		dirs = append(dirs, repo.GitDir)
-	}
-	slices.Sort(dirs)
-	var unlocks []func()
-	defer func() {
-		for _, u := range unlocks {
-			u()
-		}
-	}()
-	for _, dir := range dirs {
-		unlock, err := lock(ctx, filepath.Join(dir, LockName), lockWait)
-		if err != nil {
-			return err
-		}
-		unlocks = append(unlocks, unlock)
-	}
+	defer unlock()
 	r, err := b.read(repo)
 	if err != nil {
 		return err
@@ -218,6 +198,92 @@ func (b *Backend) Update(ctx context.Context, repo git.Repo, fn func(*stack.Grap
 		}
 	}
 	return nil
+}
+
+// lockAll takes gh stack's lock in every git dir that has a metadata file,
+// and in the current one even without a file yet, since a new stack may
+// create its file there and two writers must not race it. Dirs are locked
+// in sorted order so two of us never deadlock.
+func lockAll(ctx context.Context, repo git.Repo) (func(), error) {
+	var dirs []string
+	for _, src := range sources(repo) {
+		if _, err := os.Stat(filepath.Join(src.gitDir, FileName)); err == nil {
+			dirs = append(dirs, src.gitDir)
+		}
+	}
+	if !slices.Contains(dirs, repo.GitDir) {
+		dirs = append(dirs, repo.GitDir)
+	}
+	slices.Sort(dirs)
+	var unlocks []func()
+	unlockAll := func() {
+		for _, u := range slices.Backward(unlocks) {
+			u()
+		}
+	}
+	for _, dir := range dirs {
+		unlock, err := lock(ctx, filepath.Join(dir, LockName), lockWait)
+		if err != nil {
+			unlockAll()
+			return nil, err
+		}
+		unlocks = append(unlocks, unlock)
+	}
+	return unlockAll, nil
+}
+
+// adopt moves the record of the stack holding branch into the current
+// worktree's file when it is kept in another worktree's (it was started
+// there, or put in the main checkout's file by an older git-stack). gh
+// stack only reads the file in the git dir it runs in, so without this it
+// says the branch is not in a stack. The record moves as it is, pull
+// request records and members we don't model included. A branch in no
+// stack is left alone for gh stack to report.
+func (b *Backend) adopt(ctx context.Context, repo git.Repo, branch string) error {
+	if branch == "" {
+		return nil
+	}
+	unlock, err := lockAll(ctx, repo)
+	if err != nil {
+		return err
+	}
+	defer unlock()
+	r, err := b.read(repo)
+	if err != nil {
+		return err
+	}
+	gi := slices.IndexFunc(r.graph.Stacks, func(s stack.Stack) bool { return s.Index(branch) >= 0 })
+	if gi < 0 {
+		return nil
+	}
+	from := r.where[gi]
+	if r.files[from.file].src.gitDir == repo.GitDir {
+		return nil
+	}
+	to := r.fileFor(repo)
+	src, err := parseTree(r.files[from.file].data)
+	if err != nil {
+		return err
+	}
+	dst, err := parseTree(r.files[to].data)
+	if err != nil {
+		return err
+	}
+	srcStacks := src.get("stacks")
+	rec := srcStacks.items[from.rec]
+	srcStacks.items = slices.Delete(srcStacks.items, from.rec, from.rec+1)
+	dstStacks := dst.get("stacks")
+	if dstStacks == nil || dstStacks.kind != '[' {
+		dstStacks = arrayNode()
+		dst.set("stacks", dstStacks)
+	}
+	dstStacks.items = append(dstStacks.items, rec)
+	// The new home first: should the second write fail, the stack is in
+	// both files and the current worktree's copy is the one read first.
+	if err := writeFile(r.files[to].src.gitDir, dst); err != nil {
+		return err
+	}
+	return writeFile(r.files[from.file].src.gitDir, src)
 }
 
 // parseAll parses every loaded file and collects the node of every branch
@@ -344,11 +410,17 @@ func (b *Backend) writeBack(r *reading, fi int, root *node, pool map[string]*nod
 		return nil
 	}
 	stacksNode.items = keep
+	return writeFile(r.files[fi].src.gitDir, root)
+}
+
+// writeFile replaces the metadata file in gitDir with root, atomically and
+// keeping the old file's permissions.
+func writeFile(gitDir string, root *node) error {
 	out, err := root.encode()
 	if err != nil {
 		return err
 	}
-	path := filepath.Join(r.files[fi].src.gitDir, FileName)
+	path := filepath.Join(gitDir, FileName)
 	tmp, err := os.CreateTemp(filepath.Dir(path), FileName+".*")
 	if err != nil {
 		return err
