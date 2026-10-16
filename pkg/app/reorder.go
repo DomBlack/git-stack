@@ -40,6 +40,13 @@ const reorderCommand = "git stack reorder"
 // Reorder changes the order of the branches in the current stack and
 // restacks it. Nothing is checked out.
 func (a *App) Reorder(ctx context.Context, repo git.Repo, o ReorderOptions) (ReorderResult, error) {
+	return undoableResult(a, ctx, repo, reorderCommand, undoKeep, func(ctx context.Context) (ReorderResult, error) {
+		return a.reorder(ctx, repo, o)
+	})
+}
+
+// reorder is Reorder's body.
+func (a *App) reorder(ctx context.Context, repo git.Repo, o ReorderOptions) (ReorderResult, error) {
 	if err := a.noRebaseActive(ctx, repo); err != nil {
 		return ReorderResult{}, err
 	}

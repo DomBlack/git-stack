@@ -31,6 +31,13 @@ type InitResult struct {
 // Init records a new stack from branches that already exist. It changes
 // no ref and checks nothing out.
 func (a *App) Init(ctx context.Context, repo git.Repo, o InitOptions) (InitResult, error) {
+	return undoableResult(a, ctx, repo, "git stack init", undoKeep, func(ctx context.Context) (InitResult, error) {
+		return a.initStack(ctx, repo, o)
+	})
+}
+
+// initStack is Init's body.
+func (a *App) initStack(ctx context.Context, repo git.Repo, o InitOptions) (InitResult, error) {
 	if err := a.noRebaseActive(ctx, repo); err != nil {
 		return InitResult{}, err
 	}

@@ -190,6 +190,13 @@ func (st *syncState) isDirty(ctx context.Context, g *git.Client, path string) bo
 // remote advanced and restacks every stack, the way gt sync does. Nothing is
 // pushed; submit does that.
 func (a *App) Sync(ctx context.Context, repo git.Repo, o SyncOptions) (SyncResult, error) {
+	return undoableResult(a, ctx, repo, "git stack sync", undoKeep, func(ctx context.Context) (SyncResult, error) {
+		return a.sync(ctx, repo, o)
+	})
+}
+
+// sync is Sync's body.
+func (a *App) sync(ctx context.Context, repo git.Repo, o SyncOptions) (SyncResult, error) {
 	var res SyncResult
 	st, err := a.gatherSync(ctx, repo)
 	if err != nil {

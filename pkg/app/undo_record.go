@@ -83,6 +83,17 @@ func (a *App) undoable(ctx context.Context, repo git.Repo, command string, mode 
 	return err
 }
 
+// undoableResult is undoable for a use case that returns a result.
+func undoableResult[T any](a *App, ctx context.Context, repo git.Repo, command string, mode undoMode, fn func(context.Context) (T, error)) (T, error) {
+	var res T
+	err := a.undoable(ctx, repo, command, mode, func(ctx context.Context) error {
+		var err error
+		res, err = fn(ctx)
+		return err
+	})
+	return res, err
+}
+
 // captureUndo reads the state undo can put back: every local branch's tip,
 // the metadata, the remote queue and each worktree's HEAD. tracked are the
 // graph's trunks and branches.

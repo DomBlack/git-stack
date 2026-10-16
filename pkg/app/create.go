@@ -54,6 +54,13 @@ const undoTimeout = 30 * time.Second
 // not the top of its stack, the branch goes in right above the current one
 // and the branches above are restacked onto it afterwards.
 func (a *App) Create(ctx context.Context, repo git.Repo, o CreateOptions) (CreateResult, error) {
+	return undoableResult(a, ctx, repo, "git stack create", undoSoft, func(ctx context.Context) (CreateResult, error) {
+		return a.create(ctx, repo, o)
+	})
+}
+
+// create is Create's body.
+func (a *App) create(ctx context.Context, repo git.Repo, o CreateOptions) (CreateResult, error) {
 	if a.d.Tracker == nil {
 		return CreateResult{}, stack.New(stack.KindUnsupported, "no stack backend configured")
 	}
