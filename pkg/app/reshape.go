@@ -336,7 +336,7 @@ func (a *App) reshape(ctx context.Context, repo git.Repo, command, headline stri
 		}
 		return RestackResult{}, err
 	}
-	run := &restackRun{repo: repo, command: command, originalBranch: current, reshape: snap, finish: e.finish}
+	run := &restackRun{repo: repo, command: command, originalBranch: current, reshape: snap, finish: e.finish, undo: undoFrom(ctx)}
 	res := RestackResult{Scope: stack.ScopeUpstack}
 	if len(e.segments) == 0 {
 		if err := a.finishReshape(ctx, run, &res); err != nil {
@@ -404,7 +404,7 @@ func (a *App) saveStopped(run *restackRun, err error) error {
 	e := asStackError(err)
 	st := &restackState{
 		Command: run.command, OriginalBranch: run.originalBranch, Trunk: run.trunk,
-		Moved: run.moved, Then: run.then, Reshape: run.reshape, Finish: run.finish,
+		Moved: run.moved, Then: run.then, Reshape: run.reshape, Finish: run.finish, Undo: run.undo,
 	}
 	if serr := saveRestackState(run.repo, st); serr != nil {
 		return e.WithSteps(fmt.Sprintf("the new shape was kept but could not be saved for git stack continue or abort (%v); git stack restack finishes it", serr))
