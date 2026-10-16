@@ -46,6 +46,20 @@ type Metadata interface {
 	// stacks; a stack left with no branches is removed. When fn returns an
 	// error nothing is written and the error is returned.
 	Update(ctx context.Context, repo git.Repo, fn func(*Graph) error) error
+	// Snapshot reads the metadata exactly as stored, under the backend's
+	// lock.
+	Snapshot(ctx context.Context, repo git.Repo) (Snapshot, error)
+	// Restore writes a snapshot back byte for byte under the lock, removing
+	// the files that did not exist when it was taken.
+	Restore(ctx context.Context, repo git.Repo, s Snapshot) error
+}
+
+// Snapshot is the backend's metadata exactly as stored, opaque to everything
+// but the backend that made it.
+type Snapshot struct {
+	// Files maps each metadata file's path to its contents; an empty value
+	// records that the file did not exist.
+	Files map[string][]byte `json:"files"`
 }
 
 // Tracker registers branches with the backend.

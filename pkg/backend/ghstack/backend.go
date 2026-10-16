@@ -420,7 +420,12 @@ func writeFile(gitDir string, root *node) error {
 	if err != nil {
 		return err
 	}
-	path := filepath.Join(gitDir, FileName)
+	return writeBytes(filepath.Join(gitDir, FileName), out)
+}
+
+// writeBytes replaces path with out atomically, keeping the mode of the
+// file it replaces.
+func writeBytes(path string, out []byte) error {
 	tmp, err := os.CreateTemp(filepath.Dir(path), FileName+".*")
 	if err != nil {
 		return err
@@ -542,4 +547,90 @@ func (b *Backend) ghRun(ctx context.Context, repo git.Repo, stream io.Writer, ar
 		return res, mapError(args, err)
 	}
 	return res, nil
+}
+
+// lockDirs takes gh stack's lock in each of dirs, in sorted order so two of
+// us never deadlock. The returned function releases them all.
+func lockDirs(ctx context.Context, dirs []string) (func(), error) {
+	dirs = slices.Clone(dirs)
+	slices.Sort(dirs)
+	dirs = slices.Compact(dirs)
+	var unlocks []func()
+	release := func() {
+		for _, u := range slices.Backward(unlocks) {
+			u()
+		}
+	}
+	for _, dir := range dirs {
+		unlock, err := lock(ctx, filepath.Join(dir, LockName), lockWait)
+		if err != nil {
+			release()
+			return nil, err
+		}
+		unlocks = append(unlocks, unlock)
+	}
+	return release, nil
+}
+
+// Snapshot implements stack.Metadata. It reads every metadata file Load
+// would (the current worktree's, the main checkout's and every linked
+// worktree's) under the lock, recording the ones that don't exist as empty
+// so Restore can remove them again.
+func (b *Backend) Snapshot(ctx context.Context, repo git.Repo) (stack.Snapshot, error) {
+	var dirs []string
+	for _, src := range sources(repo) {
+		dirs = append(dirs, src.gitDir)
+	}
+	unlock, err := lockDirs(ctx, append(slices.Clone(dirs), repo.GitDir))
+	if err != nil {
+		return stack.Snapshot{}, err
+	}
+	defer unlock()
+	snap := stack.Snapshot{Files: map[string][]byte{}}
+	for _, dir := range dirs {
+		path := filepath.Join(dir, FileName)
+		data, err := os.ReadFile(path)
+		if err != nil && !errors.Is(err, fs.ErrNotExist) {
+			return stack.Snapshot{}, err
+		}
+		snap.Files[path] = data
+	}
+	return snap, nil
+}
+
+// Restore implements stack.Metadata. It writes each file in the snapshot
+// back exactly, under the lock, and removes the ones that were empty (did not
+// exist) when it was taken. A file whose git dir has gone since (a removed
+// worktree) is skipped, and files the snapshot doesn't know about are left
+// alone.
+func (b *Backend) Restore(ctx context.Context, repo git.Repo, s stack.Snapshot) error {
+	var dirs []string
+	for path := range s.Files {
+		dir := filepath.Dir(path)
+		if _, err := os.Stat(dir); err == nil {
+			dirs = append(dirs, dir)
+		}
+	}
+	unlock, err := lockDirs(ctx, append(slices.Clone(dirs), repo.GitDir))
+	if err != nil {
+		return err
+	}
+	defer unlock()
+	for _, dir := range dirs {
+		path := filepath.Join(dir, FileName)
+		data := s.Files[path]
+		if len(data) == 0 {
+			if err := os.Remove(path); err != nil && !errors.Is(err, fs.ErrNotExist) {
+				return err
+			}
+			continue
+		}
+		if cur, err := os.ReadFile(path); err == nil && string(cur) == string(data) {
+			continue
+		}
+		if err := writeBytes(path, data); err != nil {
+			return err
+		}
+	}
+	return nil
 }

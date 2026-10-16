@@ -17,6 +17,7 @@ import (
 	"github.com/DomBlack/git-stack/pkg/git"
 	"github.com/DomBlack/git-stack/pkg/git/gittest"
 	"github.com/DomBlack/git-stack/pkg/stack"
+	"github.com/DomBlack/git-stack/pkg/stack/stacktest"
 )
 
 // fakeBackend implements Metadata and Tracker in memory, doing the git
@@ -38,6 +39,19 @@ func (f *fakeBackend) Update(_ context.Context, _ git.Repo, fn func(*stack.Graph
 		return err
 	}
 	f.graph = stack.NewGraph(slices.DeleteFunc(f.graph.Stacks, func(s stack.Stack) bool { return len(s.Branches) == 0 }))
+	return nil
+}
+
+func (f *fakeBackend) Snapshot(context.Context, git.Repo) (stack.Snapshot, error) {
+	return stacktest.SnapshotGraph(f.graph)
+}
+
+func (f *fakeBackend) Restore(_ context.Context, _ git.Repo, s stack.Snapshot) error {
+	g, err := stacktest.RestoreGraph(s)
+	if err != nil {
+		return err
+	}
+	f.graph = g
 	return nil
 }
 
