@@ -223,7 +223,7 @@ func TestToolsAreListedWithAnnotationsAndSchemas(t *testing.T) {
 	for _, tool := range res.Tools {
 		got[tool.Name] = tool
 	}
-	for _, name := range []string{"stack_view", "stack_create", "stack_modify", "stack_absorb", "stack_reorder", "stack_move", "stack_fold", "stack_init", "stack_pop", "stack_restack", "stack_navigate", "stack_submit", "stack_sync"} {
+	for _, name := range []string{"stack_view", "stack_create", "stack_modify", "stack_absorb", "stack_reorder", "stack_move", "stack_fold", "stack_untrack", "stack_init", "stack_pop", "stack_restack", "stack_navigate", "stack_submit", "stack_sync"} {
 		if got[name] == nil {
 			t.Errorf("missing tool %s", name)
 		}
@@ -862,5 +862,31 @@ func TestCreateInsert(t *testing.T) {
 	gittest.Run(t, h.dir, "switch", "-q", "main")
 	if te := h.toolErr("stack_create", map[string]any{"message": "x", "insert": true}); te.Code != "invalid_args" {
 		t.Errorf("insert on trunk = %+v", te)
+	}
+}
+
+func TestUntrack(t *testing.T) {
+	h := newHarness(t)
+	defer h.assertNoStdout()
+	var res app.UntrackResult
+	h.call("stack_untrack", map[string]any{"branch": "a", "only": true}, &res)
+	if len(res.Untracked) != 1 || res.Untracked[0] != "a" || res.Parent != "main" || len(res.Restacked) != 1 {
+		t.Fatalf("untrack only = %+v", res)
+	}
+	if len(res.NextSteps) != 1 || res.NextSteps[0] != `call stack_init with branches: ["a"]` {
+		t.Errorf("next steps = %q", res.NextSteps)
+	}
+	if _, err := gittest.RunErr(t, h.dir, "cat-file", "-e", "b:a.txt"); err == nil {
+		t.Error("b still has a's file")
+	}
+	h.call("stack_untrack", nil, &res)
+	if len(res.Untracked) != 1 || res.Untracked[0] != "b" || len(h.backend.Graph().Stacks) != 0 {
+		t.Fatalf("untrack = %+v, stacks %+v", res, h.backend.Graph().Stacks)
+	}
+	if h.current() != "b" {
+		t.Errorf("current = %s", h.current())
+	}
+	if te := h.toolErr("stack_untrack", nil); te.Code != "not_in_stack" {
+		t.Errorf("untracked = %+v", te)
 	}
 }

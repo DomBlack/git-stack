@@ -109,9 +109,10 @@ merging the PRs on GitHub.
 
 gh stack can only add branches at the top of a stack, so `git create --insert` does the middle
 of a stack itself, the same way a reorder does. Reordering a stack, moving branches onto another
-stack, folding a branch into the one below it, dropping one from a stack and adopting branches you
-made by hand are `git stack reorder`, `git stack move`, `git stack fold`, `git stack pop` and
-`git stack init`, so nothing needs gh stack directly any more.
+stack, folding a branch into the one below it, dropping one from a stack, adopting branches you made
+by hand and letting go of them again are `git stack reorder`, `git stack move`, `git stack fold`,
+`git stack pop`, `git stack init` and `git stack untrack`, so nothing needs gh stack directly any
+more.
 
 ## Install
 
@@ -145,7 +146,7 @@ Claude Code and Codex if you have them installed**. Each of those is on by defau
 change before it happens, and `--uninstall` removes what it recorded installing and nothing else
 (that record lives in `git config --global stack.managed*`).
 
-- **Aliases** (`--aliases`): `git create|modify|absorb|reorder|move|fold|track|pop|restack|continue|abort|submit|sync|up|down|top|bottom|pr`
+- **Aliases** (`--aliases`): `git create|modify|absorb|reorder|move|fold|untrack|track|pop|restack|continue|abort|submit|sync|up|down|top|bottom|pr`
   and the short ones `git c|m|ab|rs|ss|u|d|t|b|co`, written with `git config --global`. Anything that
   clashes with a git builtin or an installed command is skipped, and an alias you already have is
   only replaced if you pass `--force` or say yes when asked.
@@ -471,6 +472,33 @@ branch has an open PR, the next `git ss` closes it with a comment saying why.
 ✔ Restacked billing-webhook-retries
   #412 will be closed at the next submit
 ```
+
+### `git stack untrack [branch]`
+
+> Alias: `git untrack`
+
+The opposite of `git track`: stops tracking a branch (the one you're on unless you name one) and
+every branch above it. gh stack keeps a stack as a single line, so taking a branch out of the
+middle can't leave a gap above it. The branches themselves aren't touched at all, no commit, ref or
+checkout changes, and a stack left with nothing in it goes away.
+
+With `--only` just that branch comes out and the branches above it close the gap: they now sit on
+its parent and get restacked there, which drops its commits from them. A conflict stops like any
+restack, and `git abort` puts everything back, the untracked branch included.
+
+PRs are left open either way. If GitHub already had the stack, the next `git ss` regroups what's
+left of it. `git track` with the same branches tracks them again (as a stack of their own).
+
+```
+# on billing-webhook-alerts, in the middle of its stack
+❯ git untrack --only
+✔ Untracked billing-webhook-alerts
+✔ Restacked billing-webhook-retries onto billing-webhook-schema
+  git stack init billing-webhook-alerts tracks it again
+```
+
+Flags:
+- `--only` untrack just this branch; the branches above it move down onto its parent
 
 ### `git stack submit`
 
