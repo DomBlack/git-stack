@@ -5,6 +5,7 @@ package stacktest
 
 import (
 	"context"
+	"encoding/json/v2"
 	"slices"
 	"sync"
 
@@ -64,6 +65,44 @@ func (b *Backend) Update(_ context.Context, _ git.Repo, fn func(*stack.Graph) er
 	}
 	b.graph = stack.NewGraph(slices.DeleteFunc(slices.Clone(b.graph.Stacks), func(s stack.Stack) bool { return len(s.Branches) == 0 }))
 	return nil
+}
+
+func (b *Backend) Snapshot(context.Context, git.Repo) (stack.Snapshot, error) {
+	return SnapshotGraph(b.Graph())
+}
+
+func (b *Backend) Restore(_ context.Context, _ git.Repo, s stack.Snapshot) error {
+	g, err := RestoreGraph(s)
+	if err != nil {
+		return err
+	}
+	b.SetGraph(g)
+	return nil
+}
+
+// graphKey is the one file an in-memory snapshot holds.
+const graphKey = "graph"
+
+// SnapshotGraph is an in-memory backend's Snapshot: a deep copy of g, as
+// JSON, under a single key.
+func SnapshotGraph(g *stack.Graph) (stack.Snapshot, error) {
+	data, err := json.Marshal(g.Stacks)
+	if err != nil {
+		return stack.Snapshot{}, err
+	}
+	return stack.Snapshot{Files: map[string][]byte{graphKey: data}}, nil
+}
+
+// RestoreGraph is an in-memory backend's Restore: the graph SnapshotGraph
+// copied.
+func RestoreGraph(s stack.Snapshot) (*stack.Graph, error) {
+	var stacks []stack.Stack
+	if data := s.Files[graphKey]; len(data) > 0 {
+		if err := json.Unmarshal(data, &stacks); err != nil {
+			return nil, err
+		}
+	}
+	return stack.NewGraph(stacks), nil
 }
 
 func (b *Backend) InitStack(ctx context.Context, repo git.Repo, trunk string, branches []string) error {

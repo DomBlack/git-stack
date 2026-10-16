@@ -12,6 +12,7 @@ import (
 	"github.com/DomBlack/git-stack/pkg/git"
 	"github.com/DomBlack/git-stack/pkg/git/gittest"
 	"github.com/DomBlack/git-stack/pkg/stack"
+	"github.com/DomBlack/git-stack/pkg/stack/stacktest"
 )
 
 func TestRestackStateRoundTrip(t *testing.T) {
@@ -77,6 +78,19 @@ func (m *memMeta) Load(context.Context, git.Repo) (*stack.Graph, error) { return
 
 func (m *memMeta) Update(_ context.Context, _ git.Repo, fn func(*stack.Graph) error) error {
 	return fn(m.graph)
+}
+
+func (m *memMeta) Snapshot(context.Context, git.Repo) (stack.Snapshot, error) {
+	return stacktest.SnapshotGraph(m.graph)
+}
+
+func (m *memMeta) Restore(_ context.Context, _ git.Repo, s stack.Snapshot) error {
+	g, err := stacktest.RestoreGraph(s)
+	if err != nil {
+		return err
+	}
+	m.graph = g
+	return nil
 }
 
 // stateRepo is main -> b in a real repo, with b tracked.

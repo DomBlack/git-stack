@@ -14,6 +14,7 @@ import (
 	"github.com/DomBlack/git-stack/pkg/git"
 	"github.com/DomBlack/git-stack/pkg/git/gittest"
 	"github.com/DomBlack/git-stack/pkg/stack"
+	"github.com/DomBlack/git-stack/pkg/stack/stacktest"
 )
 
 // memMeta is an in-memory stack.Metadata.
@@ -26,6 +27,19 @@ func (m memMeta) Update(_ context.Context, _ git.Repo, fn func(*stack.Graph) err
 		return err
 	}
 	m.g.Stacks = slices.DeleteFunc(m.g.Stacks, func(s stack.Stack) bool { return len(s.Branches) == 0 })
+	return nil
+}
+
+func (m memMeta) Snapshot(context.Context, git.Repo) (stack.Snapshot, error) {
+	return stacktest.SnapshotGraph(m.g)
+}
+
+func (m memMeta) Restore(_ context.Context, _ git.Repo, s stack.Snapshot) error {
+	g, err := stacktest.RestoreGraph(s)
+	if err != nil {
+		return err
+	}
+	*m.g = *g
 	return nil
 }
 
