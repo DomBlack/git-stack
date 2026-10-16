@@ -339,6 +339,7 @@ func newRootCmd(c *cli) *cobra.Command {
 		newBottomCmd(c),
 		newCheckoutCmd(c),
 		newLogCmd(c),
+		newPRCmd(c),
 		newInstallCmd(c),
 		newMcpCmd(c),
 		newCompletionCmd(c),

@@ -145,7 +145,7 @@ Claude Code and Codex if you have them installed**. Each of those is on by defau
 change before it happens, and `--uninstall` removes what it recorded installing and nothing else
 (that record lives in `git config --global stack.managed*`).
 
-- **Aliases** (`--aliases`): `git create|modify|absorb|reorder|move|fold|track|pop|restack|continue|abort|submit|sync|up|down|top|bottom`
+- **Aliases** (`--aliases`): `git create|modify|absorb|reorder|move|fold|track|pop|restack|continue|abort|submit|sync|up|down|top|bottom|pr`
   and the short ones `git c|m|ab|rs|ss|u|d|t|b|co`, written with `git config --global`. Anything that
   clashes with a git builtin or an installed command is skipped, and an alias you already have is
   only replaced if you pass `--force` or say yes when asked.
@@ -529,6 +529,26 @@ Flags:
 - `-u` / `--show-untracked` include branches that aren't in any stack
 - `-s` / `--stack` only show the current stack
 - `-t` / `--trunk` check out the trunk of the current stack
+
+### `git stack pr [branch]`
+
+> Alias: `git pr`
+
+Opens the pull request of a branch (the current one if you don't name one) in your browser. Without
+a terminal it prints the URL instead, so `git pr | pbcopy` does what you'd hope. The PR comes from
+what git-stack already knows locally and GitHub is only asked when nothing local knows the branch's
+PR (one opened by hand on github.com, say). A branch with no PR yet tells you to `git ss` first.
+
+```
+❯ git pr
+✔ Opened #418 (payments-retry-queue) in your browser
+
+❯ git pr --print billing-webhook-alerts
+https://github.com/acme/payments/pull/421
+```
+
+Flags:
+- `--print` print the URL rather than opening it
 
 ### `git stack sync`
 

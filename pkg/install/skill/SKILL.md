@@ -59,5 +59,5 @@ the one calling.
 `git stack create -m "…"`, `git stack modify -a`, `git stack absorb`, `git stack reorder a b c`,
 `git stack move --onto <branch>`, `git stack fold`, `git stack init a b`, `git stack pop`, `git stack restack`,
 `git stack up/down/top/bottom`, `git stack checkout`, `git stack submit --no-edit`,
-`git stack sync -f`. Aliases: `git c`, `git m`, `git ab`, `git reorder`, `git move`, `git fold`, `git track`, `git pop`,
-`git rs`, `git u`, `git d`, `git t`, `git b`, `git co`, `git ss`.
+`git stack sync -f`, `git stack pr --print` (a branch's PR URL; `stack_view` has them all). Aliases: `git c`, `git m`, `git ab`, `git reorder`, `git move`, `git fold`, `git track`, `git pop`,
+`git rs`, `git u`, `git d`, `git t`, `git b`, `git co`, `git ss`, `git pr`.
