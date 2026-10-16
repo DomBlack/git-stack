@@ -38,6 +38,26 @@ type PushLease struct {
 	Expect string
 }
 
+// DeleteRemoteBranch deletes branch on remote. With expect set, the delete
+// is leased against it, so a branch that has moved on the remote since is
+// refused rather than deleted; with it empty the branch is deleted whatever
+// its tip.
+func (c *Client) DeleteRemoteBranch(ctx context.Context, repo Repo, remote, branch, expect string) error {
+	ref := "refs/heads/" + branch
+	args := []string{"push", "--quiet"}
+	if expect != "" {
+		args = append(args, "--force-with-lease="+ref+":"+expect)
+	}
+	args = append(args, remote, ":"+ref)
+	if _, err := c.gitIn(ctx, repo, args...); err != nil {
+		if ee, ok := errors.AsType[*exec.ExitError](err); ok {
+			return fmt.Errorf("delete %s on %s: %s", branch, remote, ee.Result.Err())
+		}
+		return err
+	}
+	return nil
+}
+
 // Push force pushes each branch to the same name on remote, all or nothing.
 // Each one is leased against its Expect, so a remote that has moved since
 // the caller looked is refused rather than overwritten.

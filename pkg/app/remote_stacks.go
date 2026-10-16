@@ -20,11 +20,28 @@ type remoteStack struct {
 	Stack string `json:"stack"`
 }
 
-// pendingRemote lists the stacks on GitHub that a reshape made stale: their
-// order or members changed and the stacks API can only create or append,
-// so the next submit dissolves them before gh stack creates them again.
+// pendingClose is a pull request a pop or fold made redundant: the next
+// submit closes it with Comment, then deletes its remote branch.
+type pendingClose struct {
+	Number  int    `json:"number"`
+	Branch  string `json:"branch"`
+	Comment string `json:"comment"`
+	// Tip is the branch's tip when it was queued, the lease for deleting
+	// the remote branch; empty deletes it without one.
+	Tip string `json:"tip,omitempty"`
+	// Closed is set once the pull request is closed and only the delete is
+	// left.
+	Closed bool `json:"closed,omitempty"`
+}
+
+// pendingRemote is what a reshape left for the next submit to do on
+// GitHub. Dissolve lists stacks made stale: their order or members changed
+// and the stacks API can only create or append, so they are dissolved
+// before gh stack creates them again. Close lists pull requests whose
+// branch a pop or fold took away.
 type pendingRemote struct {
-	Dissolve []remoteStack `json:"dissolve"`
+	Dissolve []remoteStack  `json:"dissolve"`
+	Close    []pendingClose `json:"close,omitempty"`
 }
 
 // remoteStacksPath is <common git dir>/git-stack/remote-stacks.json; it is
@@ -53,7 +70,7 @@ func loadPendingRemote(repo git.Repo) (*pendingRemote, error) {
 // nothing is left.
 func savePendingRemote(repo git.Repo, p *pendingRemote) error {
 	path := remoteStacksPath(repo)
-	if p == nil || len(p.Dissolve) == 0 {
+	if p == nil || (len(p.Dissolve) == 0 && len(p.Close) == 0) {
 		err := os.Remove(path)
 		if errors.Is(err, fs.ErrNotExist) {
 			return nil
@@ -98,5 +115,32 @@ func dropPendingRemote(repo git.Repo, ids []string) error {
 		return err
 	}
 	p.Dissolve = slices.DeleteFunc(p.Dissolve, func(r remoteStack) bool { return slices.Contains(ids, r.ID) })
+	return savePendingRemote(repo, p)
+}
+
+// addPendingClose records pull requests to close, once each by number.
+func addPendingClose(repo git.Repo, closes []pendingClose) error {
+	p, err := loadPendingRemote(repo)
+	if err != nil {
+		return err
+	}
+	if p == nil {
+		p = &pendingRemote{}
+	}
+	for _, c := range closes {
+		if !slices.ContainsFunc(p.Close, func(q pendingClose) bool { return q.Number == c.Number }) {
+			p.Close = append(p.Close, c)
+		}
+	}
+	return savePendingRemote(repo, p)
+}
+
+// dropPendingClose forgets the pull requests with the given numbers.
+func dropPendingClose(repo git.Repo, numbers []int) error {
+	p, err := loadPendingRemote(repo)
+	if err != nil || p == nil {
+		return err
+	}
+	p.Close = slices.DeleteFunc(p.Close, func(c pendingClose) bool { return slices.Contains(numbers, c.Number) })
 	return savePendingRemote(repo, p)
 }

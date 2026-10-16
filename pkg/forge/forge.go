@@ -128,6 +128,10 @@ type Forge interface {
 	// each based on the head of the one before. A refusal comes back as a
 	// *stack.Error of kind api_failure carrying the forge's message.
 	CreateStack(ctx context.Context, repo git.Repo, numbers []int) (StackRef, error)
+	// ClosePR closes pull request number without merging it, leaving
+	// comment on it first. One that is already closed or merged is not an
+	// error.
+	ClosePR(ctx context.Context, repo git.Repo, number int, comment string) error
 	// PullRequestURL is the web address of pull request number, worked out
 	// from local configuration only (never the network), so output can
 	// link a PR the forge hasn't been asked about. "" when it can't tell.

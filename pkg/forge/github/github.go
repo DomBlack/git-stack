@@ -203,6 +203,20 @@ func (f *Forge) view(ctx context.Context, repo git.Repo, selector string) (forge
 	return p.toForge(), nil
 }
 
+// reAlreadyClosed is gh pr close's refusal for a pull request that is
+// already closed or merged.
+var reAlreadyClosed = regexp.MustCompile(`(?i)already closed|can't be closed because it was already merged|is already merged`)
+
+// ClosePR closes a pull request with a comment, through gh pr close. gh
+// refuses one that is already closed or merged, which counts as done.
+func (f *Forge) ClosePR(ctx context.Context, repo git.Repo, number int, comment string) error {
+	_, err := f.gh(ctx, repo, "", "pr", "close", strconv.Itoa(number), "--comment", comment)
+	if ee, ok := errors.AsType[*exec.ExitError](err); ok && reAlreadyClosed.MatchString(ee.Result.Err()) {
+		return nil
+	}
+	return err
+}
+
 // UpdatePR edits title, body and base, and can mark a draft ready.
 func (f *Forge) UpdatePR(ctx context.Context, repo git.Repo, number int, in forge.UpdatePR) error {
 	num := strconv.Itoa(number)
