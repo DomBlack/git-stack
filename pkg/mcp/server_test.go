@@ -31,6 +31,7 @@ type fakeForge struct {
 	updates map[int]forge.UpdatePR
 	merged  []int
 	checks  map[int]forge.CheckSummary
+	renamed []string
 }
 
 func (f *fakeForge) Checks(context.Context, git.Repo, []int) (map[int]forge.CheckSummary, error) {
@@ -46,6 +47,10 @@ func (f *fakeForge) ListPRs(context.Context, git.Repo) ([]forge.PullRequest, err
 	return slices.Clone(f.prs), nil
 }
 func (f *fakeForge) ClosePR(context.Context, git.Repo, int, string) error { return nil }
+func (f *fakeForge) RenameBranch(_ context.Context, _ git.Repo, from, to string) error {
+	f.renamed = append(f.renamed, from+" -> "+to)
+	return nil
+}
 func (f *fakeForge) CreateStack(context.Context, git.Repo, []int) (forge.StackRef, error) {
 	return forge.StackRef{}, nil
 }

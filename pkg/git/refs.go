@@ -62,6 +62,20 @@ func (c *Client) UpdateRefs(ctx context.Context, repo Repo, updates []RefUpdate)
 	return nil
 }
 
+// RenameBranch renames a local branch, its reflog and its config (the
+// upstream included, which still names the old remote branch). git refuses
+// when to already exists.
+func (c *Client) RenameBranch(ctx context.Context, repo Repo, from, to string) error {
+	_, err := c.gitIn(ctx, repo, "branch", "-m", from, to)
+	if err != nil {
+		if ee, ok := errors.AsType[*exec.ExitError](err); ok {
+			return fmt.Errorf("rename branch %q: %s", from, ee.Result.Err())
+		}
+		return err
+	}
+	return nil
+}
+
 // DeleteBranch deletes a local branch whether or not it is merged. git
 // refuses when the branch is checked out in any worktree; callers check.
 func (c *Client) DeleteBranch(ctx context.Context, repo Repo, name string) error {

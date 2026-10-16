@@ -19,6 +19,10 @@ type Branch struct {
 	// Base is the parent's tip at the last restack (may be empty).
 	Base string
 	PR   *PRRef
+	// RenamedFrom is the branch's old name when an Update renames it, so
+	// the backend carries its record (pull request included) over to the
+	// new name. Leaving it empty while changing Name records a new branch.
+	RenamedFrom string
 }
 
 // Merged reports whether the branch's PR has been merged.
