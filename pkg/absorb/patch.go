@@ -10,8 +10,13 @@ import (
 // Patch renders hunks for one file as a zero context patch for git apply,
 // the path on both sides. The hunks are sorted by old line (an insertion
 // after a line goes after an edit of that line) and their new side
-// numbers are recomputed so each one accounts for the ones before it,
-// which is what git apply uses to place an insertion.
+// numbers are recomputed so each one accounts for the ones before it.
+// git apply takes a hunk's new start as the line, in the file with the
+// hunks above already applied, where its removed lines begin (or before
+// which its added lines go), and reports an offset when they are anywhere
+// else. That is git diff's numbering except for a deletion, where git diff
+// gives the line before the gap; here a deletion names its first removed
+// line instead, so a correct patch applies exactly where it says.
 func Patch(path string, hunks []Hunk) string {
 	sorted := slices.Clone(hunks)
 	slices.SortStableFunc(sorted, func(a, b Hunk) int {
@@ -28,11 +33,8 @@ func Patch(path string, hunks []Hunk) string {
 	delta := 0
 	for _, h := range sorted {
 		newStart := h.OldStart + delta
-		switch {
-		case h.OldCount == 0:
+		if h.OldCount == 0 {
 			newStart++
-		case h.NewCount == 0:
-			newStart--
 		}
 		fmt.Fprintf(&b, "@@ -%d,%d +%d,%d @@\n", h.OldStart, h.OldCount, newStart, h.NewCount)
 		for _, l := range h.Lines {

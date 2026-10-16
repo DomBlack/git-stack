@@ -19,7 +19,7 @@ func TestPatchRenumbersCumulatively(t *testing.T) {
 		"@@ -1,0 +2,2 @@\n+P\n+Q\n" +
 		"@@ -3,0 +6,1 @@\n+R\n" +
 		"@@ -5,1 +8,1 @@\n-l5\n+L5\n" +
-		"@@ -8,2 +10,0 @@\n-l8\n-l9\n"
+		"@@ -8,2 +11,0 @@\n-l8\n-l9\n"
 	if got := Patch("f.txt", hunks); got != want {
 		t.Errorf("got:\n%s\nwant:\n%s", got, want)
 	}

@@ -660,3 +660,118 @@ func TestAbsorbRestackRefusalAboveSaysWhatIsLeft(t *testing.T) {
 		t.Error("c should be untouched")
 	}
 }
+
+// commitOnA adds a commit writing path on a and moves b and c on top of it,
+// metadata included.
+func (f *absorbFixture) commitOnA(t *testing.T, path, content, msg string) {
+	t.Helper()
+	gittest.Run(t, f.dir, "switch", "-q", "a")
+	gittest.Commit(t, f.dir, path, content, msg)
+	gittest.Run(t, f.dir, "switch", "-q", "b")
+	gittest.Run(t, f.dir, "rebase", "-q", "a")
+	gittest.Run(t, f.dir, "switch", "-q", "c")
+	gittest.Run(t, f.dir, "rebase", "-q", "b")
+	gittest.Run(t, f.dir, "switch", "-q", "b")
+	br := f.fb.graph.Stacks[0].Branches
+	br[0].Head, br[1].Head, br[1].Base, br[2].Head, br[2].Base = f.rev(t, "a"), f.rev(t, "b"), f.rev(t, "a"), f.rev(t, "c"), f.rev(t, "b")
+}
+
+// lines joins ls into file content, one per line.
+func lines(ls ...string) string { return strings.Join(ls, "\n") + "\n" }
+
+// span is the numbered lines from to to as strings.
+func span(from, to int) []string {
+	var out []string
+	for i := from; i <= to; i++ {
+		out = append(out, fmt.Sprint(i))
+	}
+	return out
+}
+
+// Deletions after other hunks of the same file shift the lines below them,
+// so each hunk has to say where it lands once the ones above it are in.
+func TestAbsorbManyHunksIntoOneCommitOfOneFile(t *testing.T) {
+	f := newAbsorbFixture(t)
+	f.commitOnA(t, "g.txt", lines(span(1, 30)...), "feat: g")
+
+	want := lines(slices.Concat(
+		span(1, 3), []string{"new", "lines"}, span(4, 5), // insert after 3
+		span(9, 11), []string{"twelve"}, // delete 6-8, edit 12
+		span(13, 14), span(16, 20), []string{"x"}, // delete 15, insert after 20
+		span(21, 24), []string{"y"}, span(27, 30), // 25 and 26 become y
+	)...)
+	gittest.WriteFile(t, f.dir, "g.txt", want)
+	gittest.Run(t, f.dir, "add", "g.txt")
+	res, err := f.app.Absorb(context.Background(), f.repo, app.AbsorbOptions{})
+	if err != nil || res.Plan.Absorbed != 6 || res.Plan.Unabsorbed != 0 || res.Plan.Commits != 1 {
+		t.Fatalf("res = %+v %v", res, err)
+	}
+	for _, rev := range []string{"a", "b", "c"} {
+		if got := gittest.Run(t, f.dir, "show", rev+":g.txt") + "\n"; got != want {
+			t.Errorf("%s:g.txt = %q, want %q", rev, got, want)
+		}
+	}
+	if _, err := gittest.RunErr(t, f.dir, "diff", "--cached", "--quiet"); err != nil {
+		t.Error("index should be clean")
+	}
+}
+
+// Hunks of one file going to two commits, interleaved, several to each.
+func TestAbsorbHunksOfOneFileIntoTwoCommits(t *testing.T) {
+	f := newAbsorbFixture(t)
+	f.commitOnA(t, "g.txt", lines(span(1, 30)...), "feat: g")
+	bVersion := lines(slices.Concat(span(1, 7), []string{"b8"}, span(9, 21), []string{"b22"}, span(23, 30))...)
+	gittest.Commit(t, f.dir, "g.txt", bVersion, "feat: b edits g")
+	br := f.fb.graph.Stacks[0].Branches
+	br[1].Head = f.rev(t, "b")
+	gittest.Run(t, f.dir, "switch", "-q", "c")
+	gittest.Run(t, f.dir, "rebase", "-q", "b")
+	gittest.Run(t, f.dir, "switch", "-q", "b")
+	br[2].Head, br[2].Base = f.rev(t, "c"), f.rev(t, "b")
+
+	staged := lines(slices.Concat(
+		span(1, 2), span(5, 7), // delete 3 and 4: a
+		[]string{"B8", "B8.5"},                             // b8 grows a line: b
+		span(9, 11), span(13, 15), []string{"x", "y", "z"}, // delete 12, insert after 15: a
+		span(16, 21), span(24, 26), // delete b22 and 23: b
+		[]string{"TWENTY-SEVEN"}, span(28, 30), // edit 27: a
+	)...)
+	gittest.WriteFile(t, f.dir, "g.txt", staged)
+	gittest.Run(t, f.dir, "add", "g.txt")
+	res, err := f.app.Absorb(context.Background(), f.repo, app.AbsorbOptions{})
+	if err != nil {
+		t.Fatalf("res = %+v %v", res, err)
+	}
+	if got := targetsOf(res.Plan); !slices.Equal(got, []string{"a", "b", "a", "a", "b", "a"}) {
+		t.Errorf("targets = %v (hunks %+v)", got, res.Plan.Hunks)
+	}
+	wantA := lines(slices.Concat(span(1, 2), span(5, 11), span(13, 15), []string{"x", "y", "z"}, span(16, 26), []string{"TWENTY-SEVEN"}, span(28, 30))...)
+	for _, rev := range []string{"a"} {
+		if got := gittest.Run(t, f.dir, "show", rev+":g.txt") + "\n"; got != wantA {
+			t.Errorf("%s:g.txt = %q, want %q", rev, got, wantA)
+		}
+	}
+	if got := gittest.Run(t, f.dir, "show", "b:g.txt") + "\n"; got != staged {
+		t.Errorf("b:g.txt = %q, want %q", got, staged)
+	}
+	if _, err := gittest.RunErr(t, f.dir, "diff", "--cached", "--quiet"); err != nil {
+		t.Error("index should be clean")
+	}
+}
+
+// A lone deletion has nothing above it shifting lines, and still has to
+// apply exactly where it says.
+func TestAbsorbLoneDeletion(t *testing.T) {
+	f := newAbsorbFixture(t)
+	f.stageLine(t, 15, "")
+	cur := gittest.Run(t, f.dir, "show", ":f.txt") + "\n"
+	gittest.WriteFile(t, f.dir, "f.txt", strings.Replace(cur, "\n\n", "\n", 1))
+	gittest.Run(t, f.dir, "add", "f.txt")
+	res, err := f.app.Absorb(context.Background(), f.repo, app.AbsorbOptions{})
+	if err != nil || res.Plan.Absorbed != 1 || len(res.Rewritten) != 1 || res.Rewritten[0].Name != "b" {
+		t.Fatalf("res = %+v %v", res, err)
+	}
+	if got := gittest.Run(t, f.dir, "show", "b:f.txt"); strings.Contains(got, "fifteen") || !strings.Contains(got, "\n14\n16\n") {
+		t.Errorf("b:f.txt = %q", got)
+	}
+}
