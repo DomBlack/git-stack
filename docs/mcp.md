@@ -27,7 +27,8 @@ path is resolved with `git rev-parse`; anything outside a repository returns `no
 | `stack_move` | Move a branch, and unless `only` is set everything above it, onto the top of another stack or onto a trunk as a new stack, then restack; moves within one stack are `stack_reorder`'s job | `onto` (required: a trunk or another stack's top branch), `source` (default current), `only` | destructive |
 | `stack_fold` | Merge the current branch into the branch below it, one branch and one PR; the parent survives and is checked out, or with `keep` the current branch takes the parent's place; nothing is rebased, and the next `stack_submit` closes the PR of the branch that went | `keep` | destructive |
 | `stack_init` | Track branches that already exist as a new stack on a trunk; only the metadata changes, and `needsRestack` lists the branches that aren't on their parent | `branches` (bottom to top, default current), `base` | destructive (it writes the metadata, though no branch moves) |
-| `stack_continue` | Finish an interrupted restack, modify, reorder or move once the conflicts are resolved and git added | `stage_all` | destructive |
+| `stack_pop` | Delete the current branch and take it out of its stack, leaving its changes staged on its parent; the branches above are restacked onto the parent first, and its open PR is closed by the next `stack_submit`; refuses with nothing changed when tracked files have changes, the branch isn't on its parent or the parent is checked out in another worktree | | destructive |
+| `stack_continue` | Finish an interrupted restack, modify, reorder, move or pop once the conflicts are resolved and git added | `stage_all` | destructive |
 | `stack_abort` | Give up an interrupted restack and put every moved branch back (and, after a reorder or move, the old stack order) | | destructive |
 | `stack_restack` | Local rebase of the stack onto its parents, bottom branch onto the local trunk included; only checks out a branch to resolve a conflict through one git rebase | `scope` = `all`/`upstack`/`downstack`/`only`, `branch`, `continue`, `abort`, `stage_all` | destructive |
 | `stack_navigate` | `up`/`down`/`top`/`bottom` with `steps`, or `branch` | `direction`, `steps`, `branch` | idempotent |
@@ -95,6 +96,10 @@ create ("<branch> has no open pull request, so <bottom>'s stack was not created 
 from it once it has one"); and a failed create says to submit from it to try again. With no forge
 configured the dissolve notice itself says to submit from that stack. If dissolving fails, a
 notice says so and the next submit tries again.
+`conflict` from `stack_pop` means the branch is already out of the stack and the restack of the
+branches above it stopped; the branch itself still exists and is still checked out.
+`stack_continue` finishes the restack and then the pop (its result's `popped` names the branch),
+and `stack_abort` puts the branch back in its stack with nothing staged.
 `checks_failing` and `checks_pending` come from `stack_merge` when a pull request it would land
 has a check that failed, or (with none failed) one still queued or running, on its head commit.
 Nothing is merged. The error's `checks` lists each held up pull request:

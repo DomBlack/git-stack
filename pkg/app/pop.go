@@ -116,7 +116,8 @@ func (a *App) Pop(ctx context.Context, repo git.Repo) (PopResult, error) {
 	rr, err := a.reshape(ctx, repo, popCommand, headline, e)
 	res.Restacked = movedNames(rr)
 	res.Notices = rr.Notices
-	if err != nil {
+	if st, _ := loadRestackState(repo); err != nil && st == nil {
+		// Nothing was left for continue, so nothing stays queued either.
 		res.Closing = 0
 	}
 	return res, err

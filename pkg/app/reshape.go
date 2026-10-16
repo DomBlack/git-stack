@@ -391,7 +391,7 @@ func (a *App) finishReshape(ctx context.Context, run *restackRun, res *RestackRe
 			}
 			return err
 		}
-		res.Popped = run.finish.Pop
+		res.Popped, res.PoppedOnto = run.finish.Pop, run.finish.Parent
 	}
 	return nil
 }

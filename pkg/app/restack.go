@@ -41,9 +41,11 @@ type RestackResult struct {
 	// OrderRestored is true when an abort also put a reorder or move's
 	// stack shape back.
 	OrderRestored bool `json:"order_restored,omitempty"`
-	// Popped is the branch a continue finished popping.
-	Popped  string   `json:"popped,omitempty"`
-	Notices []string `json:"notices,omitempty"`
+	// Popped is the branch a continue finished popping, and PoppedOnto
+	// the parent its changes are now staged on.
+	Popped     string   `json:"popped,omitempty"`
+	PoppedOnto string   `json:"popped_onto,omitempty"`
+	Notices    []string `json:"notices,omitempty"`
 }
 
 const restackCommand = "git stack restack"

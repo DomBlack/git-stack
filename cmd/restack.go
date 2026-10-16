@@ -96,6 +96,10 @@ func renderRestack(rep *ui.Reporter, res app.RestackResult, aborted bool) {
 		}
 		return
 	}
+	if res.Popped != "" {
+		// A continue that finished a pop says so after what it restacked.
+		defer rep.Success("Popped %s; its changes are staged on %s", res.Popped, res.PoppedOnto)
+	}
 	if len(res.Moved) == 0 {
 		if len(res.InPlace) == 0 {
 			rep.Success("Nothing to restack")
