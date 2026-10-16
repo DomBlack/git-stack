@@ -75,6 +75,28 @@ func (c *Client) DeleteBranch(ctx context.Context, repo Repo, name string) error
 	return nil
 }
 
+// PointHEAD makes branch the current branch without touching the index or
+// the working tree, so whatever differs from its tip shows as changes. git
+// would happily point HEAD at a branch that doesn't exist, so that is
+// refused first.
+func (c *Client) PointHEAD(ctx context.Context, repo Repo, branch string) error {
+	_, ok, err := c.Tip(ctx, repo, "refs/heads/"+branch)
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return fmt.Errorf("point HEAD at %q: no such branch", branch)
+	}
+	_, err = c.gitIn(ctx, repo, "symbolic-ref", "HEAD", "refs/heads/"+branch)
+	if err != nil {
+		if ee, ok := errors.AsType[*exec.ExitError](err); ok {
+			return fmt.Errorf("point HEAD at %q: %s", branch, ee.Result.Err())
+		}
+		return err
+	}
+	return nil
+}
+
 // MergeBase returns the best common ancestor of a and b.
 func (c *Client) MergeBase(ctx context.Context, repo Repo, a, b string) (string, error) {
 	res, err := c.gitIn(ctx, repo, "merge-base", a, b)

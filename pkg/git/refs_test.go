@@ -273,3 +273,34 @@ func TestPush(t *testing.T) {
 		t.Errorf("b was pushed despite the refusal: %s", got)
 	}
 }
+
+func TestPointHEADKeepsTheIndexAndWorkingTree(t *testing.T) {
+	gittest.Isolate(t)
+	dir := gittest.InitRepo(t)
+	c := git.New(exec.New())
+	ctx := context.Background()
+	repo, err := c.Discover(ctx, dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	gittest.Run(t, dir, "switch", "-q", "-c", "f")
+	gittest.Commit(t, dir, "f.txt", "f", "feat: f")
+	gittest.WriteFile(t, dir, "untracked.txt", "u")
+	if err := c.PointHEAD(ctx, repo, "main"); err != nil {
+		t.Fatal(err)
+	}
+	if cur, _ := c.CurrentBranch(ctx, repo); cur != "main" {
+		t.Errorf("current = %q", cur)
+	}
+	if got := gittest.Run(t, dir, "diff", "--cached", "--name-only"); got != "f.txt" {
+		t.Errorf("staged = %q", got)
+	}
+	for _, f := range []string{"f.txt", "untracked.txt"} {
+		if _, err := os.Stat(filepath.Join(dir, f)); err != nil {
+			t.Errorf("%s: %v", f, err)
+		}
+	}
+	if err := c.PointHEAD(ctx, repo, "nope"); err == nil {
+		t.Error("PointHEAD must refuse a branch that does not exist")
+	}
+}
