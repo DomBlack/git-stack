@@ -43,6 +43,12 @@ type candidate struct {
 // locally are forgotten by the metadata whatever the policy.
 func (a *App) syncCleanup(ctx context.Context, st *syncState, o SyncOptions, res *SyncResult) error {
 	cands, gone := a.cleanupCandidates(ctx, st, res)
+	// Whatever isn't deleted below stays done: restacking it would only
+	// rewrite a branch whose pull request is already finished.
+	st.done = map[string]bool{}
+	for _, c := range cands {
+		st.done[c.name] = true
+	}
 	approved := []candidate{}
 	if len(cands) > 0 {
 		ok, err := a.cleanupConsent(o, cands, res)

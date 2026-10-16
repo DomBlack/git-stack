@@ -173,6 +173,9 @@ type syncState struct {
 	worktrees []git.Worktree
 	prs       map[string]forge.PullRequest // best PR per head branch
 	dirty     *dirtyCache
+	// done names branches cleanup would have deleted (merged, closed or in
+	// trunk) but kept; restack leaves them where they are.
+	done map[string]bool
 }
 
 // worktreeRepo is repo seen from another worktree.

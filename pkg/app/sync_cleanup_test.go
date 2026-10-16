@@ -324,6 +324,45 @@ func TestSyncSkipsBranchCheckedOutElsewhere(t *testing.T) {
 	}
 }
 
+func TestSyncLeavesKeptMergedBranchWhereItIs(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		setup func(t *testing.T, f *syncFixture)
+	}{
+		{"checked out elsewhere", func(t *testing.T, f *syncFixture) {
+			gittest.Run(t, f.dir, "worktree", "add", "-q", filepath.Join(t.TempDir(), "wt"), "a")
+		}},
+		{"kept by policy", func(t *testing.T, f *syncFixture) { f.deps.Config.SyncPrune = config.SyncPruneNever }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newSyncFixture(t)
+			gittest.Run(t, f.dir, "switch", "-q", "main")
+			tc.setup(t, f)
+			aTip := f.rev(t, "a")
+			main := f.mergeOnRemote(t, "a", 0)
+			res, err := f.sync(t, app.SyncOptions{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, ok := kept(res, "a"); !ok {
+				t.Fatalf("a should be kept: kept = %+v deleted = %+v", res.Kept, res.Deleted)
+			}
+			if got := f.rev(t, "a"); got != aTip {
+				t.Errorf("a merged, so it must not be restacked: moved from %s to %s", aTip, got)
+			}
+			if slices.ContainsFunc(res.Restacked, func(m app.BranchMove) bool { return m.Name == "a" }) {
+				t.Errorf("restacked = %+v", res.Restacked)
+			}
+			if got := f.rev(t, "b~1"); got != main {
+				t.Errorf("b should go onto main (%s) past the merged a, but sits on %s", main, got)
+			}
+			if out := gittest.Run(t, f.dir, "log", "--format=%s", "main..b"); out != "feat: b" {
+				t.Errorf("b should carry only its own commit, got %q", out)
+			}
+		})
+	}
+}
+
 func TestSyncMovesCurrentWorktreeOffDeletedBranch(t *testing.T) {
 	f := newSyncFixture(t)
 	gittest.Run(t, f.dir, "switch", "-q", "a")
