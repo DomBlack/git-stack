@@ -44,6 +44,17 @@ const untrackCommand = "git stack untrack"
 // A stack GitHub knows is queued to be dissolved at the next submit; no
 // pull request is closed.
 func (a *App) Untrack(ctx context.Context, repo git.Repo, o UntrackOptions) (UntrackResult, error) {
+	command := "git stack untrack"
+	if o.Only {
+		command += " --only"
+	}
+	return undoableResult(a, ctx, repo, command, undoKeep, func(ctx context.Context) (UntrackResult, error) {
+		return a.untrack(ctx, repo, o)
+	})
+}
+
+// untrack is Untrack's body.
+func (a *App) untrack(ctx context.Context, repo git.Repo, o UntrackOptions) (UntrackResult, error) {
 	if err := a.noRebaseActive(ctx, repo); err != nil {
 		return UntrackResult{}, err
 	}

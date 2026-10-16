@@ -681,10 +681,11 @@ records an entry with the after state when it finishes (`<common git dir>/git-st
 put back byte for byte and still only the adapter writes the file. Commits a command deleted or
 rewrote away would otherwise be fair game for gc, so `refs/git-stack/undo` points at an empty tree
 commit whose parents are every commit the history might put back; it's rewritten as the history
-changes and deleted when it's empty. GitHub is never touched: submit and merge are the only
+changes and deleted when it's empty. GitHub is never touched: submit, merge and a rename on GitHub are the only
 things that change it, and once they have, putting local branches back would just make the two
 disagree, so a successful one clears the history instead. The worktree undo runs in follows its
-branch with `reset --soft` after the commands that committed your changes (create, modify, absorb)
+branch with `reset --soft` after the commands that committed your changes (create, modify, absorb,
+and pop's reverse, which gives the popped branch its checkout back)
 so they come back staged, and with `reset --keep` after the ones that rewrote history, so local
 changes come along; every other worktree uses `--keep`, and everything that could refuse is
 checked before anything moves. Entries remember their worktree and undo only looks at its own,

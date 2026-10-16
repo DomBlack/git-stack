@@ -33,6 +33,15 @@ const popComment = "Closed by git stack pop; its changes went back into the work
 // the parent first, while the popped branch is still checked out, and its
 // pull request is queued to close at the next submit.
 func (a *App) Pop(ctx context.Context, repo git.Repo) (PopResult, error) {
+	// Undo puts the branch back and points HEAD at it again, so the changes
+	// pop left staged become its checkout once more.
+	return undoableResult(a, ctx, repo, popCommand, undoSoft, func(ctx context.Context) (PopResult, error) {
+		return a.pop(ctx, repo)
+	})
+}
+
+// pop is Pop's body.
+func (a *App) pop(ctx context.Context, repo git.Repo) (PopResult, error) {
 	if err := a.noRebaseActive(ctx, repo); err != nil {
 		return PopResult{}, err
 	}

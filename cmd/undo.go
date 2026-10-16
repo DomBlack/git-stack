@@ -20,7 +20,9 @@ further back, up to 20 commands. After create, modify or absorb the changes
 they committed come back staged; after anything else your local changes stay
 as they are.
 
-Undo is local only. Submit and merge change GitHub, so they clear the history.
+It covers create, modify, absorb, restack, reorder, move, fold, pop, untrack,
+init, sync and a local rename. Undo is local only: submit, merge and a rename
+on GitHub change GitHub, so they clear the history.
 It refuses when a branch has moved since the command; --force throws that away
 (but never your uncommitted changes).`,
 		Args:              cobra.NoArgs,

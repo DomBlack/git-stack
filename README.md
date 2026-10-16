@@ -697,16 +697,18 @@ git undo                                 # back on the branch you were on, chang
 git modify
 ```
 
-It covers create, modify, absorb, restack, reorder, move, init (`track`) and sync. Every branch
-they touched goes back to where it was (a branch sync deleted comes back, one create made goes
-away), the stack metadata is put back exactly, and so is what you had checked out. After create,
-modify or absorb the changes they committed come back as staged changes; after anything else
+It covers create (`--insert` too), modify, absorb, restack, reorder, move, fold, pop, untrack,
+init (`track`), sync and a rename that stayed on your machine. Every branch they touched goes back
+to where it was (a branch sync or pop deleted comes back, one create made goes away), the stack
+metadata is put back exactly, and so is what you had checked out. After create, modify or absorb
+the changes they committed come back as staged changes, and after a pop you're back on the popped
+branch with nothing staged; after anything else
 your uncommitted changes stay as they are, and if one of them is in the way undo refuses before
 it moves anything. A branch checked out in another worktree follows too, and the same rule
 applies there.
 
-Undo is local only and never touches GitHub. Submit and merge change what's on GitHub, so a
-successful one clears the history (putting your branches back to before it would only make them
+Undo is local only and never touches GitHub. Submit, merge and a rename that renamed the branch
+on GitHub change what's there, so a successful one clears the history (putting your branches back to before it would only make them
 disagree with GitHub). Each worktree has its own history, so an undo here never reverses what
 you or an agent did in another checkout.
 
