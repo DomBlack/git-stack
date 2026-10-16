@@ -122,6 +122,7 @@ type createInput struct {
 	Branch  string `json:"branch,omitempty" jsonschema:"branch name; derived from the message when omitted"`
 	Staging string `json:"staging,omitempty" jsonschema:"what to stage before committing: all (git add -A), update (git add -u) or none (default)"`
 	UseAI   bool   `json:"use_ai,omitempty" jsonschema:"let git-stack's own AI draft the branch name from the diff (opt-in; you normally write it yourself)"`
+	Insert  bool   `json:"insert,omitempty" jsonschema:"put the branch right above the current one even when that is not the top of the stack, and restack the branches above onto it"`
 }
 
 func (s *Server) create(ctx context.Context, req *mcp.CallToolRequest, in createInput) (*mcp.CallToolResult, app.CreateResult, error) {
@@ -137,8 +138,13 @@ func (s *Server) create(ctx context.Context, req *mcp.CallToolRequest, in create
 		return nil, app.CreateResult{}, wrapErr(err)
 	}
 	res, err := a.Create(ctx, repo, app.CreateOptions{
-		Name: in.Branch, Message: []string{in.Message}, Staging: staging, UseAI: in.UseAI,
+		Name: in.Branch, Message: []string{in.Message}, Staging: staging, UseAI: in.UseAI, Insert: in.Insert,
 	})
+	if err != nil && res.Branch != "" && errors.Is(err, &stack.Error{Kind: stack.KindConflict}) {
+		// The branch is in and committed; restacking the ones above hit a
+		// conflict: keep both, as stack_reorder does.
+		return &mcp.CallToolResult{IsError: true, Content: []mcp.Content{&mcp.TextContent{Text: wrapErr(err).Error()}}}, res, nil
+	}
 	if err != nil {
 		return nil, app.CreateResult{}, wrapErr(err)
 	}
@@ -575,8 +581,8 @@ func (s *Server) registerTools() {
 	mcp.AddTool(s.mcp, &mcp.Tool{
 		Name:        "stack_create",
 		Title:       "Create a stacked branch",
-		Description: "Create a new branch on top of the current branch, commit staged changes with the given message, and register it in the stack. From the trunk this starts a new stack. Fails with not_at_top when the current branch is not the top of its stack. If the commit fails (signing_failed, a hook) the branch is removed again and the changes stay staged, so fix the cause and call it again; should removing it fail too, next_steps says what was left behind and how to commit on it.",
-		Annotations: &mcp.ToolAnnotations{DestructiveHint: boolp(false), OpenWorldHint: boolp(false)},
+		Description: "Create a new branch on top of the current branch, commit staged changes with the given message, and register it in the stack. From the trunk this starts a new stack. Fails with not_at_top when the current branch is not the top of its stack, unless insert is true: then the branch goes in right above the current one and the branches above are restacked onto it (a conflict comes back as code conflict with the result alongside; stack_continue finishes it, stack_abort puts those branches back and keeps the new branch), and the next stack_submit regroups the stack on GitHub. If the commit fails (signing_failed, a hook) the branch is removed again and the changes stay staged, so fix the cause and call it again; should removing it fail too, next_steps says what was left behind and how to commit on it.",
+		Annotations: &mcp.ToolAnnotations{DestructiveHint: boolp(true), OpenWorldHint: boolp(false)},
 	}, s.create)
 	mcp.AddTool(s.mcp, &mcp.Tool{
 		Name:        "stack_modify",

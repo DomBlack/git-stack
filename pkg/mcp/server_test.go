@@ -832,3 +832,35 @@ func TestPop(t *testing.T) {
 		t.Errorf("dirty tree = %+v", te)
 	}
 }
+
+func TestCreateInsert(t *testing.T) {
+	h := newHarness(t) // main -> a -> b, HEAD on b
+	defer h.assertNoStdout()
+	gittest.Run(t, h.dir, "switch", "-q", "a")
+	gittest.WriteFile(t, h.dir, "n.txt", "n")
+	var cr app.CreateResult
+	h.call("stack_create", map[string]any{"message": "feat: n", "branch": "n", "staging": "all", "insert": true}, &cr)
+	if cr.Branch != "n" || cr.Parent != "a" || !cr.Inserted || !slices.Equal(cr.Restacked, []string{"b"}) || h.current() != "n" {
+		t.Fatalf("create = %+v (on %s)", cr, h.current())
+	}
+	if s, _, _ := h.backend.Graph().StackOf("a"); !slices.Equal(s.Names(), []string{"a", "n", "b"}) {
+		t.Errorf("order = %v", s.Names())
+	}
+
+	// A conflict keeps the result alongside the error.
+	gittest.WriteFile(t, h.dir, "b.txt", "not b")
+	res, text := h.call("stack_create", map[string]any{"message": "feat: m", "branch": "m", "staging": "all", "insert": true}, nil)
+	if !res.IsError || !strings.Contains(text, `"code":"conflict"`) {
+		t.Fatalf("conflict: %q", text)
+	}
+	raw, _ := json.Marshal(res.StructuredContent)
+	if !strings.Contains(string(raw), `"branch":"m"`) || !strings.Contains(string(raw), `"inserted":true`) {
+		t.Errorf("structured result on conflict = %s", raw)
+	}
+	h.call("stack_abort", nil, nil)
+
+	gittest.Run(t, h.dir, "switch", "-q", "main")
+	if te := h.toolErr("stack_create", map[string]any{"message": "x", "insert": true}); te.Code != "invalid_args" {
+		t.Errorf("insert on trunk = %+v", te)
+	}
+}

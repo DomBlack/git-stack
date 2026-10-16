@@ -107,11 +107,11 @@ merging the PRs on GitHub.
 
 ## What it doesn't do
 
-gh stack can only add branches at the top of a stack, so `git create` can't start one in the
-middle either; create it on top and `git reorder` it into place. Reordering a stack, moving
-branches onto another stack, folding a branch into the one below it, dropping one from a stack and
-adopting branches you made by hand are `git stack reorder`, `git stack move`, `git stack fold`,
-`git stack pop` and `git stack init`, so nothing needs gh stack directly any more.
+gh stack can only add branches at the top of a stack, so `git create --insert` does the middle
+of a stack itself, the same way a reorder does. Reordering a stack, moving branches onto another
+stack, folding a branch into the one below it, dropping one from a stack and adopting branches you
+made by hand are `git stack reorder`, `git stack move`, `git stack fold`, `git stack pop` and
+`git stack init`, so nothing needs gh stack directly any more.
 
 ## Install
 
@@ -248,7 +248,16 @@ Creates a new branch on top of the current one and commits whatever is staged. I
 nothing is staged you get an empty branch.
 
 It works from main (starting a new stack) or from the top of a stack. If you're further down, run
-`git top` first.
+`git top` first, or pass `--insert` to put the new branch right above the one you're on: the
+branches that were above it are restacked onto it, a conflict stops like a restack (`git continue`
+or `git abort`, which puts those branches back and keeps the new branch with its commit), and if
+the stack already has PRs the next `git ss` creates it on GitHub again in the new order.
+
+```sh
+git down 2
+git create -i -a -m "Split out the config parsing"
+                            # new branch right above this one; the rest are restacked onto it
+```
 
 Flags:
 - `-a` / `--all` stage all changes, including untracked files, before committing
@@ -259,6 +268,7 @@ Flags:
   (`git config stack.ai.auto true` makes this the default)
 - `--no-ai` don't use AI, even if `stack.ai.auto` is set
 - `--no-verify` skip git hooks when committing
+- `-i` / `--insert` put the branch right above the current one, even in the middle of a stack
 
 ### `git stack modify`
 

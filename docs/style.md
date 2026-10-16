@@ -31,6 +31,7 @@ success, nothing says more than it needs to, and the whole thing goes through
 ❯ git create
 ✖ feat-c is not the top of its stack (top is feat-d)
   ↳ run git stack top and create the branch there
+  ↳ or pass --insert to put it right above feat-c
   ↳ gh stack can only add branches at the top
 ```
 
