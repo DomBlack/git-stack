@@ -369,6 +369,26 @@ func (s *Server) pop(ctx context.Context, req *mcp.CallToolRequest, in popInput)
 	return nil, res, nil
 }
 
+// --- stack_undo -----------------------------------------------------------
+
+type undoInput struct {
+	repoArg
+	List  bool `json:"list,omitempty" jsonschema:"return the history, newest first, without changing anything"`
+	Force bool `json:"force,omitempty" jsonschema:"undo even when branches moved since the command, throwing away what changed on them; only with the user's say so"`
+}
+
+func (s *Server) undo(ctx context.Context, req *mcp.CallToolRequest, in undoInput) (*mcp.CallToolResult, app.UndoResult, error) {
+	repo, a, err := s.appFor(ctx, req, in.RepoPath)
+	if err != nil {
+		return nil, app.UndoResult{}, wrapErr(err)
+	}
+	res, err := a.Undo(ctx, repo, app.UndoOptions{List: in.List, Force: in.Force})
+	if err != nil {
+		return nil, app.UndoResult{}, wrapErr(err)
+	}
+	return nil, res, nil
+}
+
 // --- stack_continue / stack_abort ---------------------------------------
 
 type continueInput struct {
@@ -698,6 +718,12 @@ func (s *Server) registerTools() {
 		Description: "Give up the rebase a restack or modify stopped on and put back every branch the operation had already moved.",
 		Annotations: &mcp.ToolAnnotations{DestructiveHint: boolp(true), OpenWorldHint: boolp(false)},
 	}, s.abort)
+	mcp.AddTool(s.mcp, &mcp.Tool{
+		Name:        "stack_undo",
+		Title:       "Undo the last git-stack command",
+		Description: "Undo the newest git-stack command run in this worktree that changed local state (create, modify, absorb, restack, reorder, move, init, sync): branches, metadata and the checkout go back to how they were before it; call again to step further back, up to 20. After create, modify or absorb the changes they committed come back staged (staged: true); otherwise local changes are kept. list: true returns the history, newest first, with what each would put back, and changes nothing. It refuses (invalid_args) when nothing is left to undo (a successful stack_submit or stack_merge clears the history), when a branch moved since the command (force: true throws that away, only with the user's say so; uncommitted changes always stay) or when local changes are in the way, with nothing changed; and with rebase_active during a restack. It never touches GitHub.",
+		Annotations: &mcp.ToolAnnotations{DestructiveHint: boolp(true), OpenWorldHint: boolp(false)},
+	}, s.undo)
 	mcp.AddTool(s.mcp, &mcp.Tool{
 		Name:        "stack_navigate",
 		Title:       "Navigate the stack",

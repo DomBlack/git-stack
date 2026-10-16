@@ -46,6 +46,7 @@ var DefaultAliases = []Alias{
 	{"continue", "stack continue"},
 	{"abort", "stack abort"},
 	{"pr", "stack pr"},
+	{"undo", "stack undo"},
 	{"c", "stack create"},
 	{"m", "stack modify"},
 	{"ab", "stack absorb"},

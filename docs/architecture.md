@@ -672,6 +672,25 @@ program exits, while the confirm prompt renders an empty final frame and prints 
 summary line. Both were verified by driving the real prompt under a pty with expect; if the
 renderer gets fixed upstream this can go back to the obvious implementation.
 
+**Undo restores snapshots rather than running inverses.** Writing an inverse for every command
+(and keeping each one right as the commands change) would be a lot of code to get subtly wrong,
+so every covered use case runs inside one wrapper in `pkg/app` that snapshots the branch tips,
+gh stack's metadata, the queue of GitHub stacks to dissolve and each worktree's HEAD first, and
+records an entry with the after state when it finishes (`<common git dir>/git-stack/undo.json`,
+20 entries). The metadata goes through a `Snapshot`/`Restore` pair on the metadata port, so it's
+put back byte for byte and still only the adapter writes the file. Commits a command deleted or
+rewrote away would otherwise be fair game for gc, so `refs/git-stack/undo` points at an empty tree
+commit whose parents are every commit the history might put back; it's rewritten as the history
+changes and deleted when it's empty. GitHub is never touched: submit and merge are the only
+things that change it, and once they have, putting local branches back would just make the two
+disagree, so a successful one clears the history instead. The worktree undo runs in follows its
+branch with `reset --soft` after the commands that committed your changes (create, modify, absorb)
+so they come back staged, and with `reset --keep` after the ones that rewrote history, so local
+changes come along; every other worktree uses `--keep`, and everything that could refuse is
+checked before anything moves. Entries remember their worktree and undo only looks at its own,
+so an agent working in one checkout can't have its work undone from another; the drift check
+(every ref must still be where the command left it, unless `--force`) still sees the others.
+
 **No task runner, no fuzzy matching dependency.** The whole check is `go build`, `go vet`,
 `golangci-lint run`, `go test` (recorded in AGENTS.md and CI), and the picker's filter is a
 small native subsequence matcher.

@@ -146,7 +146,7 @@ Claude Code and Codex if you have them installed**. Each of those is on by defau
 change before it happens, and `--uninstall` removes what it recorded installing and nothing else
 (that record lives in `git config --global stack.managed*`).
 
-- **Aliases** (`--aliases`): `git create|modify|absorb|reorder|move|fold|rename|untrack|track|pop|restack|continue|abort|submit|sync|up|down|top|bottom|pr`
+- **Aliases** (`--aliases`): `git create|modify|absorb|reorder|move|fold|rename|untrack|track|pop|restack|continue|abort|undo|submit|sync|up|down|top|bottom|pr`
   and the short ones `git c|m|ab|rs|ss|u|d|t|b|co`, written with `git config --global`. Anything that
   clashes with a git builtin or an installed command is skipped, and an alias you already have is
   only replaced if you pass `--force` or say yes when asked.
@@ -683,6 +683,44 @@ Flags:
 Gives up on the rebase a restack, modify, reorder or move stopped on and puts back every branch the
 operation had already moved, metadata included; after a reorder or move that means the stack order
 too.
+
+### `git stack undo`
+
+> Alias: `git undo`
+
+Puts back what the last git-stack command you ran in this worktree changed. Run it again to step
+further back, up to 20 commands.
+
+```sh
+git create -a -m "Add the retry queue"   # oops, that should have been a modify
+git undo                                 # back on the branch you were on, changes staged again
+git modify
+```
+
+It covers create, modify, absorb, restack, reorder, move, init (`track`) and sync. Every branch
+they touched goes back to where it was (a branch sync deleted comes back, one create made goes
+away), the stack metadata is put back exactly, and so is what you had checked out. After create,
+modify or absorb the changes they committed come back as staged changes; after anything else
+your uncommitted changes stay as they are, and if one of them is in the way undo refuses before
+it moves anything. A branch checked out in another worktree follows too, and the same rule
+applies there.
+
+Undo is local only and never touches GitHub. Submit and merge change what's on GitHub, so a
+successful one clears the history (putting your branches back to before it would only make them
+disagree with GitHub). Each worktree has its own history, so an undo here never reverses what
+you or an agent did in another checkout.
+
+If a branch has moved since the command (you committed on top of it, say), undo refuses and names
+it. `--force` goes ahead and throws away what changed on those branches since; it still never
+touches your uncommitted changes.
+
+To keep the commits it might need from being garbage collected, undo points
+`refs/git-stack/undo` at an empty commit whose parents are those commits. That ref shows up in
+`git log --all`; it goes away once the history is empty.
+
+Flags:
+- `--list` show what can be undone, newest first, without changing anything
+- `--force` undo even when branches moved since the command
 
 ### `git stack log`
 
