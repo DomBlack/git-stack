@@ -225,8 +225,8 @@ func TestPopConflictThenContinueFinishesThePop(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if res.Popped != "b" {
-		t.Errorf("popped = %q", res.Popped)
+	if res.Popped != "b" || res.PoppedOnto != "a" {
+		t.Errorf("popped %q onto %q", res.Popped, res.PoppedOnto)
 	}
 	if cur := f.current(t); cur != "a" {
 		t.Errorf("current = %s", cur)

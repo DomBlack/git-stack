@@ -39,3 +39,12 @@ func TestRenderRestackAborted(t *testing.T) {
 		})
 	}
 }
+
+func TestRenderRestackFinishedAPop(t *testing.T) {
+	var out, errOut bytes.Buffer
+	rep := ui.NewReporter(nil, &out, &errOut, ui.ReporterOptions{})
+	renderRestack(rep, app.RestackResult{Moved: []app.BranchMove{{Name: "c"}}, Popped: "b", PoppedOnto: "a"}, false)
+	if want := "ok: Restacked c\nok: Popped b; its changes are staged on a\n"; out.String() != want {
+		t.Errorf("out = %q, want %q", out.String(), want)
+	}
+}

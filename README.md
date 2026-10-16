@@ -109,10 +109,9 @@ merging the PRs on GitHub.
 
 gh stack can only add branches at the top of a stack, so `git create` can't start one in the
 middle either; create it on top and `git reorder` it into place. Reordering a stack, moving
-branches onto another stack, folding a branch into the one below it and adopting branches you made
-by hand are `git stack reorder`, `git stack move`, `git stack fold` and `git stack init`. The one
-thing left that needs gh stack directly (and then `git restack`) is dropping a branch from the
-middle of a stack: `gh stack modify`.
+branches onto another stack, folding a branch into the one below it, dropping one from a stack and
+adopting branches you made by hand are `git stack reorder`, `git stack move`, `git stack fold`,
+`git stack pop` and `git stack init`, so nothing needs gh stack directly any more.
 
 ## Install
 
@@ -146,7 +145,7 @@ Claude Code and Codex if you have them installed**. Each of those is on by defau
 change before it happens, and `--uninstall` removes what it recorded installing and nothing else
 (that record lives in `git config --global stack.managed*`).
 
-- **Aliases** (`--aliases`): `git create|modify|absorb|reorder|move|fold|track|restack|continue|abort|submit|sync|up|down|top|bottom`
+- **Aliases** (`--aliases`): `git create|modify|absorb|reorder|move|fold|track|pop|restack|continue|abort|submit|sync|up|down|top|bottom`
   and the short ones `git c|m|ab|rs|ss|u|d|t|b|co`, written with `git config --global`. Anything that
   clashes with a git builtin or an installed command is skipped, and an alias you already have is
   only replaced if you pass `--force` or say yes when asked.
@@ -439,6 +438,30 @@ made with `git create`; this only adopts ones that exist.
 Flags:
 - `-b` / `--base <trunk>` the trunk to stack on
 
+### `git stack pop`
+
+> Alias: `git pop`
+
+Deletes the branch you're on and takes it out of its stack, leaving its changes staged on its
+parent, much like `git reset --soft` onto the parent would. Handy when you want to redo a branch
+from scratch, or when it shouldn't be its own PR yet. The branches above it are restacked onto the
+parent first, so they no longer carry its commits.
+
+It wants a clean working tree (untracked files are fine), so the popped changes don't get mixed up
+with anything else, and the branch has to be sitting on its parent; `git restack` puts it there.
+It also won't run while the parent is checked out in another worktree, since the parent is about
+to be checked out here. A conflict in the restack stops like any other: fix it, `git add` and
+`git continue`, which then finishes the pop, or `git abort` to leave everything as it was. If the
+branch has an open PR, the next `git ss` closes it with a comment saying why.
+
+```
+# on billing-webhook-alerts
+❯ git pop
+✔ Popped billing-webhook-alerts; its changes are staged on billing-webhook-schema
+✔ Restacked billing-webhook-retries
+  #412 will be closed at the next submit
+```
+
 ### `git stack submit`
 
 > Aliases: `git submit`, `git ss`
@@ -564,8 +587,9 @@ Flags:
 
 > Aliases: `git continue`, `git stack cont`
 
-Once you've fixed and `git add`ed the conflicts, finishes the rebase a restack, modify, reorder or
-move stopped on and then restacks whatever was left above it.
+Once you've fixed and `git add`ed the conflicts, finishes the rebase a restack, modify, reorder,
+move or pop stopped on and then restacks whatever was left above it (and, for a pop, then finishes
+the pop).
 
 Flags:
 - `-a` / `--all` stage every change first

@@ -300,6 +300,27 @@ func (s *Server) initStack(ctx context.Context, req *mcp.CallToolRequest, in ini
 	return nil, res, nil
 }
 
+// --- stack_pop ---------------------------------------------------------
+
+type popInput struct{ repoArg }
+
+func (s *Server) pop(ctx context.Context, req *mcp.CallToolRequest, in popInput) (*mcp.CallToolResult, app.PopResult, error) {
+	repo, a, err := s.appFor(ctx, req, in.RepoPath)
+	if err != nil {
+		return nil, app.PopResult{}, wrapErr(err)
+	}
+	res, err := a.Pop(ctx, repo)
+	if err != nil && errors.Is(err, &stack.Error{Kind: stack.KindConflict}) {
+		// The branch is already out of the stack and the restack above it
+		// hit a conflict: keep both, as stack_reorder does.
+		return &mcp.CallToolResult{IsError: true, Content: []mcp.Content{&mcp.TextContent{Text: wrapErr(err).Error()}}}, res, nil
+	}
+	if err != nil {
+		return nil, app.PopResult{}, wrapErr(err)
+	}
+	return nil, res, nil
+}
+
 // --- stack_continue / stack_abort ---------------------------------------
 
 type continueInput struct {
@@ -594,6 +615,12 @@ func (s *Server) registerTools() {
 		Annotations: &mcp.ToolAnnotations{DestructiveHint: boolp(true), OpenWorldHint: boolp(false)},
 	}, s.initStack)
 	mcp.AddTool(s.mcp, &mcp.Tool{
+		Name:        "stack_pop",
+		Title:       "Pop the current branch out of its stack",
+		Description: "Delete the current branch and take it out of its stack, leaving its changes staged on its parent (like git reset --soft onto the parent); the branches above are restacked onto the parent first. Refuses with invalid_args when tracked files have changes (untracked files are fine), when the branch isn't on its parent (stack_restack first) or when the parent is checked out in another worktree. A conflict comes back as code conflict with the result alongside; stack_continue finishes the restack and then the pop, stack_abort leaves everything as it was. The branch's open pull request is closed by the next stack_submit.",
+		Annotations: &mcp.ToolAnnotations{DestructiveHint: boolp(true), OpenWorldHint: boolp(false)},
+	}, s.pop)
+	mcp.AddTool(s.mcp, &mcp.Tool{
 		Name:        "stack_restack",
 		Title:       "Restack",
 		Description: "Rebase the stack's branches onto their parents locally (no fetch), including the bottom branch onto the local trunk. Scopes: all, upstack, downstack, only; branch selects where the scope starts. Only checks out a branch when a conflict needs a git rebase. On conflicts returns code conflict with the files; resolve, git add (or stage_all), then call stack_continue, or stack_abort to put the moved branches back. continue and abort also work on this tool.",
@@ -602,7 +629,7 @@ func (s *Server) registerTools() {
 	mcp.AddTool(s.mcp, &mcp.Tool{
 		Name:        "stack_continue",
 		Title:       "Continue an interrupted restack",
-		Description: "After a conflict from stack_restack or stack_modify: once the files are resolved and git added (or with stage_all), finish that branch's rebase and restack whatever was left above it. Returns the branches moved.",
+		Description: "After a conflict from stack_restack or stack_modify: once the files are resolved and git added (or with stage_all), finish that branch's rebase and restack whatever was left above it. Returns the branches moved; after stack_pop, popped names the branch it then finished popping.",
 		Annotations: &mcp.ToolAnnotations{DestructiveHint: boolp(true), OpenWorldHint: boolp(false)},
 	}, s.cont)
 	mcp.AddTool(s.mcp, &mcp.Tool{

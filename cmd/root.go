@@ -326,6 +326,7 @@ func newRootCmd(c *cli) *cobra.Command {
 		newMoveCmd(c),
 		newFoldCmd(c),
 		newInitCmd(c),
+		newPopCmd(c),
 		newRestackCmd(c),
 		newContinueCmd(c),
 		newAbortCmd(c),

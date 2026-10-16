@@ -223,7 +223,7 @@ func TestToolsAreListedWithAnnotationsAndSchemas(t *testing.T) {
 	for _, tool := range res.Tools {
 		got[tool.Name] = tool
 	}
-	for _, name := range []string{"stack_view", "stack_create", "stack_modify", "stack_absorb", "stack_reorder", "stack_move", "stack_fold", "stack_init", "stack_restack", "stack_navigate", "stack_submit", "stack_sync"} {
+	for _, name := range []string{"stack_view", "stack_create", "stack_modify", "stack_absorb", "stack_reorder", "stack_move", "stack_fold", "stack_init", "stack_pop", "stack_restack", "stack_navigate", "stack_submit", "stack_sync"} {
 		if got[name] == nil {
 			t.Errorf("missing tool %s", name)
 		}
@@ -813,5 +813,22 @@ func TestFold(t *testing.T) {
 	}
 	if te := h.toolErr("stack_fold", nil); te.Code != "invalid_args" || !strings.Contains(te.Message, "bottom of its stack") {
 		t.Errorf("bottom = %+v", te)
+	}
+}
+
+func TestPop(t *testing.T) {
+	h := newHarness(t)
+	defer h.assertNoStdout()
+	var res app.PopResult
+	h.call("stack_pop", nil, &res)
+	if res.Branch != "b" || res.Parent != "a" || res.StackGone {
+		t.Fatalf("pop = %+v", res)
+	}
+	if got := gittest.Run(t, h.dir, "diff", "--cached", "--name-only"); got != "b.txt" {
+		t.Errorf("staged = %q", got)
+	}
+	gittest.WriteFile(t, h.dir, "a.txt", "dirty")
+	if te := h.toolErr("stack_pop", nil); te.Code != "invalid_args" || len(te.NextSteps) == 0 {
+		t.Errorf("dirty tree = %+v", te)
 	}
 }

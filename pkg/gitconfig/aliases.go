@@ -33,6 +33,7 @@ var DefaultAliases = []Alias{
 	{"move", "stack move"},
 	{"fold", "stack fold"},
 	{"track", "stack init"},
+	{"pop", "stack pop"},
 	{"restack", "stack restack"},
 	{"submit", "stack submit"},
 	{"sync", "stack sync"},

@@ -221,6 +221,7 @@ var cliToTool = []struct{ from, to string }{
 	{"git stack fold", "stack_fold"},
 	{"git stack init", "stack_init"},
 	{"git stack track", "stack_init"},
+	{"git stack pop", "stack_pop"},
 	{"git stack continue", "call stack_continue"},
 	{"git stack abort", "call stack_abort"},
 	{"git stack top", "stack_navigate {direction: \"top\"}"},

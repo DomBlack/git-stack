@@ -423,6 +423,18 @@ conflict on one checked out elsewhere, refuses the whole reshape up front with n
 A failure before any ref has moved rolls the metadata back from the snapshot and the error says
 nothing was changed.
 
+**Pop is a reshape with a finish step.** It drops the current branch from its stack, points the
+branch above at the popped branch's tip as its base (so the restack replays only its own commits)
+and restacks the branches above onto the parent, all while the popped branch stays checked out
+and untouched. Only once that's done does it point HEAD at the parent with `git symbolic-ref`,
+which leaves the index and working tree alone so the popped changes show as staged, and delete the
+branch. Doing it in that order means the restack never moves or rebases the branch that's checked
+out here, and a conflict leaves nothing half done: the saved restack state carries the finish step
+so `continue` runs it at the end, and `abort` only has to put the dropped branch back in the
+metadata (the snapshot lists it), since it was never deleted and HEAD never moved. Its open PR
+goes on the close queue next to the dissolves, so the next submit closes it once gh stack has
+moved the PR above it onto the new parent.
+
 **GitHub's stack is dissolved and made again, not edited.** The stacks API can create a stack
 from a list of PRs and add PRs to the top of one, and that's all. Left alone, `gh stack submit`
 after a reorder pushes every branch and fixes each PR's base, then sees the stack on GitHub is
