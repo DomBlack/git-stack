@@ -444,11 +444,15 @@ func (c *cli) startUpdateCheck(cmd *cobra.Command) {
 		}
 		checker = &update.Checker{Client: update.New(version.Current()), Store: cache.At(dir)}
 	}
-	current := c.current
-	if current.Version == "" {
-		current = version.Current()
+	c.check = checker.Start(cmd.Context(), c.currentVersion())
+}
+
+// currentVersion is this binary's version, or the one tests set.
+func (c *cli) currentVersion() version.Info {
+	if c.current.Version != "" {
+		return c.current
 	}
-	c.check = checker.Start(cmd.Context(), current)
+	return version.Current()
 }
 
 // updateNotice tells the user a newer release is out, after the command's
@@ -459,7 +463,7 @@ func (c *cli) updateNotice() {
 	if !ok {
 		return
 	}
-	c.report().Warn("git-stack %s is out (you have %s); run git stack update", latest, c.check.Current.Version)
+	c.report().Warn("git-stack %s is out (you have %s); run git stack update, or git stack update --check to see what changed first", latest, c.check.Current.Version)
 }
 
 // printError renders an error in the plain (non terminal) style; the CLI

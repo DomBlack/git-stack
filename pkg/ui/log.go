@@ -97,7 +97,7 @@ func RenderLog(v *app.View, o LogOptions) string {
 				r := s[i]
 				b.WriteString(prefix + logMarker(r, st) + " " + logName(r, st) + "\n")
 				pr, title := logPR(r, o)
-				b.WriteString(fitLine(gutter+"  "+pr, title, o.Width) + "\n")
+				b.WriteString(FitLine(gutter+"  "+pr, title, o.Width) + "\n")
 				if meta := logMeta(r, o); meta != "" {
 					b.WriteString(gutter + "  " + meta + "\n")
 				}
@@ -105,7 +105,7 @@ func RenderLog(v *app.View, o LogOptions) string {
 					b.WriteString(gutter + "\n")
 					for _, c := range r.Commits {
 						head := gutter + "  " + st.Muted.Render("•") + " " + st.Muted.Render(shortCommit(c.SHA)) + " - "
-						b.WriteString(fitLine(head, logText(c.Subject), o.Width) + "\n")
+						b.WriteString(FitLine(head, logText(c.Subject), o.Width) + "\n")
 					}
 					if r.MoreCommits > 0 {
 						b.WriteString(gutter + "  " + st.Muted.Render(fmt.Sprintf("• and %d more", r.MoreCommits)) + "\n")
@@ -151,7 +151,7 @@ func logName(r app.Row, st Styles) string {
 
 // logPR is the first line under a branch: its pull request number (a link,
 // in the colour of its state) and the title to put after it, or "no PR".
-// The title is escaped but not styled, so fitLine can cut it.
+// The title is escaped but not styled, so FitLine can cut it.
 func logPR(r app.Row, o LogOptions) (pr, title string) {
 	st := o.Styles
 	if r.PR == nil {
@@ -178,10 +178,10 @@ func logText(s string) string {
 	return strings.ReplaceAll(Printable(s), "\t", " ")
 }
 
-// fitLine is head followed by text, with text cut short ("…") so the line
+// FitLine is head followed by text, with text cut short ("…") so the line
 // fits in width columns. head may hold styles and links; text must be
 // plain. width 0 never cuts.
-func fitLine(head, text string, width int) string {
+func FitLine(head, text string, width int) string {
 	if width <= 0 || text == "" {
 		return head + text
 	}
