@@ -48,6 +48,8 @@ Claude Code drafter.
 `git stack version` and `git stack update` have no MCP tools on purpose; they're about the
 binary, not the stack, and an agent replacing the server it's talking to mid session is not
 something we want to make easy. The server does report its version in the MCP handshake.
+`git stack pr` has none either: it opens a browser, and an agent that wants a PR's URL already
+gets it for every branch from `stack_view`.
 
 ## Errors
 
