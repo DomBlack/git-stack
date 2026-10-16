@@ -23,6 +23,7 @@ that touches a stack:
 | Rebase the stack after edits lower down | `stack_restack` |
 | Change the order of a stack's branches | `stack_reorder` (`order` bottom to top) |
 | Move a branch and what's above it onto another stack or onto trunk | `stack_move` (`only: true` to leave the rest behind) |
+| Merge the current branch into the one below it (one branch, one PR) | `stack_fold` (`keep: true` keeps the current branch's name and PR) |
 | Track branches made by hand as a stack | `stack_init` |
 | Move around | `stack_navigate` (`up`/`down`/`top`/`bottom` or `branch`) |
 | Push and open/update PRs | `stack_submit`; you write `pull_requests` `{branch: {title, body}}`; ready for review unless `draft: true` |
@@ -54,7 +55,7 @@ the one calling.
 ## CLI equivalents
 
 `git stack create -m "…"`, `git stack modify -a`, `git stack absorb`, `git stack reorder a b c`,
-`git stack move --onto <branch>`, `git stack init a b`, `git stack restack`,
+`git stack move --onto <branch>`, `git stack fold`, `git stack init a b`, `git stack restack`,
 `git stack up/down/top/bottom`, `git stack checkout`, `git stack submit --no-edit`,
-`git stack sync -f`. Aliases: `git c`, `git m`, `git ab`, `git reorder`, `git move`, `git track`,
+`git stack sync -f`. Aliases: `git c`, `git m`, `git ab`, `git reorder`, `git move`, `git fold`, `git track`,
 `git rs`, `git u`, `git d`, `git t`, `git b`, `git co`, `git ss`.

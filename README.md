@@ -109,10 +109,10 @@ merging the PRs on GitHub.
 
 gh stack can only add branches at the top of a stack, so `git create` can't start one in the
 middle either; create it on top and `git reorder` it into place. Reordering a stack, moving
-branches onto another stack and adopting branches you made by hand are `git stack reorder`,
-`git stack move` and `git stack init`. The one thing left that needs gh stack directly (and then
-`git restack`) is folding a branch into another, or dropping one from the middle of a stack:
-`gh stack modify`.
+branches onto another stack, folding a branch into the one below it and adopting branches you made
+by hand are `git stack reorder`, `git stack move`, `git stack fold` and `git stack init`. The one
+thing left that needs gh stack directly (and then `git restack`) is dropping a branch from the
+middle of a stack: `gh stack modify`.
 
 ## Install
 
@@ -146,7 +146,7 @@ Claude Code and Codex if you have them installed**. Each of those is on by defau
 change before it happens, and `--uninstall` removes what it recorded installing and nothing else
 (that record lives in `git config --global stack.managed*`).
 
-- **Aliases** (`--aliases`): `git create|modify|absorb|reorder|move|track|restack|continue|abort|submit|sync|up|down|top|bottom`
+- **Aliases** (`--aliases`): `git create|modify|absorb|reorder|move|fold|track|restack|continue|abort|submit|sync|up|down|top|bottom`
   and the short ones `git c|m|ab|rs|ss|u|d|t|b|co`, written with `git config --global`. Anything that
   clashes with a git builtin or an installed command is skipped, and an alias you already have is
   only replaced if you pass `--force` or say yes when asked.
@@ -386,6 +386,33 @@ Flags:
 - `-o` / `--onto <branch>` where to put it: a trunk, or the top branch of another stack
 - `-s` / `--source <branch>` move this branch instead of the current one
 - `--only` move just the branch and leave the ones above it behind
+
+### `git stack fold`
+
+> Alias: `git fold`
+
+Merges the current branch into the branch below it, for when two PRs should really have been one.
+The parent keeps its name and PR and ends up with both sets of commits; the current branch is
+deleted and you're left on the parent, with any uncommitted changes carried along. With `--keep`
+it's the other way round: the current branch keeps its name and PR and takes the parent's place in
+the stack, and the parent is deleted.
+
+Nothing is rebased, since the branches above already have every commit involved and only their
+parent changes, so the branch has to be sitting on its parent first (`git restack` if it isn't).
+It won't fold the bottom branch of a stack into trunk, and it stops before anything changes when
+the parent is checked out in another worktree. The PR of the branch that went is closed at the next
+`git ss`, with a comment pointing at the one it went into, and its branch on GitHub is deleted once
+nothing is based on it any more.
+
+```
+# on billing-webhook-alerts
+❯ git fold
+✔ Folded billing-webhook-alerts into billing-webhook-schema
+  #418 (billing-webhook-alerts) will be closed at the next submit
+```
+
+Flags:
+- `--keep` keep this branch's name and pull request instead of the parent's
 
 ### `git stack init [branch...]`
 

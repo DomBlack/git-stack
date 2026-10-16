@@ -223,7 +223,7 @@ func TestToolsAreListedWithAnnotationsAndSchemas(t *testing.T) {
 	for _, tool := range res.Tools {
 		got[tool.Name] = tool
 	}
-	for _, name := range []string{"stack_view", "stack_create", "stack_modify", "stack_absorb", "stack_reorder", "stack_move", "stack_init", "stack_restack", "stack_navigate", "stack_submit", "stack_sync"} {
+	for _, name := range []string{"stack_view", "stack_create", "stack_modify", "stack_absorb", "stack_reorder", "stack_move", "stack_fold", "stack_init", "stack_restack", "stack_navigate", "stack_submit", "stack_sync"} {
 		if got[name] == nil {
 			t.Errorf("missing tool %s", name)
 		}
@@ -794,5 +794,24 @@ func TestReorderMoveInit(t *testing.T) {
 	}
 	if te := h.toolErr("stack_move", map[string]any{"source": "a"}); te.Code != "invalid_args" {
 		t.Errorf("no onto = %+v", te)
+	}
+}
+
+func TestFold(t *testing.T) {
+	h := newHarness(t)
+	defer h.assertNoStdout()
+	var res app.FoldResult
+	h.call("stack_fold", map[string]any{"keep": true}, &res)
+	if res.Into != "b" || res.Folded != "a" {
+		t.Fatalf("fold = %+v", res)
+	}
+	if s, _, ok := h.backend.Graph().StackOf("b"); !ok || len(s.Branches) != 1 {
+		t.Errorf("b's stack = %+v", s)
+	}
+	if h.current() != "b" {
+		t.Errorf("current = %s", h.current())
+	}
+	if te := h.toolErr("stack_fold", nil); te.Code != "invalid_args" || !strings.Contains(te.Message, "bottom of its stack") {
+		t.Errorf("bottom = %+v", te)
 	}
 }
