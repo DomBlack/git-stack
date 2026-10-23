@@ -21,6 +21,7 @@ func TestFromEntries(t *testing.T) {
 		{Key: "stack.ai.auto", Value: "yes"},
 		{Key: "stack.cachettl", Value: "30s"},
 		{Key: "stack.submit.default", Value: "publish"},
+		{Key: "stack.log.short", Value: "true"},
 		{Key: "stack.managedaliases", Value: "c"},
 		{Key: "stack.managedaliases", Value: "co"},
 		{Key: "stack.unknownkey", Value: "ignored"},
@@ -37,6 +38,9 @@ func TestFromEntries(t *testing.T) {
 	if !c.AIAuto {
 		t.Errorf("stack.ai.auto yes should enable auto AI: %+v", c)
 	}
+	if !c.LogShort {
+		t.Errorf("stack.log.short true should make the log short: %+v", c)
+	}
 	if c.SubmitDefault != config.SubmitPublish || !slices.Equal(c.ManagedAliases, []string{"c", "co"}) {
 		t.Errorf("submit/aliases: %+v", c)
 	}
@@ -48,6 +52,7 @@ func TestFromEntriesRejectsBadValues(t *testing.T) {
 		{Key: "stack.cachettl", Value: "5"},
 		{Key: "stack.submit.default", Value: "maybe"},
 		{Key: "stack.ai.auto", Value: "sometimes"},
+		{Key: "stack.log.short", Value: "brief"},
 	} {
 		_, err := config.FromEntries([]git.ConfigEntry{e})
 		if err == nil || !strings.Contains(err.Error(), "stack.") {

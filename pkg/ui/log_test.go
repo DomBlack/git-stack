@@ -74,6 +74,25 @@ func TestRenderLogPlain(t *testing.T) {
 	}
 }
 
+func TestRenderLogShort(t *testing.T) {
+	out := RenderLog(&app.View{Rows: logRows()}, LogOptions{Now: now, Short: true})
+	want := strings.Join([]string{
+		"○ feat/ui-tests",
+		"● feat/ui",
+		"○ feat/api",
+		"│ ○ fix/typo",
+		"├─┘",
+		"■ main",
+		"",
+		"○ hotfix",
+		"■ release",
+		"",
+	}, "\n")
+	if out != want {
+		t.Errorf("RenderLog short =\n%s\nwant\n%s", out, want)
+	}
+}
+
 // TestRenderLogBranch covers the block under one branch: the PR and title
 // line, the state line and the commit list.
 func TestRenderLogBranch(t *testing.T) {

@@ -284,6 +284,27 @@ func TestViewCommits(t *testing.T) {
 	}
 }
 
+func TestViewCurrentStack(t *testing.T) {
+	h := newHarness(t)
+	defer h.assertNoStdout()
+	gittest.Run(t, h.dir, "branch", "x", "main")
+	h.backend.SetGraph(stack.NewGraph([]stack.Stack{
+		{Trunk: "main", Branches: []stack.Branch{{Name: "a"}, {Name: "b"}}},
+		{Trunk: "main", Branches: []stack.Branch{{Name: "x"}}},
+	}))
+
+	var v viewOutput
+	h.call("stack_view", map[string]any{"fresh": false}, &v)
+	if len(v.Stacks) != 2 {
+		t.Fatalf("every stack without current_stack: %+v", v.Stacks)
+	}
+	v = viewOutput{}
+	h.call("stack_view", map[string]any{"fresh": false, "current_stack": true}, &v)
+	if len(v.Stacks) != 1 || v.Stacks[0].Branches[0].Name != "a" || !slices.Equal(v.Trunks, []string{"main"}) {
+		t.Errorf("current_stack should keep only b's stack: %+v", v)
+	}
+}
+
 func TestViewCreateModifyNavigate(t *testing.T) {
 	h := newHarness(t)
 	defer h.assertNoStdout()
