@@ -26,6 +26,8 @@ type LogOptions struct {
 	// would run past it is cut short with "…". 0 never cuts (not a
 	// terminal).
 	Width int
+	// Short shows only the branch names, with no PR, state or commits.
+	Short bool
 }
 
 // RenderLog renders every stack as a tree: trunk at the bottom, each stack a
@@ -52,6 +54,14 @@ type LogOptions struct {
 //	│ │
 //	│ │  • 3c4d5e6 - Fix the typo in the banner
 //	│ │
+//	├─┘
+//	■ main
+//
+// Short leaves just the branch names, one line each:
+//
+//	● feat-b
+//	○ feat-a
+//	│ ○ hotfix
 //	├─┘
 //	■ main
 //
@@ -96,6 +106,9 @@ func RenderLog(v *app.View, o LogOptions) string {
 			for i := len(s) - 1; i >= 0; i-- {
 				r := s[i]
 				b.WriteString(prefix + logMarker(r, st) + " " + logName(r, st) + "\n")
+				if o.Short {
+					continue
+				}
 				pr, title := logPR(r, o)
 				b.WriteString(FitLine(gutter+"  "+pr, title, o.Width) + "\n")
 				if meta := logMeta(r, o); meta != "" {
@@ -119,7 +132,7 @@ func RenderLog(v *app.View, o LogOptions) string {
 			b.WriteString(st.Prefix.Render(join) + "\n")
 		}
 		b.WriteString(logMarker(g.trunk, st) + " " + logName(g.trunk, st))
-		if age := RelativeTime(g.trunk.LastCommit, o.Now); age != "" {
+		if age := RelativeTime(g.trunk.LastCommit, o.Now); age != "" && !o.Short {
 			b.WriteString("  " + st.Muted.Render(age))
 		}
 		b.WriteString("\n")

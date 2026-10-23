@@ -296,7 +296,7 @@ func newRootCmd(c *cli) *cobra.Command {
 		SilenceErrors:     true,
 		// A bare `git stack` shows the stacks, like `gt log`.
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			return showLog(cmd.Context(), c)
+			return showLog(cmd.Context(), c, logMode{})
 		},
 		PersistentPreRun: func(cmd *cobra.Command, _ []string) {
 			if c.globals.Cwd != "" {

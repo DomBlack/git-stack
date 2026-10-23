@@ -742,6 +742,23 @@ bottom, each stack rising out of it and the current branch marked. Under each br
 PR state and titles come from a local cache that's refreshed when it goes stale, and the commits
 come from local git, so it stays quick.
 
+`git stack log short` draws the same tree with just the branch names, one line each. It only reads
+local git, so it never waits on GitHub. To make that what `git stack` and `git stack log` show,
+`git config --global stack.log.short true`; `git stack log long` still gets you the full tree.
+
+```
+❯ git stack log short
+○ billing-webhook-retries
+● billing-webhook-schema
+│ ○ fix-login-timeout
+├─┘
+■ main
+```
+
+Flags (on `log`, `log short` and `log long`):
+- `-s` / `--stack` only show the current branch's stack (on a trunk, every stack on it). On a
+  branch that's in no stack it shows them all and says so.
+
 ### `git stack merge [branch]`
 
 There's no `git merge` alias for this one, for obvious reasons.
@@ -798,6 +815,7 @@ Everything is plain `git config`, so set it globally or per repo as you like.
 | `stack.sync.prune` | `always` | what `sync` does with branches whose PRs merged or closed; `ask` on a terminal, or `never` |
 | `stack.merge.method` | (repo default) | `merge`, `squash` or `rebase` for `git stack merge` |
 | `stack.cacheTTL` | `5m` | how long PR state is cached for |
+| `stack.log.short` | `false` | `true` makes `git stack` and `git stack log` show only branch names, like `git stack log short` |
 | `stack.ai.auto` | `false` | `true` makes `create` and `submit` behave as if `--ai` was passed; `--no-ai` still wins |
 | `stack.ai.command` | `claude` | the Claude Code binary used for `--ai` |
 | `stack.ai.model` | `haiku` | model alias passed to `--model` |

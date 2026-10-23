@@ -22,6 +22,7 @@ const (
 	KeySubmitDefault  = "stack.submit.default"
 	KeySyncPrune      = "stack.sync.prune"
 	KeyMergeMethod    = "stack.merge.method"
+	KeyLogShort       = "stack.log.short"
 	KeyManagedAliases = "stack.managedAliases"
 	KeyManagedFiles   = "stack.managedFiles"
 )
@@ -57,7 +58,10 @@ type Config struct {
 	SyncPrune string
 	// MergeMethod is merge, squash or rebase; empty leaves it to the
 	// repository's settings.
-	MergeMethod    string
+	MergeMethod string
+	// LogShort makes git stack and git stack log show only branch names,
+	// as git stack log short does.
+	LogShort       bool
 	ManagedAliases []string
 	ManagedFiles   []string
 }
@@ -138,6 +142,12 @@ func FromEntries(entries []git.ConfigEntry) (*Config, error) {
 			default:
 				return nil, fmt.Errorf("%s: %q is not one of merge, squash, rebase", KeyMergeMethod, v)
 			}
+		case strings.ToLower(KeyLogShort):
+			b, err := parseBool(v)
+			if err != nil {
+				return nil, fmt.Errorf("%s: %w", KeyLogShort, err)
+			}
+			c.LogShort = b
 		case strings.ToLower(KeyManagedAliases):
 			c.ManagedAliases = append(c.ManagedAliases, v)
 		case strings.ToLower(KeyManagedFiles):

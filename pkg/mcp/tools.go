@@ -27,6 +27,7 @@ type repoArg struct {
 type viewInput struct {
 	repoArg
 	IncludeUntracked bool  `json:"include_untracked,omitempty" jsonschema:"also list local branches that are in no stack"`
+	CurrentStack     bool  `json:"current_stack,omitempty" jsonschema:"only the current branch's stack and its trunk (from a trunk, every stack on it); every stack when the current branch is in none"`
 	Fresh            *bool `json:"fresh,omitempty" jsonschema:"refresh pull request state from GitHub when the cache is stale (default true); false never touches the network"`
 }
 
@@ -78,7 +79,7 @@ func (s *Server) view(ctx context.Context, req *mcp.CallToolRequest, in viewInpu
 	if in.Fresh != nil && !*in.Fresh {
 		mode = app.PRsCached
 	}
-	v, err := a.View(ctx, repo, app.ViewOptions{IncludeUntracked: in.IncludeUntracked, PRs: mode, Commits: true})
+	v, err := a.View(ctx, repo, app.ViewOptions{IncludeUntracked: in.IncludeUntracked, CurrentStackOnly: in.CurrentStack, PRs: mode, Commits: true})
 	if err != nil {
 		return nil, viewOutput{}, wrapErr(err)
 	}
@@ -93,6 +94,10 @@ func (s *Server) view(ctx context.Context, req *mcp.CallToolRequest, in viewInpu
 		}
 	}
 	for _, st := range v.Graph.Stacks {
+		if r, ok := rowsByName[st.Bottom()]; !ok || !r.Tracked {
+			// Left out of the view (current_stack).
+			continue
+		}
 		vs := viewStack{Trunk: st.Trunk, Number: st.Number, Branches: []viewBranch{}}
 		parent := st.Trunk
 		for _, b := range st.Branches {
