@@ -95,8 +95,10 @@ func TestPickerNavigationKeys(t *testing.T) {
 
 func TestPickerFilterKeepsTreeContext(t *testing.T) {
 	tm := newTestPicker(t, PickerOptions{})
+	// No waiting on "> hot": the renderer may draw just the last "t" after a
+	// cursor move, so the text need never appear whole. Messages are handled
+	// in order, so enter still sees the full filter.
 	tm.Type("hot")
-	waitForText(t, tm, "> hot")
 	tm.Send(tea.KeyPressMsg{Code: tea.KeyEnter})
 	p := finalPicker(t, tm)
 	if r := p.Result(); r.Branch != "hotfix" {
