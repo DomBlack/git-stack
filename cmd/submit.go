@@ -38,6 +38,11 @@ we push those branches ourselves and have gh stack link add their PRs to the
 stack; the editor isn't available there, so new PRs take their titles from
 their commits unless you pass --ai.
 
+If a PR lower in the stack has merged since you last synced, submit runs
+git stack sync first, so the merged branch goes and the ones above it are
+restacked onto trunk before anything is pushed; otherwise the next PR up would
+show the merged commits too. A dry run only says which branches that would be.
+
 Branches are pushed with --force-with-lease, so after a restack your
 branches are force pushed. If a branch has commits on the remote that aren't in
 your local one (someone else pushed to it), submit refuses rather than
@@ -83,6 +88,16 @@ really do want them gone.`,
 				opts.Branch = args[0]
 			}
 			res, err := a.Submit(ctx, repo, opts)
+			if res.Sync != nil {
+				rep.Warn("%s, so the stack was synced first", mergedPhrase(res.Merged))
+				if err != nil {
+					// The error owns the summary line; what the sync did
+					// manage is still worth seeing.
+					renderSync(rep, *res.Sync)
+					return err
+				}
+				_ = reportSync(rep, *res.Sync, nil)
+			}
 			if err != nil {
 				return err
 			}
@@ -146,4 +161,13 @@ really do want them gone.`,
 	cmd.Flags().BoolVar(&useAI, "ai", false, "have Claude Code write titles and bodies for new PRs (see stack.ai.auto)")
 	cmd.Flags().BoolVar(&noAI, "no-ai", false, "never use AI; takes precedence over --ai and stack.ai.auto")
 	return cmd
+}
+
+// mergedPhrase says whose pull requests have merged: "a's pull request has
+// merged", "the pull requests of a and b have merged".
+func mergedPhrase(names []string) string {
+	if len(names) == 1 {
+		return names[0] + "'s pull request has merged"
+	}
+	return "the pull requests of " + joinAnd(names) + " have merged"
 }

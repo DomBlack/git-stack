@@ -539,6 +539,11 @@ gh stack can only submit a whole stack, so with `--down` git-stack pushes those 
 creates their missing PRs and has `gh stack link` add them to the stack on GitHub; the editor isn't
 available there, so new PRs take their titles from their commits unless you pass `--ai`.
 
+If a PR lower in the stack has merged since you last synced, submit runs `git stack sync` first,
+so the merged branch goes and the ones above it are restacked onto trunk before anything is pushed;
+otherwise the next PR up would show the merged commits too. A dry run only says which branches that
+would be.
+
 Branches are pushed with `--force-with-lease`, so after a restack your branches are force
 pushed. If a branch has commits on the remote that aren't in your local one (someone else pushed
 to it), submit refuses rather than overwrite them. `git sync` pulls them in when the remote is

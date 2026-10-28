@@ -6,7 +6,7 @@ import (
 	"testing"
 
 	"github.com/DomBlack/git-stack/pkg/app"
-	"github.com/DomBlack/git-stack/pkg/forge"
+	"github.com/DomBlack/git-stack/pkg/config"
 )
 
 // TestSubmitFixesBaseWhenGhStackSkipsQueuedBranches: gh stack bases a new
@@ -37,13 +37,19 @@ func TestSubmitFixesBaseWhenGhStackSkipsQueuedBranches(t *testing.T) {
 		t.Errorf("notice missing: %v", res.Notices)
 	}
 
-	// When the branch below really has merged, trunk is the right base.
-	deps2, sf2, fg2, repo2, _ := submitFixture(t)
+	// When the branch below really has merged and sync kept it (the prune
+	// policy says never), trunk is the right base.
+	f2, sf2 := submitSyncFixture(t)
+	f2.deps.Config.SyncPrune = config.SyncPruneNever
 	sf2.baseOnTrunk = true
-	fg2.prs[0].State = forge.StateMerged
-	res2, err := app.New(deps2).Submit(context.Background(), repo2, app.SubmitOptions{NoEdit: true})
+	f2.mergeOnRemote(t, "a", 0)
+	fg2 := f2.forge
+	res2, err := app.New(f2.deps).Submit(context.Background(), f2.repo, app.SubmitOptions{NoEdit: true})
 	if err != nil {
 		t.Fatal(err)
+	}
+	if res2.Sync == nil || len(res2.Sync.Deleted) != 0 || len(res2.PullRequests) != 1 || res2.PullRequests[0].Branch != "b" {
+		t.Fatalf("a should have been kept by the sync and left out of the submit: %+v", res2)
 	}
 	for _, pr := range res2.PullRequests {
 		if pr.BaseFixed {
