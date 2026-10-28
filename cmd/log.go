@@ -74,8 +74,8 @@ func showLog(ctx context.Context, c *cli, m logMode) error {
 	}
 	o := app.ViewOptions{CurrentStackOnly: m.currentStack, PRs: app.PRsFresh, Commits: true}
 	if short {
-		// Names only: no PR state, commits or restack checks to work out.
-		o = app.ViewOptions{CurrentStackOnly: m.currentStack, SkipRestackCheck: true}
+		// Names and restack markers only: no PR state or commits to work out.
+		o = app.ViewOptions{CurrentStackOnly: m.currentStack}
 	}
 	v, err := a.View(ctx, repo, o)
 	if err != nil {

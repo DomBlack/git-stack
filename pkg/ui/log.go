@@ -26,7 +26,8 @@ type LogOptions struct {
 	// would run past it is cut short with "…". 0 never cuts (not a
 	// terminal).
 	Width int
-	// Short shows only the branch names, with no PR, state or commits.
+	// Short shows only the branch names, with "(needs restack)" after those
+	// that need one, and no PR, state or commits.
 	Short bool
 }
 
@@ -57,10 +58,11 @@ type LogOptions struct {
 //	├─┘
 //	■ main
 //
-// Short leaves just the branch names, one line each:
+// Short leaves just the branch names, one line each, marking those that
+// need a restack:
 //
 //	● feat-b
-//	○ feat-a
+//	○ feat-a (needs restack)
 //	│ ○ hotfix
 //	├─┘
 //	■ main
@@ -105,10 +107,15 @@ func RenderLog(v *app.View, o LogOptions) string {
 			gutter := prefix + st.Prefix.Render("│")
 			for i := len(s) - 1; i >= 0; i-- {
 				r := s[i]
-				b.WriteString(prefix + logMarker(r, st) + " " + logName(r, st) + "\n")
+				b.WriteString(prefix + logMarker(r, st) + " " + logName(r, st))
 				if o.Short {
+					if r.NeedsRestack {
+						b.WriteString(" " + st.Restack.Render("(needs restack)"))
+					}
+					b.WriteString("\n")
 					continue
 				}
+				b.WriteString("\n")
 				pr, title := logPR(r, o)
 				b.WriteString(FitLine(gutter+"  "+pr, title, o.Width) + "\n")
 				if meta := logMeta(r, o); meta != "" {
