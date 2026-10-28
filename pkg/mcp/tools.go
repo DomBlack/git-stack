@@ -538,6 +538,11 @@ func (s *Server) submit(ctx context.Context, req *mcp.CallToolRequest, in submit
 		Publish: in.Publish, Draft: in.Draft, NoEdit: true, DryRun: in.DryRun, UseAI: in.UseAI, Texts: in.PullRequests, Force: in.Force,
 		Down: in.Down, Branch: in.Branch,
 	})
+	if err != nil && res.Sync != nil {
+		// The sync before the submit ran, or failed part way: what it did is
+		// in the result, so the agent sees what moved.
+		return &mcp.CallToolResult{IsError: true, Content: []mcp.Content{&mcp.TextContent{Text: wrapErr(err).Error()}}}, res, nil
+	}
 	if err != nil {
 		return nil, app.SubmitResult{}, wrapErr(err)
 	}
@@ -738,7 +743,7 @@ func (s *Server) registerTools() {
 	mcp.AddTool(s.mcp, &mcp.Tool{
 		Name:        "stack_submit",
 		Title:       "Submit the stack",
-		Description: "Push every branch of the current stack and create or update chained pull requests on GitHub; with down (or branch) only the current (or named) branch and the ones below it. New PRs are ready for review unless draft is true (or git config stack.submit.default says draft). Supply pull_requests {branch: {title, body}} for branches without a PR; use dry_run to see the plan first. Refuses with invalid_args when a branch has commits on the remote that aren't local (someone else pushed); pull them in, or pass force only if the user agrees to overwrite them.",
+		Description: "Push every branch of the current stack and create or update chained pull requests on GitHub; with down (or branch) only the current (or named) branch and the ones below it. New PRs are ready for review unless draft is true (or git config stack.submit.default says draft). Supply pull_requests {branch: {title, body}} for branches without a PR; use dry_run to see the plan first. When a pull request of the stack has merged since the last sync it runs stack_sync first, so the merged branch goes and the ones above are restacked onto trunk before anything is pushed (merged names those branches, sync says what the sync did; a dry run only names them). Refuses with invalid_args when a branch has commits on the remote that aren't local (someone else pushed); pull them in, or pass force only if the user agrees to overwrite them.",
 		Annotations: &mcp.ToolAnnotations{DestructiveHint: boolp(true), OpenWorldHint: boolp(true)},
 	}, s.submit)
 	mcp.AddTool(s.mcp, &mcp.Tool{

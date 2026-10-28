@@ -258,6 +258,20 @@ squash merge further down the remote still holds the parent's old commits, which
 anything locally by patch id. If the reflog has expired we fall back to just the patch id
 check, so the worst case is a refusal that needs `--force`, never a silent overwrite.
 
+**Submit syncs first when a PR of the stack has merged.** The metadata's `merged` flag is
+gh stack's, set when its submit checks the stack, so between a merge on GitHub and the next
+`git stack sync` the local stack still has the merged branch with the others sitting on its
+commits. Left to gh stack, submit skipped the merged branch and based the next PR on trunk, which
+then showed the merged commits as well as its own. So submit now reads merged from the fresh PR
+list it fetches anyway and, when any branch of the stack has merged, runs the normal sync before
+touching the remote: the merged branch is deleted, the branches above are restacked onto trunk,
+and the submit carries on from the stack as it is afterwards (from any surviving branch when the
+current one was the merged one; a `--down` submit to it has nothing left and says so). The sync is
+recorded for undo like any other, until the submit succeeds and clears the history. A dry run
+can't sync, so it names the branches and leaves them out of the plan. A merged branch sync keeps
+(prune `never`, a dirty checkout, merged into a parent that hasn't reached trunk) is skipped the
+way gh stack skips it.
+
 **`log` shows "needs push"** when a branch's remote tracking ref exists and the local branch
 has moved on from it (new commits, a restack, an amend). It's worked out from local refs
 only, so it's as fresh as the last fetch or push, and a remote that's simply ahead of the

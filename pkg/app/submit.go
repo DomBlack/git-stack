@@ -73,8 +73,17 @@ type SubmitResult struct {
 	Output string `json:"output,omitempty"`
 	// Closed are the pull requests a pop or fold left behind that this
 	// submit closed.
-	Closed  []ClosedPR `json:"closed,omitempty"`
-	Notices []string   `json:"notices,omitempty"`
+	Closed []ClosedPR `json:"closed,omitempty"`
+	// Merged names the branches of the stack whose pull requests had merged
+	// before this submit. Pushing over them would put their commits into
+	// the next PR up, so submit synced first (Sync says what that did): they
+	// went and the branches above were restacked onto trunk. A dry run only
+	// names them and leaves them out of the plan.
+	Merged []string `json:"merged,omitempty"`
+	// Sync is what the sync before the submit did, when one ran. It is set
+	// even when that sync failed, so what it did manage is still known.
+	Sync    *SyncResult `json:"sync,omitempty"`
+	Notices []string    `json:"notices,omitempty"`
 }
 
 // ClosedPR is a queued pull request a submit closed.
@@ -131,38 +140,60 @@ func (a *App) submit(ctx context.Context, repo git.Repo, o SubmitOptions) (Submi
 		}
 		return SubmitResult{}, stack.Newf(stack.KindNotInStack, "%s is not in a stack", target)
 	}
-	scope := s.Branches
-	if o.Down || o.Branch != "" {
-		scope = s.Branches[:idx+1]
-	}
-	partial := slices.ContainsFunc(s.Branches[len(scope):], func(b stack.Branch) bool { return !b.Merged() })
-	if !slices.ContainsFunc(scope, func(b stack.Branch) bool { return !b.Merged() }) {
-		return SubmitResult{}, stack.Newf(stack.KindInvalidArgs, "nothing to submit up to %s; its pull request has merged", target)
-	}
-	res := SubmitResult{Stack: s.Names(), DryRun: o.DryRun}
-	if !o.Force {
-		var live []string
-		for _, b := range scope {
-			if !b.Merged() {
-				live = append(live, b.Name)
-			}
-		}
-		if err := a.checkPushedOver(ctx, repo, live); err != nil {
-			return SubmitResult{}, err
-		}
-	}
+	res := SubmitResult{DryRun: o.DryRun}
 
-	// Existing PRs decide which branches are new.
+	// Existing PRs decide which branches are new, and which have merged
+	// since the last sync: the metadata only learns that from gh stack.
 	known, err := a.loadPRs(ctx, repo, PRsFresh)
 	if err != nil {
 		return SubmitResult{}, err
 	}
 	before := PRsFor(known)
-	var newBranches []string
-	for _, b := range scope {
-		if b.Merged() {
-			continue
+	for _, b := range s.Branches {
+		if mergedPR(before, b) {
+			res.Merged = append(res.Merged, b.Name)
 		}
+	}
+	if len(res.Merged) > 0 {
+		if o.DryRun {
+			res.Notices = append(res.Notices, fmt.Sprintf("%s; a real submit syncs first, deleting %s and restacking the ones above onto %s",
+				mergedPhrase(res.Merged), theBranches(res.Merged), s.Trunk))
+		} else {
+			// A merged branch's commits are in trunk now, in some form, but
+			// still below the branches above it, and would show up in their
+			// pull requests. Sync deletes it and restacks them onto trunk.
+			s, idx, known, err = a.syncMerged(ctx, repo, target, s, o, &res)
+			if err != nil {
+				return res, err
+			}
+			before = PRsFor(known)
+		}
+	}
+	res.Stack = s.Names()
+
+	scope := s.Branches
+	if o.Down || o.Branch != "" {
+		scope = s.Branches[:idx+1]
+	}
+	live := func(bs []stack.Branch) []stack.Branch {
+		return slices.DeleteFunc(slices.Clone(bs), func(b stack.Branch) bool { return mergedPR(before, b) })
+	}
+	partial := len(live(s.Branches[len(scope):])) > 0
+	if len(live(scope)) == 0 {
+		return res, stack.Newf(stack.KindInvalidArgs, "nothing to submit up to %s; its pull request has merged", target)
+	}
+	if !o.Force {
+		var names []string
+		for _, b := range live(scope) {
+			names = append(names, b.Name)
+		}
+		if err := a.checkPushedOver(ctx, repo, names); err != nil {
+			return res, err
+		}
+	}
+
+	var newBranches []string
+	for _, b := range live(scope) {
 		pr, has := before[b.Name]
 		entry := SubmittedPR{Branch: b.Name}
 		if has && (pr.State == forge.StateOpen || pr.State == forge.StateDraft) {
@@ -209,7 +240,7 @@ func (a *App) submit(ctx context.Context, repo git.Repo, o SubmitOptions) (Submi
 		if editor {
 			res.Notices = append(res.Notices, "gh stack's editor only opens for a whole stack submit; new PRs take their titles from their commits")
 		}
-		if err := a.submitPart(ctx, repo, s, scope, texts, draft, &res); err != nil {
+		if err := a.submitPart(ctx, repo, s, live(scope), texts, draft, &res); err != nil {
 			return SubmitResult{}, err
 		}
 	} else {
@@ -295,18 +326,17 @@ func (a *App) submit(ctx context.Context, repo git.Repo, o SubmitOptions) (Submi
 }
 
 // submitPart submits only the branches in scope, a run of the stack from
-// the bottom up. gh stack submit always pushes every branch, so this pushes
-// the branches itself, creates their missing pull requests through the forge,
-// and has gh stack link add the pull requests to the stack on GitHub.
+// the bottom up with the merged ones left out. gh stack submit always pushes
+// every branch, so this pushes the branches itself, creates their missing
+// pull requests through the forge, and has gh stack link add the pull
+// requests to the stack on GitHub.
 func (a *App) submitPart(ctx context.Context, repo git.Repo, s *stack.Stack, scope []stack.Branch, texts map[string]PRText, draft bool, res *SubmitResult) error {
 	if a.d.Forge == nil {
 		return ErrNoForge
 	}
-	var live []string
-	for _, b := range scope {
-		if !b.Merged() {
-			live = append(live, b.Name)
-		}
+	live := make([]string, len(scope))
+	for i, b := range scope {
+		live[i] = b.Name
 	}
 	top := live[len(live)-1]
 	err := a.progress(ctx, PhaseSubmit, fmt.Sprintf("Submitting %s and the branches below it", top), func(ctx context.Context) error {
@@ -350,6 +380,73 @@ func (a *App) submitPart(ctx context.Context, repo git.Repo, s *stack.Stack, sco
 		return a.linkPart(ctx, repo, s, res.PullRequests, res)
 	})
 	return err
+}
+
+// mergedPR reports whether a branch's pull request has merged, by the
+// metadata or by what the forge said in prs.
+func mergedPR(prs map[string]forge.PullRequest, b stack.Branch) bool {
+	pr, has := prs[b.Name]
+	return b.Merged() || (has && pr.State == forge.StateMerged)
+}
+
+// mergedPhrase says whose pull requests have merged: "a's pull request has
+// merged", "the pull requests of a and b have merged".
+func mergedPhrase(names []string) string {
+	if len(names) == 1 {
+		return names[0] + "'s pull request has merged"
+	}
+	return "the pull requests of " + joinAnd(names) + " have merged"
+}
+
+// joinAnd lists names as "a", "a and b" or "a, b and c".
+func joinAnd(names []string) string {
+	if len(names) < 2 {
+		return strings.Join(names, "")
+	}
+	return strings.Join(names[:len(names)-1], ", ") + " and " + names[len(names)-1]
+}
+
+// syncMerged runs the sync a submit needs when pull requests of its stack
+// have merged, then finds the stack again: the target branch may have been
+// the one that merged, in which case a whole stack submit carries on from
+// any branch of the stack that is left, and a submit down to it has nothing
+// left to do. Returns the stack, the target's index in it and the pull
+// requests as they are afterwards. res.Sync is set whatever the sync did.
+func (a *App) syncMerged(ctx context.Context, repo git.Repo, target string, s *stack.Stack, o SubmitOptions, res *SubmitResult) (*stack.Stack, int, []forge.PullRequest, error) {
+	sync, err := a.Sync(ctx, repo, SyncOptions{})
+	res.Sync = &sync
+	if err != nil {
+		return nil, 0, nil, err
+	}
+	graph, err := a.d.Meta.Load(ctx, repo)
+	if err != nil {
+		return nil, 0, nil, err
+	}
+	after, idx, ok := graph.StackOf(target)
+	if !ok && !o.Down && o.Branch == "" {
+		for _, b := range s.Branches {
+			if slices.Contains(res.Merged, b.Name) {
+				continue
+			}
+			if after, idx, ok = graph.StackOf(b.Name); ok {
+				break
+			}
+		}
+	}
+	if !ok {
+		return nil, 0, nil, stack.Newf(stack.KindInvalidArgs, "nothing to submit: %s, so sync deleted %s", mergedPhrase(res.Merged), theBranches(res.Merged)).
+			WithSteps("run git stack log to see what is left")
+	}
+	known, err := a.loadPRs(ctx, repo, PRsFresh)
+	if err != nil {
+		return nil, 0, nil, err
+	}
+	return after, idx, known, nil
+}
+
+// theBranches is "the branch" or "the branches".
+func theBranches(names []string) string {
+	return pluralise(len(names), "the branch", "the branches")
 }
 
 // linkPart adds the submitted pull requests to the stack on GitHub. A single
@@ -402,10 +499,6 @@ func (a *App) fixBases(ctx context.Context, repo git.Repo, s *stack.Stack, after
 	if a.d.Forge == nil {
 		return false
 	}
-	merged := func(b stack.Branch) bool {
-		pr, has := after[b.Name]
-		return b.Merged() || (has && pr.State == forge.StateMerged)
-	}
 	fixed := false
 	for i := range res.PullRequests {
 		e := &res.PullRequests[i]
@@ -419,7 +512,7 @@ func (a *App) fixBases(ctx context.Context, repo git.Repo, s *stack.Stack, after
 		}
 		want := s.Trunk
 		for j := idx - 1; j >= 0; j-- {
-			if !merged(s.Branches[j]) {
+			if !mergedPR(after, s.Branches[j]) {
 				want = s.Branches[j].Name
 				break
 			}
