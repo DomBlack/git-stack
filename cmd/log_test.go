@@ -122,6 +122,17 @@ func TestLogShortAndStack(t *testing.T) {
 	if err != nil || !strings.Contains(out, "other") || !strings.Contains(errOut, "loose is in no stack") {
 		t.Errorf("log short -s on an untracked branch:\n%s\n%s (%v)", out, errOut, err)
 	}
+
+	// Moving trunk on leaves the bottom branches needing a restack.
+	gittest.Run(t, dir, "switch", "-q", "main")
+	gittest.Commit(t, dir, "main.txt", "more", "more")
+	out, errOut, err = runWith(t, f, "--cwd", dir, "log", "short")
+	if err != nil {
+		t.Fatalf("log short after trunk moved: %v\n%s", err, errOut)
+	}
+	if want := "○ c\n○ b\n○ a (needs restack)\n│ ○ other (needs restack)\n├─┘\n● main\n"; out != want {
+		t.Errorf("log short after trunk moved =\n%s\nwant\n%s", out, want)
+	}
 }
 
 // TestLogShortConfig checks that stack.log.short makes log and bare git stack

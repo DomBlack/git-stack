@@ -747,13 +747,14 @@ bottom, each stack rising out of it and the current branch marked. Under each br
 PR state and titles come from a local cache that's refreshed when it goes stale, and the commits
 come from local git, so it stays quick.
 
-`git stack log short` draws the same tree with just the branch names, one line each. It only reads
-local git, so it never waits on GitHub. To make that what `git stack` and `git stack log` show,
+`git stack log short` draws the same tree with just the branch names, one line each, and
+`(needs restack)` after any branch whose parent has moved on. It only reads local git, so it never
+waits on GitHub. To make that what `git stack` and `git stack log` show,
 `git config --global stack.log.short true`; `git stack log long` still gets you the full tree.
 
 ```
 ❯ git stack log short
-○ billing-webhook-retries
+○ billing-webhook-retries (needs restack)
 ● billing-webhook-schema
 │ ○ fix-login-timeout
 ├─┘

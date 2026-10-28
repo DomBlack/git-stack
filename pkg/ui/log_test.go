@@ -77,7 +77,7 @@ func TestRenderLogPlain(t *testing.T) {
 func TestRenderLogShort(t *testing.T) {
 	out := RenderLog(&app.View{Rows: logRows()}, LogOptions{Now: now, Short: true})
 	want := strings.Join([]string{
-		"○ feat/ui-tests",
+		"○ feat/ui-tests (needs restack)",
 		"● feat/ui",
 		"○ feat/api",
 		"│ ○ fix/typo",
