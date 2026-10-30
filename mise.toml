@@ -1,0 +1,5 @@
+# CI installs these with jdx/mise-action, so this is the one place to bump them.
+[tools]
+go = "1.27"
+golangci-lint = "2.14.0"
+goreleaser = "2"
