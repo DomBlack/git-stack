@@ -54,6 +54,14 @@ func (f *fakeForge) RenameBranch(_ context.Context, _ git.Repo, from, to string)
 func (f *fakeForge) CreateStack(context.Context, git.Repo, []int) (forge.StackRef, error) {
 	return forge.StackRef{}, nil
 }
+func (f *fakeForge) PR(_ context.Context, _ git.Repo, n int) (forge.PullRequest, error) {
+	for _, pr := range f.prs {
+		if pr.Number == n {
+			return pr, nil
+		}
+	}
+	return forge.PullRequest{}, stack.Newf(stack.KindInvalidArgs, "there is no pull request #%d", n)
+}
 func (f *fakeForge) CreatePR(context.Context, git.Repo, forge.CreatePR) (forge.PullRequest, error) {
 	return forge.PullRequest{}, nil
 }
@@ -229,7 +237,7 @@ func TestToolsAreListedWithAnnotationsAndSchemas(t *testing.T) {
 	for _, tool := range res.Tools {
 		got[tool.Name] = tool
 	}
-	for _, name := range []string{"stack_view", "stack_create", "stack_modify", "stack_absorb", "stack_reorder", "stack_move", "stack_fold", "stack_rename", "stack_untrack", "stack_doctor", "stack_init", "stack_pop", "stack_restack", "stack_undo", "stack_navigate", "stack_submit", "stack_sync"} {
+	for _, name := range []string{"stack_view", "stack_create", "stack_modify", "stack_absorb", "stack_reorder", "stack_move", "stack_fold", "stack_rename", "stack_untrack", "stack_doctor", "stack_init", "stack_pop", "stack_restack", "stack_undo", "stack_navigate", "stack_get", "stack_submit", "stack_sync"} {
 		if got[name] == nil {
 			t.Errorf("missing tool %s", name)
 		}
@@ -934,6 +942,33 @@ func TestRename(t *testing.T) {
 	}
 	if te := h.toolErr("stack_rename", map[string]any{"name": "a"}); te.Code != "invalid_args" || !strings.Contains(te.Message, "already exists") {
 		t.Errorf("taken = %+v", te)
+	}
+}
+
+func TestGet(t *testing.T) {
+	h := newHarness(t)
+	defer h.assertNoStdout()
+	// c is on origin only, with a pull request in no stack.
+	gittest.Run(t, h.dir, "switch", "-q", "-c", "c", "main")
+	gittest.Commit(t, h.dir, "c.txt", "c", "feat: c")
+	gittest.Run(t, h.dir, "push", "-q", "origin", "c")
+	gittest.Run(t, h.dir, "switch", "-q", "b")
+	gittest.Run(t, h.dir, "branch", "-q", "-D", "c")
+	h.forge.prs = append(h.forge.prs,
+		forge.PullRequest{Number: 9, Head: "c", Base: "main", State: forge.StateOpen},
+		forge.PullRequest{Number: 11, Head: "f", Base: "main", State: forge.StateOpen, Fork: true})
+
+	var res app.GetResult
+	h.call("stack_get", map[string]any{"target": "#9"}, &res)
+	if res.Source != app.GetPRs || res.Branch != "c" || len(res.Created) != 1 || h.current() != "c" {
+		t.Fatalf("get = %+v on %s", res, h.current())
+	}
+	h.call("stack_get", map[string]any{"target": "a"}, &res)
+	if res.Source != app.GetLocal || res.Branch != "a" || h.current() != "a" {
+		t.Errorf("tracked = %+v on %s", res, h.current())
+	}
+	if te := h.toolErr("stack_get", map[string]any{"target": "11"}); te.Code != "unsupported" || len(te.NextSteps) == 0 {
+		t.Errorf("fork = %+v", te)
 	}
 }
 

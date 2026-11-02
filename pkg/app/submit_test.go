@@ -122,6 +122,10 @@ func (f *recordingForge) ClosePR(_ context.Context, _ git.Repo, n int, comment s
 	return nil
 }
 
+func (f *recordingForge) PR(_ context.Context, _ git.Repo, n int) (forge.PullRequest, error) {
+	return findPR(f.prs, n)
+}
+
 func (f *recordingForge) RenameBranch(context.Context, git.Repo, string, string) error { return nil }
 
 func (f *recordingForge) CreateStack(_ context.Context, _ git.Repo, numbers []int) (forge.StackRef, error) {

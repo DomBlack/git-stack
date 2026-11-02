@@ -147,7 +147,7 @@ Claude Code and Codex if you have them installed**. Each of those is on by defau
 change before it happens, and `--uninstall` removes what it recorded installing and nothing else
 (that record lives in `git config --global stack.managed*`).
 
-- **Aliases** (`--aliases`): `git create|modify|absorb|reorder|move|fold|rename|untrack|track|pop|restack|continue|abort|undo|submit|sync|up|down|top|bottom|pr`
+- **Aliases** (`--aliases`): `git create|modify|absorb|reorder|move|fold|rename|untrack|track|pop|restack|continue|abort|undo|submit|sync|up|down|top|bottom|pr|get`
   and the short ones `git c|m|ab|rs|ss|u|d|t|b|co`, written with `git config --global`. Anything that
   clashes with a git builtin or an installed command is skipped, and an alias you already have is
   only replaced if you pass `--force` or say yes when asked.
@@ -593,6 +593,30 @@ Flags:
 - `-s` / `--stack` only show the current stack
 - `-t` / `--trunk` check out the trunk of the current stack
 
+### `git stack get <pr|url|branch>`
+
+> Alias: `git get`
+
+Pulls a pull request down from GitHub so you can work on it, by number (`418` or `#418`), URL or
+branch name. Its branch and the rest of its stack are created locally where you don't have them,
+fast forwarded where the remote is ahead, tracked as a stack and its branch is checked out.
+
+```
+❯ git get 418
+✔ Pulled down a stack of 3 branches on main and checked out payments-retry-queue
+  created payments-db, payments-api and payments-retry-queue from the remote
+```
+
+A pull request in a stack on GitHub brings the whole stack (through `gh stack checkout`). One that
+isn't, or a repository without stacked PRs, gets the pull request and the open ones it's based on,
+down to the first base that has none, which becomes the trunk. If you already have the stack it's
+just brought up to date.
+
+Nothing is rebased or pushed. A branch that has diverged from the remote is left as it is with a
+warning, the same as `sync` does. Pull requests from forks can't be got this way (`gh pr checkout`
+checks one out without tracking it), and neither can one based on a branch that's already in
+another of your stacks.
+
 ### `git stack pr [branch]`
 
 > Alias: `git pr`
@@ -712,7 +736,7 @@ git modify
 ```
 
 It covers create (`--insert` too), modify, absorb, restack, reorder, move, fold, pop, untrack,
-init (`track`), sync and a rename that stayed on your machine. Every branch they touched goes back
+init (`track`), get, sync and a rename that stayed on your machine. Every branch they touched goes back
 to where it was (a branch sync or pop deleted comes back, one create made goes away), the stack
 metadata is put back exactly, and so is what you had checked out. After create, modify or absorb
 the changes they committed come back as staged changes, and after a pop you're back on the popped

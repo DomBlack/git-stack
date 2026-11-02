@@ -191,3 +191,31 @@ func TestGhEnvIsNonInteractive(t *testing.T) {
 		t.Errorf("call = %+v", call)
 	}
 }
+
+func TestImportStack(t *testing.T) {
+	ext := "gh stack\tgithub/gh-stack\tv0.9.0\n"
+	repo := git.Repo{TopLevel: "/repo"}
+	f := exectest.New()
+	f.On("gh", "extension", "list").Reply(ext)
+	f.On("gh", "stack", "checkout", "418").Reply("")
+	if err := New(f, nil).ImportStack(context.Background(), repo, "418"); err != nil {
+		t.Fatal(err)
+	}
+	if call := f.CallsTo("gh")[1]; call.Mode != exec.Capture || !slices.Equal(call.Args, []string{"stack", "checkout", "418"}) {
+		t.Errorf("call = %+v", call)
+	}
+
+	for code, kind := range map[int]stack.Kind{
+		2: stack.KindNotInStack,        // not in a stack on GitHub
+		3: stack.KindInvalidArgs,       // a local stack composed differently, not a rebase
+		9: stack.KindStacksUnavailable, // the repository has no stacks
+	} {
+		f := exectest.New()
+		f.On("gh", "extension", "list").Reply(ext)
+		f.On("gh", "stack", "checkout").Fail(code, "nope")
+		err := New(f, nil).ImportStack(context.Background(), repo, "418")
+		if se, ok := errors.AsType[*stack.Error](err); !ok || se.Kind != kind || se.Detail != "nope" {
+			t.Errorf("exit %d: %v, want %s", code, err, kind.Code())
+		}
+	}
+}

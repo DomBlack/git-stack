@@ -94,6 +94,20 @@ func (c *Client) CreateBranch(ctx context.Context, repo Repo, name, start string
 	return nil
 }
 
+// CreateTrackingBranch creates name from remote's copy of it, with remote
+// as its upstream, the way git switch does for a branch that only exists on
+// a remote.
+func (c *Client) CreateTrackingBranch(ctx context.Context, repo Repo, name, remote string) error {
+	_, err := c.gitIn(ctx, repo, "branch", "--track", name, "refs/remotes/"+remote+"/"+name)
+	if err != nil {
+		if ee, ok := errors.AsType[*exec.ExitError](err); ok {
+			return fmt.Errorf("create branch %q from %s: %s", name, remote, ee.Result.Err())
+		}
+		return err
+	}
+	return nil
+}
+
 // DefaultBranch guesses the repository's trunk the way gh-stack does: the
 // branch origin/HEAD points at, else a local main or master. The boolean is
 // false when nothing matches.
