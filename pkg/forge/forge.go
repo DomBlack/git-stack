@@ -116,6 +116,11 @@ type Forge interface {
 	// PR looks up one pull request by number, forks included. One that
 	// doesn't exist is a *stack.Error of kind invalid_args.
 	PR(ctx context.Context, repo git.Repo, number int) (PullRequest, error)
+	// OpenPRFor finds the open (or draft) pull request whose head is
+	// branch in this repository, however old it is; false when there is
+	// none. Pull requests from forks with a branch of the same name don't
+	// count.
+	OpenPRFor(ctx context.Context, repo git.Repo, branch string) (PullRequest, bool, error)
 	CreatePR(ctx context.Context, repo git.Repo, in CreatePR) (PullRequest, error)
 	UpdatePR(ctx context.Context, repo git.Repo, number int, in UpdatePR) error
 	// MergeStack merges pull request number together with every open pull

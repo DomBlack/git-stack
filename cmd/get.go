@@ -45,7 +45,7 @@ is left alone with a warning. Pull requests from forks can't be got this way.`,
 			if err == nil {
 				rep.Success("%s", getSummary(rep, res))
 			}
-			if res.Branch == "" {
+			if len(res.Branches) == 0 {
 				return err
 			}
 			renderGet(rep, res)

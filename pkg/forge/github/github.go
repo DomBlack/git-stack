@@ -217,6 +217,25 @@ func (f *Forge) PR(ctx context.Context, repo git.Repo, number int) (forge.PullRe
 	return pr, err
 }
 
+// OpenPRFor asks gh for the open pull requests with branch as their head,
+// so it isn't limited to the newest ones the way ListPRs is.
+func (f *Forge) OpenPRFor(ctx context.Context, repo git.Repo, branch string) (forge.PullRequest, bool, error) {
+	res, err := f.gh(ctx, repo, "", "pr", "list", "--state", "open", "--head", branch, "--limit", "20", "--json", prFields)
+	if err != nil {
+		return forge.PullRequest{}, false, err
+	}
+	var raw []prJSON
+	if err := json.Unmarshal(res.Stdout, &raw); err != nil {
+		return forge.PullRequest{}, false, fmt.Errorf("parse gh pr list output: %w", err)
+	}
+	for _, p := range raw {
+		if !p.IsCrossRepository && p.HeadRefName == branch {
+			return p.toForge(), true, nil
+		}
+	}
+	return forge.PullRequest{}, false, nil
+}
+
 // reAlreadyClosed is gh pr close's refusal for a pull request that is
 // already closed or merged.
 var reAlreadyClosed = regexp.MustCompile(`(?i)already closed|can't be closed because it was already merged|is already merged`)

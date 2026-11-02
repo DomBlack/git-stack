@@ -208,9 +208,15 @@ a branch that already exists locally is used as it is, never updated, so `get` f
 then fast forwards the stack's branches with sync's own code (diverged ones get sync's notice);
 and a pull request in no stack on GitHub (or a repository without stacked PRs) is exit 2 or 9, so
 `get` looks the pull request up through the forge, walks down the open pull requests it's based
-on to the first base without one, creates those branches from the remote and records them the way
-`init` does. A target that's already tracked here never reaches gh stack, since its composition
-check would refuse a stack reordered locally but not yet submitted. Forks are refused rather than
+on to the first base without one (asking for each base's open pull request by branch, since the
+list of recent pull requests sync uses stops at 500), creates those branches from the remote and records them the way
+`init` does. A pull request number nothing here records is looked up first and its branch checked against
+the graph, because a stack git-stack tracked itself has no PR records until gh stack submits it.
+A target that's already tracked here never reaches gh stack, since its composition
+check would refuse a stack reordered locally but not yet submitted. Once branches have moved, a failed
+checkout is a partial result rather than an error, so undo still records it. A URL is checked
+against the repository the forge works out from the remotes, as its number means a different
+pull request anywhere else. Forks are refused rather than
 guessed at: their branches aren't on our remote, and submit couldn't push them back anyway.
 
 **`create` from trunk runs `gh stack init`, from the top runs `gh stack add`, and we

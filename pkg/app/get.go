@@ -35,9 +35,12 @@ const (
 
 // GetResult reports what Get did.
 type GetResult struct {
-	// Branch is the branch now checked out.
+	// Branch is the pull request's branch.
 	Branch string `json:"branch"`
-	Trunk  string `json:"trunk"`
+	// CheckedOut is set once Branch is checked out; when it isn't, the
+	// error says why.
+	CheckedOut bool   `json:"checkedOut"`
+	Trunk      string `json:"trunk"`
 	// Branches is the stack, bottom to top.
 	Branches []string `json:"branches"`
 	Source   string   `json:"source"`
@@ -56,26 +59,57 @@ type GetResult struct {
 	Notices      []string `json:"notices,omitempty"`
 }
 
-// rePRURL matches a pull request's web address and captures its number.
-var rePRURL = regexp.MustCompile(`^https?://[^/]+/[^/]+/[^/]+/pull/(\d+)(?:[/?#].*)?$`)
+// rePRURL matches a pull request's web address, capturing its repository
+// (host/owner/name) and number.
+var rePRURL = regexp.MustCompile(`^https?://([^/]+/[^/]+/[^/]+)/pull/(\d+)(?:[/?#].*)?$`)
 
-// parseGetTarget splits a target into a pull request number or a branch
-// name; exactly one is set.
-func parseGetTarget(s string) (int, string, error) {
+// getTarget is a parsed target: a pull request number or a branch name,
+// exactly one of them set. Repo is the host/owner/name of a URL's
+// repository, "" for anything else.
+type getTarget struct {
+	number int
+	branch string
+	repo   string
+}
+
+// parseGetTarget parses a target.
+func parseGetTarget(s string) (getTarget, error) {
 	s = strings.TrimSpace(s)
 	if s == "" {
-		return 0, "", stack.New(stack.KindInvalidArgs, "name a pull request number, URL or branch to get")
+		return getTarget{}, stack.New(stack.KindInvalidArgs, "name a pull request number, URL or branch to get")
 	}
+	var t getTarget
 	if m := rePRURL.FindStringSubmatch(s); m != nil {
-		s = m[1]
+		t.repo, s = m[1], m[2]
 	}
 	if n, err := strconv.Atoi(strings.TrimPrefix(s, "#")); err == nil {
 		if n <= 0 {
-			return 0, "", stack.Newf(stack.KindInvalidArgs, "%s is not a pull request number", s)
+			return getTarget{}, stack.Newf(stack.KindInvalidArgs, "%s is not a pull request number", s)
 		}
-		return n, "", nil
+		t.number = n
+		return t, nil
 	}
-	return 0, s, nil
+	t.branch = s
+	return t, nil
+}
+
+// checkURLRepo refuses a pull request URL for another repository than the
+// one we're in: its number means a different pull request here. When the
+// forge can't tell which repository this is, the URL is taken on trust.
+func (a *App) checkURLRepo(ctx context.Context, repo git.Repo, t getTarget) error {
+	if t.repo == "" || a.d.Forge == nil {
+		return nil
+	}
+	here, err := a.d.Forge.PullRequestURL(ctx, repo, t.number)
+	if err != nil || here == "" {
+		return nil
+	}
+	m := rePRURL.FindStringSubmatch(here)
+	if m == nil || strings.EqualFold(m[1], t.repo) {
+		return nil
+	}
+	return stack.Newf(stack.KindInvalidArgs, "that pull request is in %s, not this repository (%s)", t.repo, m[1]).
+		WithSteps("run git stack get from a clone of " + t.repo)
 }
 
 // Get pulls a pull request's stack down from the remote and checks out its
@@ -92,8 +126,11 @@ func (a *App) Get(ctx context.Context, repo git.Repo, o GetOptions) (GetResult, 
 // get is Get's body.
 func (a *App) get(ctx context.Context, repo git.Repo, o GetOptions) (GetResult, error) {
 	var res GetResult
-	number, branch, err := parseGetTarget(o.Target)
+	t, err := parseGetTarget(o.Target)
 	if err != nil {
+		return res, err
+	}
+	if err := a.checkURLRepo(ctx, repo, t); err != nil {
 		return res, err
 	}
 	if err := a.noRebaseActive(ctx, repo); err != nil {
@@ -116,18 +153,21 @@ func (a *App) get(ctx context.Context, repo git.Repo, o GetOptions) (GetResult, 
 			WithSteps("check the remote and your network, then run git stack get again")
 	}
 
-	target := a.trackedTarget(repo, st.graph, number, branch)
+	target, pr, err := a.trackedTarget(ctx, repo, st.graph, t)
+	if err != nil {
+		return res, err
+	}
 	if target != "" {
 		res.Source = GetLocal
 	} else {
-		if target, err = a.importTarget(ctx, repo, number, branch); err != nil {
+		if target, err = a.importTarget(ctx, repo, t); err != nil {
 			return res, err
 		}
 		if target != "" {
 			res.Source = GetStack
 		} else {
 			res.Source = GetPRs
-			if target, err = a.getPRs(ctx, st, number, branch, &res); err != nil {
+			if target, err = a.getPRs(ctx, st, t, pr); err != nil {
 				return res, err
 			}
 		}
@@ -152,18 +192,28 @@ func (a *App) get(ctx context.Context, repo git.Repo, o GetOptions) (GetResult, 
 	}
 	res.Updated, res.Behind, res.NotUpdated = sres.Updated, sres.Behind, sres.NotUpdated
 	res.Notices = append(res.Notices, sres.Notices...)
-
-	if err := a.Checkout(ctx, repo, target); err != nil {
-		return res, err
-	}
 	res.Branch, res.Trunk, res.Branches = target, only.Trunk, only.Names()
 	for _, name := range append([]string{only.Trunk}, res.Branches...) {
 		if _, ok := before[name]; !ok {
 			res.Created = append(res.Created, name)
 		}
 	}
+	if res.NeedsRestack, err = a.getNeedsRestack(ctx, repo, only); err != nil {
+		return res, err
+	}
 
+	// From here on the branches have moved, so a failure is partial: the
+	// result says what was done, and undo can take it back.
 	var parts, steps []string
+	if err := a.Checkout(ctx, repo, target); err != nil {
+		parts = append(parts, fmt.Sprintf("%s was not checked out: %s", target, errMessage(err)))
+		if se, ok := errors.AsType[*stack.Error](err); ok && len(se.NextSteps) > 0 {
+			steps = append(steps, se.NextSteps...)
+		}
+		steps = append(steps, "then git stack checkout "+target)
+	} else {
+		res.CheckedOut = true
+	}
 	for _, n := range res.NotUpdated {
 		if n.Failed() {
 			part, step := n.explain()
@@ -177,47 +227,95 @@ func (a *App) get(ctx context.Context, repo git.Repo, o GetOptions) (GetResult, 
 	return res, nil
 }
 
-// trackedTarget is the branch the target names when it is already in a
-// stack here, else "".
-func (a *App) trackedTarget(repo git.Repo, graph *stack.Graph, number int, branch string) string {
-	if number == 0 {
-		if _, _, ok := graph.StackOf(branch); ok {
-			return branch
+// errMessage is an error's message without a *stack.Error's steps.
+func errMessage(err error) string {
+	if se, ok := errors.AsType[*stack.Error](err); ok {
+		return se.Msg
+	}
+	return err.Error()
+}
+
+// getNeedsRestack lists the branches of s that aren't on the local tip of
+// the one below them (trunk for the bottom one), as they are once get has
+// fast forwarded what it could. Merged branches and ones missing locally
+// are skipped, and so is a branch above one that is missing.
+func (a *App) getNeedsRestack(ctx context.Context, repo git.Repo, s stack.Stack) ([]string, error) {
+	local, err := a.localBranches(ctx, repo)
+	if err != nil {
+		return nil, err
+	}
+	var out []string
+	parent := s.Trunk
+	for _, b := range s.Branches {
+		if b.Merged() {
+			continue
 		}
-		return ""
+		pb, pok := local[parent]
+		lb, ok := local[b.Name]
+		if pok && ok && !a.isAncestor(ctx, repo, pb.Head, lb.Head) {
+			out = append(out, b.Name)
+		}
+		parent = b.Name
+	}
+	return out, nil
+}
+
+// trackedTarget is the branch the target names when it is already in a
+// stack here, else "". A pull request number nothing here records is looked
+// up on the forge, since a stack git-stack made itself has no PR records
+// until gh stack submits it; the pull request found (nil when there was no
+// need, or no forge) is returned for getPRs.
+func (a *App) trackedTarget(ctx context.Context, repo git.Repo, graph *stack.Graph, t getTarget) (string, *forge.PullRequest, error) {
+	if t.number == 0 {
+		if _, _, ok := graph.StackOf(t.branch); ok {
+			return t.branch, nil, nil
+		}
+		return "", nil, nil
 	}
 	for _, s := range graph.Stacks {
 		for _, b := range s.Branches {
-			if b.PR != nil && b.PR.Number == number {
-				return b.Name
+			if b.PR != nil && b.PR.Number == t.number {
+				return b.Name, nil, nil
 			}
 		}
 	}
-	// A stack git-stack made itself has no PR records until gh stack
-	// submits it, so fall back to what the forge last said.
-	prs, _, _ := a.CachedPRs(repo)
-	for _, pr := range prs {
-		if pr.Number == number && !pr.Fork {
-			if _, _, ok := graph.StackOf(pr.Head); ok {
-				return pr.Head
-			}
+	if a.d.Forge == nil {
+		return "", nil, nil
+	}
+	var pr forge.PullRequest
+	err := a.progress(ctx, PhaseRefresh, "Looking up "+getLabel(t), func(ctx context.Context) error {
+		var err error
+		pr, err = a.d.Forge.PR(ctx, repo, t.number)
+		return err
+	})
+	if se, ok := errors.AsType[*stack.Error](err); ok && se.Kind == stack.KindInvalidArgs {
+		// No such pull request; gh stack may still know the number as a
+		// stack's.
+		return "", nil, nil
+	}
+	if err != nil {
+		return "", nil, err
+	}
+	if !pr.Fork {
+		if _, _, ok := graph.StackOf(pr.Head); ok {
+			return pr.Head, nil, nil
 		}
 	}
-	return ""
+	return "", &pr, nil
 }
 
 // importTarget pulls the target's stack down from GitHub and returns the
 // branch it checked out, or "" when the target is in no stack there (or
 // the repository doesn't have stacks), for getPRs to handle.
-func (a *App) importTarget(ctx context.Context, repo git.Repo, number int, branch string) (string, error) {
+func (a *App) importTarget(ctx context.Context, repo git.Repo, t getTarget) (string, error) {
 	if a.d.Tracker == nil {
 		return "", nil
 	}
-	arg := branch
-	if number > 0 {
-		arg = strconv.Itoa(number)
+	arg := t.branch
+	if t.number > 0 {
+		arg = strconv.Itoa(t.number)
 	}
-	err := a.progress(ctx, PhaseSync, "Looking for "+getLabel(number, branch)+" in GitHub's stacks", func(ctx context.Context) error {
+	err := a.progress(ctx, PhaseSync, "Looking for "+getLabel(t)+" in GitHub's stacks", func(ctx context.Context) error {
 		return a.d.Tracker.ImportStack(ctx, repo, arg)
 	})
 	if se, ok := errors.AsType[*stack.Error](err); ok && (se.Kind == stack.KindNotInStack || se.Kind == stack.KindStacksUnavailable) {
@@ -232,56 +330,47 @@ func (a *App) importTarget(ctx context.Context, repo git.Repo, number int, branc
 
 // getPRs tracks a pull request that is in no stack on GitHub, together
 // with the open pull requests it is based on, as a new stack on the first
-// base that has none. It returns the pull request's branch.
-func (a *App) getPRs(ctx context.Context, st *syncState, number int, branch string, res *GetResult) (string, error) {
+// base that has none. top is the pull request when trackedTarget already
+// looked it up. It returns the pull request's branch.
+func (a *App) getPRs(ctx context.Context, st *syncState, t getTarget, top *forge.PullRequest) (string, error) {
 	if a.d.Forge == nil {
 		return "", ErrNoForge
 	}
 	repo := st.repo
-	var byHead map[string]forge.PullRequest
-	heads := func() error {
-		if byHead != nil {
+	if top == nil {
+		var pr forge.PullRequest
+		err := a.progress(ctx, PhaseRefresh, "Looking up "+getLabel(t), func(ctx context.Context) error {
+			if t.number > 0 {
+				var err error
+				pr, err = a.d.Forge.PR(ctx, repo, t.number)
+				return err
+			}
+			found, ok, err := a.d.Forge.OpenPRFor(ctx, repo, t.branch)
+			if err != nil {
+				return err
+			}
+			if !ok {
+				return stack.Newf(stack.KindInvalidArgs, "%s has no open pull request and isn't in a stack on GitHub", t.branch).
+					WithSteps("check the name, or pass the pull request's number or URL")
+			}
+			pr = found
 			return nil
-		}
-		prs, err := a.RefreshPRs(ctx, repo)
+		})
 		if err != nil {
-			return err
+			return "", err
 		}
-		byHead = PRsFor(prs)
-		return nil
-	}
-
-	var top forge.PullRequest
-	err := a.progress(ctx, PhaseRefresh, "Looking up "+getLabel(number, branch), func(ctx context.Context) error {
-		if number > 0 {
-			var err error
-			top, err = a.d.Forge.PR(ctx, repo, number)
-			return err
-		}
-		if err := heads(); err != nil {
-			return err
-		}
-		pr, ok := byHead[branch]
-		if !ok || !prOpen(pr) {
-			return stack.Newf(stack.KindInvalidArgs, "%s has no open pull request and isn't in a stack on GitHub", branch).
-				WithSteps("check the name, or pass the pull request's number or URL")
-		}
-		top = pr
-		return nil
-	})
-	if err != nil {
-		return "", err
+		top = &pr
 	}
 	if top.Fork {
 		return "", stack.Newf(stack.KindUnsupported, "#%d comes from a fork; git stack get only pulls branches from this repository", top.Number).
 			WithSteps(fmt.Sprintf("gh pr checkout %d checks it out without tracking it", top.Number))
 	}
-	if !prOpen(top) {
+	if !prOpen(*top) {
 		return "", stack.Newf(stack.KindInvalidArgs, "#%d is %s, so there's nothing to get", top.Number, top.State)
 	}
 
 	// Walk down through the open pull requests it is based on.
-	chain := []forge.PullRequest{top}
+	chain := []forge.PullRequest{*top}
 	for len(chain) < 100 {
 		base := chain[0].Base
 		if st.graph.IsTrunk(base) || slices.Contains(st.trunks, base) {
@@ -291,11 +380,17 @@ func (a *App) getPRs(ctx context.Context, st *syncState, number int, branch stri
 			return "", stack.Newf(stack.KindUnsupported, "#%d is based on %s, which is already in the stack starting at %s", chain[0].Number, base, s.Bottom()).
 				WithSteps("git stack get only adds pull requests as a stack of their own; ask for the pull request to be added to that stack on GitHub")
 		}
-		if err := heads(); err != nil {
+		var pr forge.PullRequest
+		var ok bool
+		err := a.progress(ctx, PhaseRefresh, "Looking up the pull request for "+base, func(ctx context.Context) error {
+			var err error
+			pr, ok, err = a.d.Forge.OpenPRFor(ctx, repo, base)
+			return err
+		})
+		if err != nil {
 			return "", err
 		}
-		pr, ok := byHead[base]
-		if !ok || !prOpen(pr) || slices.ContainsFunc(chain, func(c forge.PullRequest) bool { return c.Head == pr.Head }) {
+		if !ok || slices.ContainsFunc(chain, func(c forge.PullRequest) bool { return c.Head == pr.Head }) {
 			break
 		}
 		chain = slices.Insert(chain, 0, pr)
@@ -311,11 +406,9 @@ func (a *App) getPRs(ctx context.Context, st *syncState, number int, branch stri
 			return "", err
 		}
 	}
-	ir, err := a.initStack(ctx, repo, InitOptions{Branches: names, Base: trunk})
-	if err != nil {
+	if _, err := a.initStack(ctx, repo, InitOptions{Branches: names, Base: trunk}); err != nil {
 		return "", err
 	}
-	res.NeedsRestack = ir.NeedsRestack
 	return top.Head, nil
 }
 
@@ -344,9 +437,9 @@ func prOpen(pr forge.PullRequest) bool {
 }
 
 // getLabel names the target in progress lines.
-func getLabel(number int, branch string) string {
-	if number > 0 {
-		return fmt.Sprintf("#%d", number)
+func getLabel(t getTarget) string {
+	if t.number > 0 {
+		return fmt.Sprintf("#%d", t.number)
 	}
-	return branch
+	return t.branch
 }
