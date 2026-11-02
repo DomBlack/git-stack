@@ -156,3 +156,18 @@ func TestClosePR(t *testing.T) {
 		t.Error("a real failure should be an error")
 	}
 }
+
+func TestPR(t *testing.T) {
+	f := exectest.New()
+	f.On("gh", "pr", "view", "5").Reply(`{"number":5,"url":"u","title":"fork","state":"OPEN","isDraft":false,"isCrossRepository":true,"headRefName":"feat/api","baseRefName":"main"}`)
+	f.On("gh", "pr", "view", "6").Fail(1, "GraphQL: Could not resolve to a PullRequest with the number of 6. (repository.pullRequest)")
+	fg := New(f)
+	pr, err := fg.PR(context.Background(), git.Repo{}, 5)
+	if err != nil || pr.Number != 5 || !pr.Fork || pr.Head != "feat/api" || pr.State != forge.StateOpen {
+		t.Errorf("PR 5 = %+v %v", pr, err)
+	}
+	_, err = fg.PR(context.Background(), git.Repo{}, 6)
+	if se, ok := errors.AsType[*stack.Error](err); !ok || se.Kind != stack.KindInvalidArgs || se.Msg != "there is no pull request #6" {
+		t.Errorf("PR 6: %v", err)
+	}
+}

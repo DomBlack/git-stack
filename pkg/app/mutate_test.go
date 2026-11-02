@@ -82,6 +82,10 @@ func (f *fakeBackend) AddTop(ctx context.Context, repo git.Repo, name string) er
 	return f.git.Switch(ctx, repo, name)
 }
 
+func (f *fakeBackend) ImportStack(_ context.Context, _ git.Repo, target string) error {
+	return stack.Newf(stack.KindNotInStack, "%s is not in a stack on GitHub", target)
+}
+
 type fakeAI struct {
 	commit ai.Commit
 	inputs []ai.CommitInput

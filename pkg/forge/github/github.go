@@ -140,6 +140,7 @@ func (p prJSON) toForge() forge.PullRequest {
 		Head: p.HeadRefName, Base: p.BaseRefName, UpdatedAt: p.UpdatedAt,
 	}
 	pr.HeadSHA = p.HeadRefOid
+	pr.Fork = p.IsCrossRepository
 	if p.MergeCommit != nil {
 		pr.MergeCommit = p.MergeCommit.OID
 	}
@@ -201,6 +202,19 @@ func (f *Forge) view(ctx context.Context, repo git.Repo, selector string) (forge
 		return forge.PullRequest{}, fmt.Errorf("parse gh pr view output: %w", err)
 	}
 	return p.toForge(), nil
+}
+
+// reNoSuchPR is gh's answer for a pull request number that doesn't exist.
+var reNoSuchPR = regexp.MustCompile(`(?i)could not resolve to a pullrequest|no pull requests? found`)
+
+// PR looks up pull request number through gh pr view.
+func (f *Forge) PR(ctx context.Context, repo git.Repo, number int) (forge.PullRequest, error) {
+	pr, err := f.view(ctx, repo, strconv.Itoa(number))
+	if se, ok := errors.AsType[*stack.Error](err); ok && reNoSuchPR.MatchString(se.Detail) {
+		return forge.PullRequest{}, stack.Newf(stack.KindInvalidArgs, "there is no pull request #%d", number).
+			WithDetail(se.Detail).WithCause(err)
+	}
+	return pr, err
 }
 
 // reAlreadyClosed is gh pr close's refusal for a pull request that is

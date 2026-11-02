@@ -201,6 +201,18 @@ bottom branch lands on trunk, overshooting clamps silently, merged branches are 
 also check `worktreepath` before switching so you get told which worktree has the branch
 rather than a confusing git error.
 
+**`get` lets gh stack find the stack, and does lone pull requests itself.** `gh stack checkout
+<pr>` already asks GitHub which stack a pull request is in, creates the missing branches and
+records the stack, so `get` hands it any target that isn't tracked here. It has gaps we fill:
+a branch that already exists locally is used as it is, never updated, so `get` fetches first and
+then fast forwards the stack's branches with sync's own code (diverged ones get sync's notice);
+and a pull request in no stack on GitHub (or a repository without stacked PRs) is exit 2 or 9, so
+`get` looks the pull request up through the forge, walks down the open pull requests it's based
+on to the first base without one, creates those branches from the remote and records them the way
+`init` does. A target that's already tracked here never reaches gh stack, since its composition
+check would refuse a stack reordered locally but not yet submitted. Forks are refused rather than
+guessed at: their branches aren't on our remote, and submit couldn't push them back anyway.
+
 **`create` from trunk runs `gh stack init`, from the top runs `gh stack add`, and we
 always commit natively.** This sidesteps both `add` quirks above. From the middle of a
 stack you get a `not_at_top` error with next steps (unless you pass `--insert`, see below);

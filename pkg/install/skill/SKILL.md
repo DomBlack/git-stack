@@ -30,6 +30,7 @@ that touches a stack:
 | Take the current branch out of its stack, keeping its changes staged on its parent | `stack_pop` |
 | Stop tracking a branch and what's above it, leaving the branches alone | `stack_untrack` (`only: true` drops just that branch and restacks the rest onto its parent) |
 | Move around | `stack_navigate` (`up`/`down`/`top`/`bottom` or `branch`) |
+| Pull someone's pull request (and its stack) down to work on it | `stack_get` (`target`: number, URL or branch) |
 | Push and open/update PRs | `stack_submit`; you write `pull_requests` `{branch: {title, body}}`; ready for review unless `draft: true` |
 | Pull trunk, restack, prune merged branches | `stack_sync` |
 
@@ -64,6 +65,6 @@ the one calling.
 
 `git stack create -m "…"`, `git stack modify -a`, `git stack absorb`, `git stack reorder a b c`,
 `git stack move --onto <branch>`, `git stack fold`, `git stack rename <name>`, `git stack untrack`, `git stack init a b`, `git stack pop`, `git stack restack`,
-`git stack up/down/top/bottom`, `git stack checkout`, `git stack submit --no-edit`,
+`git stack up/down/top/bottom`, `git stack checkout`, `git stack get 123`, `git stack submit --no-edit`,
 `git stack sync -f`, `git stack undo`, `git stack pr --print` (a branch's PR URL; `stack_view` has them all). Aliases: `git c`, `git m`, `git ab`, `git reorder`, `git move`, `git fold`, `git rename`, `git untrack`, `git track`, `git pop`,
-`git rs`, `git u`, `git d`, `git t`, `git b`, `git co`, `git ss`, `git pr`, `git undo`.
+`git rs`, `git u`, `git d`, `git t`, `git b`, `git co`, `git ss`, `git pr`, `git undo`, `git get`.

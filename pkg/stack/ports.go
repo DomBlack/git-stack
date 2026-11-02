@@ -69,6 +69,12 @@ type Tracker interface {
 	// AddTop creates (or adopts) name on top of the current stack and checks
 	// it out. The current branch must be the top of its stack.
 	AddTop(ctx context.Context, repo git.Repo, name string) error
+	// ImportStack pulls down the forge stack holding target, a pull
+	// request number or a branch name: it creates the local branches it
+	// is missing (leaving ones that exist alone), records the stack and
+	// checks out target's branch. A target in no stack on the forge is a
+	// *Error of KindNotInStack.
+	ImportStack(ctx context.Context, repo git.Repo, target string) error
 }
 
 // SubmitOptions controls Submitter.Submit.

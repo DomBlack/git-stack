@@ -29,6 +29,12 @@ type Backend struct {
 	// its result.
 	Unstacked []int
 	UnstackFn func(number int) error
+
+	// Imports records every ImportStack target; ImportFn, when set, does
+	// the import (it may call SetGraph). Without it every target is in no
+	// stack on the forge.
+	Imports  []string
+	ImportFn func(target string) error
 }
 
 // New returns a Backend over g with the given initial graph.
@@ -144,6 +150,17 @@ func (b *Backend) AddTop(ctx context.Context, repo git.Repo, name string) error 
 		return err
 	}
 	return b.git.Switch(ctx, repo, name)
+}
+
+func (b *Backend) ImportStack(_ context.Context, _ git.Repo, target string) error {
+	b.mu.Lock()
+	b.Imports = append(b.Imports, target)
+	fn := b.ImportFn
+	b.mu.Unlock()
+	if fn != nil {
+		return fn(target)
+	}
+	return stack.Newf(stack.KindNotInStack, "%s is not in a stack on GitHub", target)
 }
 
 func (b *Backend) Submit(_ context.Context, _ git.Repo, o stack.SubmitOptions) (stack.SubmitResult, error) {

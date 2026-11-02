@@ -240,6 +240,7 @@ var cliToTool = []struct{ from, to string }{
 	{"git stack checkout --trunk", "stack_navigate {direction: \"bottom\"} then {direction: \"down\"}"},
 	{"git stack checkout", "stack_navigate {branch: ...}"},
 	{"git stack create", "stack_create"},
+	{"git stack get", "stack_get"},
 	{"git stack sync", "stack_sync"},
 	{"git stack merge --force", "stack_merge with force: true (only with the user's say so)"},
 	{"git stack merge <branch>", "stack_merge {branch: ...}"},

@@ -38,3 +38,29 @@ func (b *Backend) AddTop(ctx context.Context, repo git.Repo, name string) error 
 	}
 	return nil
 }
+
+// ImportStack runs `gh stack checkout <target>`. It only ever gets a target
+// git-stack doesn't already track, so gh stack's own local lookups miss and
+// it asks GitHub for the stack.
+func (b *Backend) ImportStack(ctx context.Context, repo git.Repo, target string) error {
+	if err := b.Preflight(ctx); err != nil {
+		return err
+	}
+	err := b.gh(ctx, repo, "checkout", target)
+	se, ok := errors.AsType[*stack.Error](err)
+	if !ok {
+		return err
+	}
+	switch se.Kind {
+	case stack.KindNotInStack:
+		return stack.Newf(stack.KindNotInStack, "%s is not in a stack on GitHub", target).
+			WithDetail(se.Detail).WithCause(se.Cause)
+	case stack.KindConflict:
+		// Exit 3 from checkout is a local stack holding some of the
+		// branches in a different order, not a rebase.
+		return stack.New(stack.KindInvalidArgs, "a local stack holds some of these branches in a different order than GitHub").
+			WithSteps("git stack untrack the local branches, then run git stack get again").
+			WithDetail(se.Detail).WithCause(se.Cause)
+	}
+	return err
+}

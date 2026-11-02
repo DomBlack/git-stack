@@ -10,6 +10,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/DomBlack/git-stack/pkg/app"
+	"github.com/DomBlack/git-stack/pkg/forge"
 	"github.com/DomBlack/git-stack/pkg/stack"
 )
 
@@ -285,4 +286,30 @@ func (c *cli) completeTrunks(cmd *cobra.Command, _ []string, toComplete string) 
 		}
 	}
 	return filterPrefix(items, toComplete), cobra.ShellCompDirectiveNoFileComp
+}
+
+// completeOpenPRs offers the open pull requests the PR cache knows about,
+// by number with their branch and title, newest first. It never refreshes
+// the cache.
+func (c *cli) completeOpenPRs(cmd *cobra.Command, args []string, toComplete string) ([]cobra.Completion, cobra.ShellCompDirective) {
+	if len(args) > 0 {
+		return nil, cobra.ShellCompDirectiveNoFileComp
+	}
+	ctx := cmd.Context()
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	a, repo, err := c.completionApp(ctx)
+	if err != nil {
+		return nil, cobra.ShellCompDirectiveNoFileComp
+	}
+	prs, _, _ := a.CachedPRs(repo)
+	var items []cobra.Completion
+	for _, pr := range prs {
+		if pr.Fork || (pr.State != forge.StateOpen && pr.State != forge.StateDraft) {
+			continue
+		}
+		items = append(items, cobra.CompletionWithDesc(strconv.Itoa(pr.Number), pr.Head+" · "+pr.Title))
+	}
+	return filterPrefix(items, toComplete), cobra.ShellCompDirectiveNoFileComp | cobra.ShellCompDirectiveKeepOrder
 }

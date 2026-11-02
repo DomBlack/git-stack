@@ -26,6 +26,20 @@ func (f *fakeForge) ListPRs(context.Context, git.Repo) ([]forge.PullRequest, err
 	f.calls++
 	return f.prs, f.err
 }
+func (f *fakeForge) PR(_ context.Context, _ git.Repo, n int) (forge.PullRequest, error) {
+	return findPR(f.prs, n)
+}
+
+// findPR is the forge's PR lookup over a fake's list.
+func findPR(prs []forge.PullRequest, n int) (forge.PullRequest, error) {
+	for _, pr := range prs {
+		if pr.Number == n {
+			return pr, nil
+		}
+	}
+	return forge.PullRequest{}, stack.Newf(stack.KindInvalidArgs, "there is no pull request #%d", n)
+}
+
 func (f *fakeForge) CreatePR(context.Context, git.Repo, forge.CreatePR) (forge.PullRequest, error) {
 	return forge.PullRequest{}, nil
 }
