@@ -30,6 +30,21 @@ func (f *fakeForge) PR(_ context.Context, _ git.Repo, n int) (forge.PullRequest,
 	return findPR(f.prs, n)
 }
 
+func (f *fakeForge) OpenPRFor(_ context.Context, _ git.Repo, branch string) (forge.PullRequest, bool, error) {
+	pr, ok := findOpenPR(f.prs, branch)
+	return pr, ok, nil
+}
+
+// findOpenPR is the forge's open PR lookup by head over a fake's list.
+func findOpenPR(prs []forge.PullRequest, branch string) (forge.PullRequest, bool) {
+	for _, pr := range prs {
+		if pr.Head == branch && !pr.Fork && (pr.State == forge.StateOpen || pr.State == forge.StateDraft) {
+			return pr, true
+		}
+	}
+	return forge.PullRequest{}, false
+}
+
 // findPR is the forge's PR lookup over a fake's list.
 func findPR(prs []forge.PullRequest, n int) (forge.PullRequest, error) {
 	for _, pr := range prs {

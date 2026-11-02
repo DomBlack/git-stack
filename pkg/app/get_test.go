@@ -92,6 +92,11 @@ func TestGetPullRequestInNoStack(t *testing.T) {
 	if !slices.Equal(f.be.Imports, []string{"8"}) {
 		t.Errorf("gh stack was asked for %q", f.be.Imports)
 	}
+	// The base was found by a lookup for its branch, not in the list of
+	// recent pull requests.
+	if !slices.Equal(f.forge.heads, []string{"a"}) || f.forge.lists != 0 {
+		t.Errorf("looked up heads %q, listed %d times", f.forge.heads, f.forge.lists)
+	}
 	s, i, ok := f.be.Graph().StackOf("b")
 	if !ok || i != 1 || s.Trunk != "main" || s.Branches[0].Name != "a" {
 		t.Errorf("stack = %+v", s)
@@ -111,20 +116,66 @@ func TestGetPullRequestInNoStack(t *testing.T) {
 	// Asking again finds it here and only brings it up to date.
 	tip := f.pushRemote(t, "a", "more.txt")
 	gittest.Run(t, f.dir, "switch", "-q", "main")
-	res, err = f.get(t, "https://github.com/acme/app/pull/8/files")
+	res, err = f.get(t, "https://forge.test/o/r/pull/8/files")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if res.Source != app.GetLocal || res.Branch != "b" || len(res.Created) != 0 ||
+	if res.Source != app.GetLocal || res.Branch != "b" || !res.CheckedOut || len(res.Created) != 0 ||
 		len(res.Updated) != 1 || res.Updated[0].Name != "a" || res.Updated[0].To != tip {
 		t.Errorf("again: %+v", res)
+	}
+	// a moved on, so b is no longer on it.
+	if !slices.Equal(res.NeedsRestack, []string{"b"}) {
+		t.Errorf("needs restack after the fast forward: %q", res.NeedsRestack)
 	}
 	if len(f.be.Imports) != 1 {
 		t.Errorf("a tracked stack went to gh stack: %q", f.be.Imports)
 	}
-	// b is no longer on a: not get's job to fix, sync's or restack's.
 	if f.current(t) != "b" {
 		t.Errorf("checked out %s", f.current(t))
+	}
+
+	// A URL for another repository is refused before anything happens.
+	_, err = f.get(t, "https://github.com/acme/app/pull/8")
+	if se, ok := errors.AsType[*stack.Error](err); !ok || se.Kind != stack.KindInvalidArgs {
+		t.Errorf("other repository: %v", err)
+	}
+}
+
+func TestGetAgainWithNothingCached(t *testing.T) {
+	f := newGetFixture(t)
+	// #7 is on main, so nothing lists pull requests and the cache stays
+	// empty; the second get has to find a by asking the forge about #7.
+	if res, err := f.get(t, "7"); err != nil || res.Source != app.GetPRs {
+		t.Fatalf("first: %+v %v", res, err)
+	}
+	gittest.Run(t, f.dir, "switch", "-q", "main")
+	res, err := f.get(t, "7")
+	if err != nil || res.Source != app.GetLocal || res.Branch != "a" || f.current(t) != "a" {
+		t.Errorf("again: %+v %v on %s", res, err, f.current(t))
+	}
+	if len(f.be.Imports) != 1 {
+		t.Errorf("a tracked stack went to gh stack: %q", f.be.Imports)
+	}
+}
+
+func TestGetCheckoutFailureIsPartialAndUndoable(t *testing.T) {
+	f := newGetFixture(t)
+	// An untracked a.txt with other content is in the way of switching to a.
+	gittest.WriteFile(t, f.dir, "a.txt", "mine")
+	res, err := f.get(t, "7")
+	se, ok := errors.AsType[*stack.Error](err)
+	if !ok || se.Kind != stack.KindPartial || len(se.NextSteps) == 0 {
+		t.Fatalf("err = %v", err)
+	}
+	if res.CheckedOut || res.Branch != "a" || !slices.Equal(res.Created, []string{"a"}) || f.current(t) != "main" {
+		t.Errorf("result = %+v on %s", res, f.current(t))
+	}
+	if _, _, ok := f.be.Graph().StackOf("a"); !ok {
+		t.Error("a is not tracked")
+	}
+	if h := app.UndoHistory(f.repo); len(h) == 0 || h[0] != "git stack get (keep)" {
+		t.Errorf("undo history = %q", h)
 	}
 }
 

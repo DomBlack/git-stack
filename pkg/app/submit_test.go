@@ -102,6 +102,8 @@ type recordingForge struct {
 	// closed records every ClosePR call; closeErr is what it returns.
 	closed   []closeCall
 	closeErr error
+	// heads records every OpenPRFor branch.
+	heads []string
 }
 
 type closeCall struct {
@@ -124,6 +126,12 @@ func (f *recordingForge) ClosePR(_ context.Context, _ git.Repo, n int, comment s
 
 func (f *recordingForge) PR(_ context.Context, _ git.Repo, n int) (forge.PullRequest, error) {
 	return findPR(f.prs, n)
+}
+
+func (f *recordingForge) OpenPRFor(_ context.Context, _ git.Repo, branch string) (forge.PullRequest, bool, error) {
+	f.heads = append(f.heads, branch)
+	pr, ok := findOpenPR(f.prs, branch)
+	return pr, ok, nil
 }
 
 func (f *recordingForge) RenameBranch(context.Context, git.Repo, string, string) error { return nil }

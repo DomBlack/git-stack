@@ -612,7 +612,9 @@ isn't, or a repository without stacked PRs, gets the pull request and the open o
 down to the first base that has none, which becomes the trunk. If you already have the stack it's
 just brought up to date.
 
-Nothing is rebased or pushed. A branch that has diverged from the remote is left as it is with a
+Nothing is rebased or pushed, and a URL for another repository is refused. If the branch can't be
+checked out (files in the way, or it's checked out in another worktree) the stack is still got
+and you're told why. A branch that has diverged from the remote is left as it is with a
 warning, the same as `sync` does. Pull requests from forks can't be got this way (`gh pr checkout`
 checks one out without tracking it), and neither can one based on a branch that's already in
 another of your stacks.

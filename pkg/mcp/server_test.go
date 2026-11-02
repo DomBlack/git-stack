@@ -62,6 +62,14 @@ func (f *fakeForge) PR(_ context.Context, _ git.Repo, n int) (forge.PullRequest,
 	}
 	return forge.PullRequest{}, stack.Newf(stack.KindInvalidArgs, "there is no pull request #%d", n)
 }
+func (f *fakeForge) OpenPRFor(_ context.Context, _ git.Repo, branch string) (forge.PullRequest, bool, error) {
+	for _, pr := range f.prs {
+		if pr.Head == branch && !pr.Fork && (pr.State == forge.StateOpen || pr.State == forge.StateDraft) {
+			return pr, true, nil
+		}
+	}
+	return forge.PullRequest{}, false, nil
+}
 func (f *fakeForge) CreatePR(context.Context, git.Repo, forge.CreatePR) (forge.PullRequest, error) {
 	return forge.PullRequest{}, nil
 }

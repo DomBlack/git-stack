@@ -171,3 +171,25 @@ func TestPR(t *testing.T) {
 		t.Errorf("PR 6: %v", err)
 	}
 }
+
+func TestOpenPRFor(t *testing.T) {
+	f := exectest.New()
+	f.On("gh", "pr", "list").Reply(`[
+ {"number":5,"url":"u/5","title":"fork","state":"OPEN","isCrossRepository":true,"headRefName":"feat/api","baseRefName":"main"},
+ {"number":12,"url":"u/12","title":"API","state":"OPEN","isDraft":true,"isCrossRepository":false,"headRefName":"feat/api","baseRefName":"main"}
+]`)
+	pr, ok, err := New(f).OpenPRFor(context.Background(), git.Repo{}, "feat/api")
+	if err != nil || !ok || pr.Number != 12 || pr.State != forge.StateDraft {
+		t.Errorf("found %+v %v %v", pr, ok, err)
+	}
+	args := f.Calls()[0].Args
+	if !slices.Contains(args, "--head") || !slices.Contains(args, "feat/api") || !slices.Contains(args, "open") {
+		t.Errorf("args = %q", args)
+	}
+
+	f = exectest.New()
+	f.On("gh", "pr", "list").Reply(`[]`)
+	if _, ok, err := New(f).OpenPRFor(context.Background(), git.Repo{}, "gone"); ok || err != nil {
+		t.Errorf("none: %v %v", ok, err)
+	}
+}

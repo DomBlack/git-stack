@@ -397,8 +397,9 @@ func (s *Server) get(ctx context.Context, req *mcp.CallToolRequest, in getInput)
 	}
 	res, err := a.Get(ctx, repo, app.GetOptions{Target: in.Target})
 	if err != nil && res.Branch != "" && errors.Is(err, &stack.Error{Kind: stack.KindPartial}) {
-		// Checked out, but a branch the remote is ahead of couldn't move:
-		// keep the result so notUpdated says which.
+		// Got, but not checked out or a branch the remote is ahead of
+		// couldn't move: keep the result so checkedOut and notUpdated say
+		// which.
 		return &mcp.CallToolResult{IsError: true, Content: []mcp.Content{&mcp.TextContent{Text: wrapErr(err).Error()}}}, res, nil
 	}
 	if err != nil {
@@ -767,7 +768,7 @@ func (s *Server) registerTools() {
 	mcp.AddTool(s.mcp, &mcp.Tool{
 		Name:        "stack_get",
 		Title:       "Get a pull request and its stack",
-		Description: "Pull a pull request down from GitHub and check out its branch, by number, URL or branch name (target). A pull request in a stack on GitHub brings the whole stack; one that isn't comes with the open pull requests it is based on, tracked as a new stack on the first base with none (source says which: stack, prs, or local for a stack already tracked here, which is only brought up to date). Missing branches are created from the remote (created), ones the remote is ahead of are fast forwarded (updated) and diverged ones are left alone (behind); nothing is rebased or pushed. Code partial means it is checked out but a branch in notUpdated couldn't be moved. Refuses with unsupported for a pull request from a fork or one based on a branch already in another local stack, and invalid_args for one that is merged, closed or doesn't exist.",
+		Description: "Pull a pull request down from GitHub and check out its branch, by number, URL or branch name (target). A pull request in a stack on GitHub brings the whole stack; one that isn't comes with the open pull requests it is based on, tracked as a new stack on the first base with none (source says which: stack, prs, or local for a stack already tracked here, which is only brought up to date). Missing branches are created from the remote (created), ones the remote is ahead of are fast forwarded (updated) and diverged ones are left alone (behind); nothing is rebased or pushed. Code partial means the stack was got but either its branch couldn't be checked out (checkedOut is false; next_steps say why) or a branch in notUpdated couldn't be moved; undo still covers it. A URL for another repository is refused with invalid_args. Refuses with unsupported for a pull request from a fork or one based on a branch already in another local stack, and invalid_args for one that is merged, closed or doesn't exist.",
 		Annotations: &mcp.ToolAnnotations{DestructiveHint: boolp(false), OpenWorldHint: boolp(true)},
 	}, s.get)
 	mcp.AddTool(s.mcp, &mcp.Tool{
