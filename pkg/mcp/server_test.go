@@ -123,10 +123,11 @@ func newHarness(t *testing.T, roots ...string) *harness {
 
 	h.log = &strings.Builder{}
 	srv := New(Options{
-		Version: "test",
-		Cwd:     t.TempDir(), // deliberately not the repo: tests must pass repo_path or roots
-		Git:     g,
-		Log:     slog.New(slog.NewTextHandler(h.log, &slog.HandlerOptions{Level: slog.LevelDebug})),
+		Version:    "test",
+		Cwd:        t.TempDir(), // deliberately not the repo: tests must pass repo_path or roots
+		Git:        g,
+		Log:        slog.New(slog.NewTextHandler(h.log, &slog.HandlerOptions{Level: slog.LevelDebug})),
+		NewBareApp: func(context.Context) (*app.App, error) { return app.New(app.Deps{Git: g}), nil },
 		NewApp: func(context.Context, git.Repo) (*app.App, error) {
 			cfg := config.Defaults()
 			cfg.CacheTTL = 0
@@ -228,7 +229,7 @@ func TestToolsAreListedWithAnnotationsAndSchemas(t *testing.T) {
 	for _, tool := range res.Tools {
 		got[tool.Name] = tool
 	}
-	for _, name := range []string{"stack_view", "stack_create", "stack_modify", "stack_absorb", "stack_reorder", "stack_move", "stack_fold", "stack_rename", "stack_untrack", "stack_init", "stack_pop", "stack_restack", "stack_undo", "stack_navigate", "stack_submit", "stack_sync"} {
+	for _, name := range []string{"stack_view", "stack_create", "stack_modify", "stack_absorb", "stack_reorder", "stack_move", "stack_fold", "stack_rename", "stack_untrack", "stack_doctor", "stack_init", "stack_pop", "stack_restack", "stack_undo", "stack_navigate", "stack_submit", "stack_sync"} {
 		if got[name] == nil {
 			t.Errorf("missing tool %s", name)
 		}
@@ -933,5 +934,39 @@ func TestRename(t *testing.T) {
 	}
 	if te := h.toolErr("stack_rename", map[string]any{"name": "a"}); te.Code != "invalid_args" || !strings.Contains(te.Message, "already exists") {
 		t.Errorf("taken = %+v", te)
+	}
+}
+
+func TestDoctor(t *testing.T) {
+	h := newHarness(t)
+	defer h.assertNoStdout()
+	var res app.DoctorResult
+	h.call("stack_doctor", nil, &res)
+	byID := map[string]string{}
+	for _, c := range res.List {
+		byID[c.ID] = string(c.Status) + "<" + c.Parent
+	}
+	if byID["git"] != "ok<" || byID["stacks"] != "ok<" || byID["stacks.missing"] != "ok<stacks" || res.Failed != 0 {
+		t.Errorf("doctor = %+v", res)
+	}
+}
+
+// Outside a repository (no repo_path, no roots, the server's own directory
+// not a repository) stack_doctor still runs the checks that need none.
+func TestDoctorOutsideARepository(t *testing.T) {
+	h := newHarness(t)
+	defer h.assertNoStdout()
+	h.noRepoPath = true
+	var res app.DoctorResult
+	h.call("stack_doctor", nil, &res)
+	var ids []string
+	for _, c := range res.List {
+		ids = append(ids, c.ID)
+	}
+	if !slices.Contains(ids, "git") || slices.Contains(ids, "stacks") {
+		t.Errorf("checks = %v", ids)
+	}
+	if te := h.toolErr("stack_view", nil); te.Code != "not_repo" {
+		t.Errorf("other tools still need a repository: %+v", te)
 	}
 }

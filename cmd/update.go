@@ -16,6 +16,7 @@ import (
 	"github.com/DomBlack/git-stack/pkg/stack"
 	"github.com/DomBlack/git-stack/pkg/ui"
 	"github.com/DomBlack/git-stack/pkg/update"
+	"github.com/DomBlack/git-stack/pkg/version"
 )
 
 func newUpdateCmd(c *cli) *cobra.Command {
@@ -43,21 +44,11 @@ the new release without prompting. Only the changes are printed.`,
 		ValidArgsFunction: completeNothing,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			info := c.currentVersion()
-			target := c.updateTarget
-			if target == "" {
-				exe, err := os.Executable()
-				if err != nil {
-					return err
-				}
-				if resolved, err := filepath.EvalSymlinks(exe); err == nil {
-					exe = resolved
-				}
-				target = exe
+			target, err := c.updatePath()
+			if err != nil {
+				return err
 			}
-			client := c.updateClient
-			if client == nil {
-				client = update.New(info)
-			}
+			client := c.updaterClient(info)
 			rep := c.report()
 			opts := update.Options{
 				Current: info, Target: target, GOOS: runtime.GOOS, GOARCH: runtime.GOARCH, Check: check, Force: force,
@@ -67,7 +58,7 @@ the new release without prompting. Only the changes are printed.`,
 				notes    []update.ReleaseNote
 				notesErr error
 			)
-			err := rep.Step(cmd.Context(), app.PhaseUpdate, "Checking for updates", func(ctx context.Context) error {
+			err = rep.Step(cmd.Context(), app.PhaseUpdate, "Checking for updates", func(ctx context.Context) error {
 				var err error
 				plan, err = client.Plan(ctx, opts)
 				if err != nil {
@@ -125,6 +116,29 @@ the new release without prompting. Only the changes are printed.`,
 	cmd.Flags().BoolVar(&check, "check", false, "only report whether a newer release exists")
 	cmd.Flags().BoolVar(&force, "force", false, "install the latest release even if this binary is up to date, ahead, or a dev build")
 	return cmd
+}
+
+// updatePath is the binary update replaces: this one, symlinks resolved.
+func (c *cli) updatePath() (string, error) {
+	if c.updateTarget != "" {
+		return c.updateTarget, nil
+	}
+	exe, err := os.Executable()
+	if err != nil {
+		return "", err
+	}
+	if resolved, err := filepath.EvalSymlinks(exe); err == nil {
+		exe = resolved
+	}
+	return exe, nil
+}
+
+// updaterClient is the release source, unless a test injected one.
+func (c *cli) updaterClient(info version.Info) *update.Client {
+	if c.updateClient != nil {
+		return c.updateClient
+	}
+	return update.New(info)
 }
 
 // maxNotes is how many releases update lists before "and N more".

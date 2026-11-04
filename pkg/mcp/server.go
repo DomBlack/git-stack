@@ -16,6 +16,7 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/DomBlack/git-stack/pkg/app"
+	"github.com/DomBlack/git-stack/pkg/doctor"
 	"github.com/DomBlack/git-stack/pkg/git"
 	"github.com/DomBlack/git-stack/pkg/stack"
 )
@@ -29,7 +30,13 @@ type Options struct {
 	// NewApp builds the use cases for a repository. It must never produce
 	// an App that prompts or hands over a terminal.
 	NewApp func(ctx context.Context, repo git.Repo) (*app.App, error)
-	Log    *slog.Logger
+	// NewBareApp builds the use cases outside any repository, for
+	// stack_doctor; nil means stack_doctor needs a repository too.
+	NewBareApp func(ctx context.Context) (*app.App, error)
+	// Doctors are checks stack_doctor adds to the App's own (git-stack's
+	// aliases and release).
+	Doctors []doctor.Provider
+	Log     *slog.Logger
 }
 
 // Server is the MCP server.

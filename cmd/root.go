@@ -22,6 +22,7 @@ import (
 	"github.com/DomBlack/git-stack/pkg/backend/ghstack"
 	"github.com/DomBlack/git-stack/pkg/cache"
 	"github.com/DomBlack/git-stack/pkg/config"
+	"github.com/DomBlack/git-stack/pkg/doctor"
 	"github.com/DomBlack/git-stack/pkg/exec"
 	"github.com/DomBlack/git-stack/pkg/forge/github"
 	"github.com/DomBlack/git-stack/pkg/git"
@@ -196,6 +197,7 @@ func (c *cli) app(ctx context.Context) (*app.App, git.Repo, error) {
 		Config:   cfg,
 		Log:      rt.Log,
 		Progress: rt.Report.Step,
+		Doctors:  []doctor.Provider{backend},
 	}
 	if rt.Interactive {
 		deps.Prompter = ui.Prompter{In: rt.Streams.In, Out: rt.Streams.Err, Ctx: ctx, Wait: rt.Report.Waiting}
@@ -204,6 +206,26 @@ func (c *cli) app(ctx context.Context) (*app.App, git.Repo, error) {
 	// #123 in any line printed to a terminal links to the pull request.
 	rt.Report.SetPRResolver(a.PRURLs(ctx, repo))
 	return a, repo, nil
+}
+
+// doctorApp wires the use cases for git stack doctor, which also runs
+// outside a repository: then repo is nil and only the checks that don't
+// need one run.
+func (c *cli) doctorApp(ctx context.Context) (*app.App, *git.Repo, error) {
+	rt := c.runtime()
+	repo, err := rt.Repo(ctx)
+	if err != nil {
+		if se, ok := errors.AsType[*stack.Error](err); !ok || se.Kind != stack.KindNotRepo {
+			return nil, nil, err
+		}
+		backend := ghstack.New(rt.Runner, rt.Git)
+		return app.New(app.Deps{Git: rt.Git, Log: rt.Log, Progress: rt.Report.Step, Doctors: []doctor.Provider{backend}}), nil, nil
+	}
+	a, repo, err := c.app(ctx)
+	if err != nil {
+		return nil, nil, err
+	}
+	return a, &repo, nil
 }
 
 // completionApp wires a read-only App for shell completion: metadata comes
@@ -348,6 +370,7 @@ func newRootCmd(c *cli) *cobra.Command {
 		newCompletionCmd(c),
 		newVersionCmd(c),
 		newUpdateCmd(c),
+		newDoctorCmd(c),
 	)
 	c.ownTerminal(root)
 	return root

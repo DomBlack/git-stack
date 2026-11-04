@@ -3,6 +3,7 @@ package cmd
 import (
 	"context"
 	"os"
+	"runtime"
 
 	"github.com/spf13/cobra"
 
@@ -11,10 +12,13 @@ import (
 	"github.com/DomBlack/git-stack/pkg/backend/ghstack"
 	"github.com/DomBlack/git-stack/pkg/cache"
 	"github.com/DomBlack/git-stack/pkg/config"
+	"github.com/DomBlack/git-stack/pkg/doctor"
 	"github.com/DomBlack/git-stack/pkg/exec"
 	"github.com/DomBlack/git-stack/pkg/forge/github"
 	"github.com/DomBlack/git-stack/pkg/git"
+	"github.com/DomBlack/git-stack/pkg/gitconfig"
 	mcpserver "github.com/DomBlack/git-stack/pkg/mcp"
+	"github.com/DomBlack/git-stack/pkg/update"
 	"github.com/DomBlack/git-stack/pkg/version"
 )
 
@@ -50,6 +54,15 @@ agents such as Claude Code and Codex can drive git-stack. Register it with
 				Cwd:     cwd,
 				Git:     g,
 				Log:     log,
+				NewBareApp: func(context.Context) (*app.App, error) {
+					return app.New(app.Deps{Git: g, Log: log, Doctors: []doctor.Provider{ghstack.New(runner, g)}}), nil
+				},
+				Doctors: []doctor.Provider{
+					gitconfig.New(g),
+					// No AfterUpdate: the server reports a newer release but
+					// never replaces the binary it runs as.
+					&update.Doctor{Client: update.New(version.Current()), Options: update.Options{Current: version.Current(), GOOS: runtime.GOOS, GOARCH: runtime.GOARCH}},
+				},
 				NewApp: func(ctx context.Context, repo git.Repo) (*app.App, error) {
 					cfg, err := config.Load(ctx, g, repo)
 					if err != nil {
@@ -63,6 +76,7 @@ agents such as Claude Code and Codex can drive git-stack. Register it with
 							Command: cfg.AICommand, Model: cfg.AIModel, ExtraPrompt: cfg.AIExtraPrompt, Timeout: cfg.AITimeout,
 						}, log),
 						Cache: cache.New(repo), Config: cfg, Log: log,
+						Doctors: []doctor.Provider{backend},
 					}), nil
 				},
 			})

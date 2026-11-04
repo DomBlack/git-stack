@@ -819,6 +819,35 @@ Flags:
 - `--rebase` rebase the commits onto trunk as they are
 - `--squash` squash each PR into one commit
 
+
+### `git stack doctor`
+
+Checks that git-stack has everything it needs and, inside a repository, that your stacks are in
+good shape. Each check has the checks that only make sense once it passes hanging off it, so a
+missing gh doesn't also report a missing login:
+
+- git, and that it's 2.40 or later
+- gh, its login, the gh-stack extension and that it's v0.3.0 or later
+- git-stack's git aliases (one you set to something else yourself is listed, never replaced) and
+  whether a newer git-stack release is out
+- gh stack's stack file, and that no worktree still keeps its own from gh-stack 0.2 (the cause of
+  gh stack's `cannot migrate stack catalogs` error)
+- no restack waiting to be finished, every tracked branch still exists, and no branch with no
+  commits of its own sits under others (submit would stop there)
+
+Every problem comes with what to do about it, and it exits non-zero while anything fails. Outside a
+repository it runs the checks that don't need one.
+
+```sh
+git stack doctor
+git stack doctor --fix      # install or upgrade gh-stack, set missing aliases, update
+                            # git-stack, move per worktree stack files into the shared one,
+                            # forget branches that are gone; then check again
+```
+
+Flags:
+- `--fix` fix what can be fixed automatically, then check again
+
 ## Configuration
 
 Everything is plain `git config`, so set it globally or per repo as you like.

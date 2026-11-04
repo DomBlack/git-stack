@@ -317,6 +317,36 @@ func (s *Server) untrack(ctx context.Context, req *mcp.CallToolRequest, in untra
 	return nil, res, nil
 }
 
+type doctorInput struct {
+	repoArg
+	Fix bool `json:"fix,omitempty" jsonschema:"fix what can be fixed automatically (install or upgrade gh-stack, move stack files kept per worktree into the shared one, forget tracked branches that are gone), then check again"`
+}
+
+func (s *Server) doctor(ctx context.Context, req *mcp.CallToolRequest, in doctorInput) (*mcp.CallToolResult, app.DoctorResult, error) {
+	o := app.DoctorOptions{Fix: in.Fix, Extra: s.opts.Doctors}
+	repo, a, err := s.appFor(ctx, req, in.RepoPath)
+	if se, ok := errors.AsType[*stack.Error](err); ok && se.Kind == stack.KindNotRepo && in.RepoPath == "" && s.opts.NewBareApp != nil {
+		// Outside a repository the checks that don't need one still run.
+		bare, berr := s.opts.NewBareApp(ctx)
+		if berr != nil {
+			return nil, app.DoctorResult{}, wrapErr(berr)
+		}
+		res, err := bare.Doctor(ctx, nil, o)
+		if err != nil {
+			return nil, app.DoctorResult{}, wrapErr(err)
+		}
+		return nil, res, nil
+	}
+	if err != nil {
+		return nil, app.DoctorResult{}, wrapErr(err)
+	}
+	res, err := a.Doctor(ctx, &repo, o)
+	if err != nil {
+		return nil, app.DoctorResult{}, wrapErr(err)
+	}
+	return nil, res, nil
+}
+
 type renameInput struct {
 	repoArg
 	Name  string `json:"name" jsonschema:"the current branch's new name, used as given"`
@@ -692,6 +722,12 @@ func (s *Server) registerTools() {
 		Description: "Take a branch (default the current one) and every branch above it out of its stack; a stack is a single line, so it can't keep a gap. No commit, ref or checkout changes, and a stack left empty goes away. With only: true just that branch is untracked and the branches above it are restacked onto its parent, dropping its commits; conflicts and undo work as for stack_reorder. Pull requests stay open; a stack GitHub knows is regrouped at the next stack_submit. next_steps says how to track the branches again. Refuses with invalid_args on a trunk or when a branch in the stack has merged (stack_sync first), and not_in_stack on an untracked branch.",
 		Annotations: &mcp.ToolAnnotations{DestructiveHint: boolp(true), OpenWorldHint: boolp(false)},
 	}, s.untrack)
+	mcp.AddTool(s.mcp, &mcp.Tool{
+		Name:        "stack_doctor",
+		Title:       "Check git-stack's setup",
+		Description: "Check that git-stack has what it needs and that the repository's stacks are in good shape: git and its version, gh and its login, the gh-stack extension and its version (v0.3.0 or later), gh stack's stack file (stacks still kept per worktree by gh-stack 0.2 make gh stack fail with state_migration), an interrupted restack, tracked branches that are gone and empty branches under others. Each check has a status (ok, warn, fail, skipped, fixed), a summary, details, next_steps and, when it can put it right itself, fix; checks that hang off a failing one are skipped. With fix: true it runs those fixes and checks again (fix_error says why one didn't work). Without repo_path and outside a repository only the checks that need no repository run. git-stack's own aliases and release are checked too, but updating git-stack is left to the user (git stack update). Call it when a tool fails with not_installed or state_migration.",
+		Annotations: &mcp.ToolAnnotations{DestructiveHint: boolp(false), OpenWorldHint: boolp(true)},
+	}, s.doctor)
 	mcp.AddTool(s.mcp, &mcp.Tool{
 		Name:        "stack_rename",
 		Title:       "Rename the current branch",

@@ -333,6 +333,33 @@ func (c *Client) CheckRefFormat(ctx context.Context, name string) error {
 	return nil
 }
 
+// MinVersion is the oldest git git-stack supports.
+const MinVersion = "2.40.0"
+
+// Version returns git's version as x.y.z ("2.47.1"; a vendor suffix such
+// as "(Apple Git-154)" or ".windows.1" is dropped).
+func (c *Client) Version(ctx context.Context) (string, error) {
+	res, err := c.git(ctx, "", "version")
+	if err != nil {
+		return "", err
+	}
+	return parseVersion(res.Out()), nil
+}
+
+// parseVersion takes the x.y.z out of `git version` output, "" when there
+// is none.
+func parseVersion(out string) string {
+	fields := strings.Fields(out)
+	if len(fields) < 3 {
+		return ""
+	}
+	parts := strings.Split(fields[2], ".")
+	if len(parts) < 3 {
+		return ""
+	}
+	return strings.Join(parts[:3], ".")
+}
+
 // ListCmds returns `git --list-cmds=<spec>` (e.g. "builtins" or "main,others").
 func (c *Client) ListCmds(ctx context.Context, spec string) ([]string, error) {
 	res, err := c.git(ctx, "", "--list-cmds="+spec)
