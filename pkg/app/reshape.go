@@ -28,9 +28,7 @@ type reshapeSnapshot struct {
 }
 
 type snapshotStack struct {
-	Trunk string `json:"trunk"`
-	// Worktree is the working tree whose metadata held the stack.
-	Worktree string           `json:"worktree,omitempty"`
+	Trunk    string           `json:"trunk"`
 	ID       string           `json:"id,omitempty"`
 	Number   int              `json:"number,omitempty"`
 	Branches []snapshotBranch `json:"branches"`
@@ -55,7 +53,7 @@ func snapshotOf(g *stack.Graph, names []string) *reshapeSnapshot {
 			continue
 		}
 		seen[i] = true
-		ss := snapshotStack{Trunk: s.Trunk, Worktree: s.Worktree, ID: s.ID, Number: s.Number}
+		ss := snapshotStack{Trunk: s.Trunk, ID: s.ID, Number: s.Number}
 		for _, b := range s.Branches {
 			ss.Branches = append(ss.Branches, snapshotBranch{Name: b.Name, Base: b.Base})
 		}
@@ -181,7 +179,7 @@ func (a *App) restoreReshape(ctx context.Context, repo git.Repo, snap *reshapeSn
 				continue // every branch of it is gone; nothing to put back
 			}
 			s := &g.Stacks[homes[k]]
-			s.Trunk, s.Worktree, s.ID, s.Number = ss.Trunk, ss.Worktree, ss.ID, ss.Number
+			s.Trunk, s.ID, s.Number = ss.Trunk, ss.ID, ss.Number
 			if ss.ID != "" {
 				ids = append(ids, ss.ID)
 			}

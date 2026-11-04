@@ -86,14 +86,13 @@ func TestAbortedMovePutsRecordsBack(t *testing.T) {
 			}
 			type snapStack struct {
 				Trunk    string       `json:"trunk"`
-				Worktree string       `json:"worktree,omitempty"`
 				ID       string       `json:"id,omitempty"`
 				Number   int          `json:"number,omitempty"`
 				Branches []snapBranch `json:"branches"`
 			}
 			var snap []snapStack
 			for _, s := range graph.Stacks {
-				ss := snapStack{Trunk: s.Trunk, Worktree: s.Worktree, ID: s.ID, Number: s.Number}
+				ss := snapStack{Trunk: s.Trunk, ID: s.ID, Number: s.Number}
 				for _, sb := range s.Branches {
 					ss.Branches = append(ss.Branches, snapBranch{sb.Name, sb.Base})
 				}

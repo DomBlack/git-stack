@@ -17,13 +17,9 @@ var (
 
 // Submit runs `gh stack submit`. Non-interactive runs use --auto and are
 // captured; interactive runs hand gh-stack the real terminal so its own
-// PR editor can open. The current branch's stack is moved into this
-// worktree's file first, as that is the only one gh stack reads here.
+// PR editor can open.
 func (b *Backend) Submit(ctx context.Context, repo git.Repo, o stack.SubmitOptions) (stack.SubmitResult, error) {
 	if err := b.Preflight(ctx); err != nil {
-		return stack.SubmitResult{}, err
-	}
-	if err := b.adoptCurrent(ctx, repo); err != nil {
 		return stack.SubmitResult{}, err
 	}
 	args := []string{"submit"}
@@ -77,6 +73,11 @@ func (b *Backend) Unstack(ctx context.Context, repo git.Repo, number int) error 
 // runner can do this; the MCP runner returns ErrTTYUnavailable, which is
 // mapped to an interaction error.
 func (b *Backend) ghTTY(ctx context.Context, repo git.Repo, args ...string) error {
+	if !MigrationPending(repo) {
+		if _, err := b.Migrate(ctx, repo); err != nil {
+			return err
+		}
+	}
 	_, err := b.run.Run(ctx, exec.Cmd{
 		Name:  "gh",
 		Args:  append([]string{"stack"}, args...),

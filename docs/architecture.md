@@ -101,9 +101,11 @@ All of this came from reading the gh-stack source (pinned at commit `2bd699a`, a
 its `schema.json` sits in `pkg/backend/ghstack/testdata`). Several of these findings
 overturned assumptions in the original brief, so they're worth keeping.
 
-**Storage.** One JSON file at `<git-dir>/gh-stack` (`schemaVersion: 1`), plus
-`gh-stack.lock`, `gh-stack-rebase-state` and `gh-stack-modify-state` next to it. No refs,
-no git config keys. The shape is roughly;
+**Storage.** One JSON file at `<common-dir>/gh-stack` (`schemaVersion: 1`), shared by every
+worktree of the repository, plus `gh-stack.lock` (held while the file is written),
+`gh-stack-operation.lock` (held for the whole of a gh stack command that changes stacks),
+`gh-stack-rebase-state` and `gh-stack-modify-state` next to it. No refs, no git config keys.
+The shape is roughly;
 
 ```json
 { "schemaVersion": 1, "repository": "github.com:owner/name",
@@ -116,12 +118,21 @@ no git config keys. The shape is roughly;
 - The parent relationship is array order (bottom to top). There is no parent field, so
   stacks are strictly linear.
 - Trunk is per stack and several stacks can share one. A branch is in at most one stack.
-- `<git-dir>` is per worktree, so a linked worktree doesn't see the main checkout's stacks.
-  git-stack reads every worktree's file, but `gh stack submit` and `gh stack add` only find
-  a stack in the file of the worktree they run in. So before either, the backend moves the
-  current branch's stack record, untouched, into this worktree's file when it lives in another
-  (a stack started in the main checkout and then checked out in a worktree, say), and moves
-  it back the same way when the branch is next submitted from somewhere else.
+- Up to gh-stack 0.2 the file lived in each worktree's own `<git-dir>`, and gh stack only read
+  the one in the worktree it ran in. 0.3 (gh-stack PR #528, not in its release notes) moved
+  to the one shared file. The first 0.3 command moves each worktree's file into it, keeping
+  `<file>.pre-worktree-migration` backups and a `gh-stack-migration` journal while it works,
+  and from then on refuses for good if a backup it made differs from the file it would
+  move. Older git-stack versions kept writing per-worktree files after gh stack had moved them,
+  which is exactly how that happens. So git-stack needs gh-stack 0.3 or later (preflight
+  checks), reads and writes only the shared file, and moves any per-worktree file in itself
+  before its next write or `gh stack` call (`Migrate`): the same merge as gh stack's, under
+  both of gh stack's locks, but a backup name that's taken goes to `.pre-worktree-migration.1`
+  (and on) instead of stopping. Where two files hold a stack with the same branch the shared
+  file wins, then the current worktree's; the losing record survives in its backup. While gh
+  stack's own journal exists, or a worktree whose file would move has an interrupted gh stack
+  rebase or modify, git-stack leaves the files alone and says why. `Load` reads per-worktree
+  files too, without writing, so stacks look the same before and after the move.
 - `gh stack view --json` exists but only covers the current stack, calls the GitHub API,
   and writes the stack file as a side effect. Useless for completion or for listing every
   stack.
@@ -314,9 +325,7 @@ holds a change (by patch id, ignoring what came from trunk) the PR never saw; a 
 that sync restacked since its last push differs only by commit id and is deleted as usual.
 Patch ids are `--verbatim` rather than `--stable`, so a whitespace only amend counts as a
 change and keeps the branch.
-A branch recorded in two worktrees' metadata files is read from the first; once it is
-deleted the stale record in the other file shows up as gone on the next sync and is
-dropped then, so it heals over two syncs. A candidate checked out in the current worktree whose
+A candidate checked out in the current worktree whose
 trunk is checked out in another worktree leaves HEAD detached at the trunk tip rather than
 failing. Moving the current checkout off a branch being deleted is a plain `git switch`, so
 uncommitted changes git can carry come along; only git's "would be overwritten" refusal keeps
@@ -419,9 +428,7 @@ stack. All three go through one reshape step in `pkg/app`. It snapshots the stac
 to change, rewrites them in a single `Update`, then hands the branches whose parent changed to
 the native restack, so nothing is checked out (init stops after the `Update` and just says which
 branches need a restack). `Update` grew for this: its callback may now append stacks (written to
-the current worktree's own file, which is created with `schemaVersion: 1` if there isn't one
-yet; gh stack only reads the file in the git dir it runs in, so a stack put in the main
-checkout's file from a linked worktree was invisible to `gh stack submit` there) and clear or set a stack's id and number, though it
+the shared file, which is created with `schemaVersion: 1` if there isn't one yet) and clear or set a stack's id and number, though it
 still can't drop or reorder stacks. In that same `Update` every branch whose parent changed gets
 its recorded base fixed to where its own commits start (the recorded base if it's still in the
 branch's history, else the merge base with its old parent), because the restack replays

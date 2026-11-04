@@ -136,8 +136,8 @@ func TestSyncConflictStopsOneStackOnly(t *testing.T) {
 	gittest.Commit(t, f.dir, "README.md", "c version", "c clashes")
 	gittest.Run(t, f.dir, "switch", "-q", "main")
 	f.deps.Meta = memMeta{stack.NewGraph([]stack.Stack{
-		{Trunk: "main", Branches: []stack.Branch{{Name: "a"}, {Name: "b"}}, Worktree: f.repo.TopLevel},
-		{Trunk: "main", Branches: []stack.Branch{{Name: "c"}}, Worktree: f.repo.TopLevel},
+		{Trunk: "main", Branches: []stack.Branch{{Name: "a"}, {Name: "b"}}},
+		{Trunk: "main", Branches: []stack.Branch{{Name: "c"}}},
 	})}
 	cBefore := f.rev(t, "c")
 	f.advanceRemote(t, "main", "README.md") // conflicts with c
@@ -207,8 +207,8 @@ func TestSyncPlanningErrorFailsOneStack(t *testing.T) {
 	gittest.Commit(t, f.dir, "c.txt", "c", "feat: c")
 	gittest.Run(t, f.dir, "switch", "-q", "main")
 	f.deps.Meta = memMeta{stack.NewGraph([]stack.Stack{
-		{Trunk: "main", Branches: []stack.Branch{{Name: "a"}, {Name: "b"}}, Worktree: f.repo.TopLevel},
-		{Trunk: "nope", Branches: []stack.Branch{{Name: "c"}}, Worktree: f.repo.TopLevel},
+		{Trunk: "main", Branches: []stack.Branch{{Name: "a"}, {Name: "b"}}},
+		{Trunk: "nope", Branches: []stack.Branch{{Name: "c"}}},
 	})}
 	f.advanceRemote(t, "main", "r.txt")
 	res, err := f.sync(t, app.SyncOptions{})

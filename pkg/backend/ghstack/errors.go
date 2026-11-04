@@ -25,6 +25,7 @@ const (
 
 var (
 	reAuth       = regexp.MustCompile(`(?i)gh auth login|not logged in|authentication required|HTTP 401`)
+	reMigration  = regexp.MustCompile(`cannot migrate stack catalogs|stack migration is blocked`)
 	reConflictIn = regexp.MustCompile(`(?im)^\s*(?:CONFLICT \([^)]*\):\s*(?:Merge conflict in )?|both modified:\s+|Conflicts?:\s*$\n?\s*)(\S.*?)\s*$`)
 )
 
@@ -50,6 +51,11 @@ func mapError(args []string, err error) error {
 	if reAuth.MatchString(stderr) {
 		return stack.New(stack.KindAuthRequired, "gh is not logged in").
 			WithSteps("run `gh auth login` (gh-stack needs OAuth, a personal access token is not enough)").
+			WithDetail(stderr).WithCause(err)
+	}
+	if reMigration.MatchString(stderr) {
+		return stack.New(stack.KindStateMigration, "gh stack could not move the stacks kept per worktree into its shared file").
+			WithSteps("run `git stack doctor --fix` to move them", "then run the command again").
 			WithDetail(stderr).WithCause(err)
 	}
 	var se *stack.Error

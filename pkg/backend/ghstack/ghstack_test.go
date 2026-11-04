@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/DomBlack/git-stack/pkg/exec"
@@ -127,6 +128,15 @@ func TestMapError(t *testing.T) {
 	}
 }
 
+func TestMapErrorMigration(t *testing.T) {
+	stderr := "✗ migrating stack state: cannot migrate stack catalogs: existing backup differs from the original catalog; sources: [\"a\" \"b\"]"
+	err := mapError([]string{"submit"}, &exec.ExitError{Result: exec.Result{ExitCode: 1, Stderr: []byte(stderr)}})
+	se, ok := errors.AsType[*stack.Error](err)
+	if !ok || se.Kind != stack.KindStateMigration || !strings.Contains(strings.Join(se.NextSteps, "\n"), "git stack doctor --fix") {
+		t.Errorf("err = %#v", err)
+	}
+}
+
 func TestPreflight(t *testing.T) {
 	f := exectest.New()
 	f.On("gh", "extension", "list").Reply("gh pr-review\tagynio/gh-pr-review\tv1.6.2\ngh stack\tgithub/gh-stack\tv0.9.0\n")
@@ -140,6 +150,20 @@ func TestPreflight(t *testing.T) {
 	se, ok := errors.AsType[*stack.Error](err)
 	if !ok || se.Kind != stack.KindNotInstalled || !slices.ContainsFunc(se.NextSteps, func(s string) bool { return s == "run: gh extension install github/gh-stack" }) {
 		t.Errorf("missing extension: %v", err)
+	}
+
+	f = exectest.New()
+	f.On("gh", "extension", "list").Reply("gh stack\tgithub/gh-stack\tv0.2.1\n")
+	err = New(f, nil).Preflight(context.Background())
+	se, ok = errors.AsType[*stack.Error](err)
+	if !ok || se.Kind != stack.KindNotInstalled || !slices.Contains(se.NextSteps, "run: gh extension upgrade stack") {
+		t.Errorf("old extension: %v", err)
+	}
+
+	f = exectest.New()
+	f.On("gh", "extension", "list").Reply("gh stack\tgithub/gh-stack\t1a2b3c4\n")
+	if err := New(f, nil).Preflight(context.Background()); err != nil {
+		t.Errorf("a local build should pass: %v", err)
 	}
 
 	f = exectest.New()

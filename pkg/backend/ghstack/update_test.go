@@ -105,8 +105,14 @@ func TestUpdateEditsInPlace(t *testing.T) {
 	if strings.Index(s, `"schemaVersion"`) > strings.Index(s, `"repository"`) || strings.Index(s, `"repository"`) > strings.Index(s, `"future"`) {
 		t.Error("member order must be preserved")
 	}
-	if after, _ := os.ReadFile(wtPath); string(after) != string(before) {
-		t.Error("the untouched worktree file must be byte for byte the same")
+	if !strings.Contains(s, `"head": "hw"`) {
+		t.Errorf("the worktree file's stack should be merged into the catalog:\n%s", s)
+	}
+	if _, err := os.Stat(wtPath); !os.IsNotExist(err) {
+		t.Errorf("the worktree file should have been moved aside: %v", err)
+	}
+	if backup, _ := os.ReadFile(wtPath + BackupSuffix); string(backup) != string(before) {
+		t.Errorf("the backup must be the worktree file byte for byte:\n%s", backup)
 	}
 	g, err := b.Load(context.Background(), repo)
 	if err != nil || len(g.Stacks) != 2 || g.Stacks[0].Bottom() != "b" || g.Stacks[1].Bottom() != "w" {
@@ -114,21 +120,23 @@ func TestUpdateEditsInPlace(t *testing.T) {
 	}
 }
 
-func TestUpdateWritesEachWorktreeFile(t *testing.T) {
-	b, repo, _, wtPath := updateFixture(t)
+// An edit to a stack kept in a worktree's own file lands in the shared
+// catalog, and the worktree's file is moved aside.
+func TestUpdateMovesWorktreeFileIntoCatalog(t *testing.T) {
+	b, repo, mainPath, wtPath := updateFixture(t)
 	err := b.Update(context.Background(), repo, func(g *stack.Graph) error {
-		for i := range g.Stacks {
-			if g.Stacks[i].Bottom() == "w" {
-				g.Stacks[i].Branches[0].Head = "hw2"
-			}
-		}
+		s, i, _ := g.StackOf("w")
+		s.Branches[i].Head = "hw2"
 		return nil
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got, _ := os.ReadFile(wtPath); !strings.Contains(string(got), `"hw2"`) {
-		t.Errorf("worktree file not updated: %s", got)
+	if got, _ := os.ReadFile(mainPath); !strings.Contains(string(got), `"hw2"`) {
+		t.Errorf("catalog not updated: %s", got)
+	}
+	if _, err := os.Stat(wtPath); !os.IsNotExist(err) {
+		t.Errorf("worktree file left behind: %v", err)
 	}
 }
 
@@ -165,7 +173,7 @@ func TestUpdateRenamesABranch(t *testing.T) {
 }
 
 func TestUpdateFnErrorWritesNothing(t *testing.T) {
-	b, repo, mainPath, _ := updateFixture(t)
+	b, repo, mainPath, wtPath := updateFixture(t)
 	before, _ := os.ReadFile(mainPath)
 	err := b.Update(context.Background(), repo, func(g *stack.Graph) error {
 		g.Stacks[0].Branches = nil
@@ -176,6 +184,9 @@ func TestUpdateFnErrorWritesNothing(t *testing.T) {
 	}
 	if after, _ := os.ReadFile(mainPath); string(after) != string(before) {
 		t.Error("nothing may be written when fn fails")
+	}
+	if _, err := os.Stat(wtPath); err != nil {
+		t.Errorf("the worktree file must stay when fn fails: %v", err)
 	}
 }
 
@@ -198,10 +209,11 @@ func TestUpdateTimesOutOnHeldLock(t *testing.T) {
 	}
 }
 
-func TestUpdateAppendsStackToCurrentWorktreeFile(t *testing.T) {
-	b, repo, mainPath, wtPath := updateFixture(t)
+// A new stack lands in the shared catalog, whichever worktree it is made
+// in: gh stack 0.3 reads only that file.
+func TestUpdateAppendsStackToTheCatalog(t *testing.T) {
+	b, repo, mainPath, _ := updateFixture(t)
 	ctx := context.Background()
-	// From the main checkout the new stack lands in the main file.
 	err := b.Update(ctx, repo, func(g *stack.Graph) error {
 		g.Stacks = append(g.Stacks, stack.Stack{Trunk: "main", Branches: []stack.Branch{{Name: "n1", Head: "h1", Base: "t1"}, {Name: "n2"}}})
 		return nil
@@ -213,11 +225,8 @@ func TestUpdateAppendsStackToCurrentWorktreeFile(t *testing.T) {
 	s := string(data)
 	for _, want := range []string{`"branch": "n1"`, `"head": "h1"`, `"base": "t1"`, `"branch": "n2"`, `"future"`} {
 		if !strings.Contains(s, want) {
-			t.Errorf("main file lacks %s:\n%s", want, s)
+			t.Errorf("catalog lacks %s:\n%s", want, s)
 		}
-	}
-	if wt, _ := os.ReadFile(wtPath); strings.Contains(string(wt), "n1") {
-		t.Error("the worktree file got the stack too")
 	}
 	g, err := b.Load(ctx, repo)
 	if err != nil {
@@ -227,28 +236,8 @@ func TestUpdateAppendsStackToCurrentWorktreeFile(t *testing.T) {
 		t.Errorf("stack of n2 = %+v", s)
 	}
 
-	// From the linked worktree it lands in that worktree's file.
-	wtRepo, err := git.New(exec.New()).Discover(ctx, worktreePath(filepath.Dir(wtPath)))
-	if err != nil {
-		t.Fatal(err)
-	}
-	err = b.Update(ctx, wtRepo, func(g *stack.Graph) error {
-		g.Stacks = append(g.Stacks, stack.Stack{Trunk: "main", Branches: []stack.Branch{{Name: "w2"}}})
-		return nil
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if wt, _ := os.ReadFile(wtPath); !strings.Contains(string(wt), `"branch": "w2"`) {
-		t.Errorf("worktree file lacks w2:\n%s", wt)
-	}
-}
-
-func TestUpdateAppendsStackToNewWorktreeFile(t *testing.T) {
-	b, repo, mainPath, _ := updateFixture(t)
-	ctx := context.Background()
-	// A second worktree with no file of its own: gh stack only reads the
-	// worktree's file there, so the new stack must not go in the main one.
+	// From a linked worktree it goes to the same file, and none is made
+	// in the worktree's git dir.
 	dir := filepath.Join(t.TempDir(), "fresh")
 	gittest.Run(t, repo.TopLevel, "worktree", "add", "-q", "-b", "f", dir)
 	wtRepo, err := git.New(exec.New()).Discover(ctx, dir)
@@ -262,15 +251,11 @@ func TestUpdateAppendsStackToNewWorktreeFile(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	data, err := os.ReadFile(filepath.Join(wtRepo.GitDir, FileName))
-	if err != nil {
-		t.Fatal(err)
+	if data, _ := os.ReadFile(mainPath); !strings.Contains(string(data), `"branch": "f"`) {
+		t.Errorf("catalog lacks f:\n%s", data)
 	}
-	if f, err := parseFile(data); err != nil || len(f.Stacks) != 1 || f.Stacks[0].Branches[0].Branch != "f" {
-		t.Errorf("worktree file = %s (%v)", data, err)
-	}
-	if main, _ := os.ReadFile(mainPath); string(main) != mainFile {
-		t.Errorf("the main file changed:\n%s", main)
+	if _, err := os.Stat(filepath.Join(wtRepo.GitDir, FileName)); !os.IsNotExist(err) {
+		t.Errorf("a file was made in the worktree's git dir: %v", err)
 	}
 }
 
@@ -410,7 +395,7 @@ func TestUpdateMoveKeepsBranchRecords(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(f.Stacks) != 2 || len(f.Stacks[1].Branches) != 2 || f.Stacks[1].Branches[1].Branch != "a" {
+	if len(f.Stacks) != 3 || len(f.Stacks[1].Branches) != 2 || f.Stacks[1].Branches[1].Branch != "a" {
 		t.Fatalf("file = %s", data)
 	}
 	if pr := f.Stacks[1].Branches[1].PullRequest; pr == nil || pr.Number != 1 || !strings.Contains(string(data), `"extra": "yes"`) {
@@ -465,8 +450,8 @@ func TestUpdateRewritesChangedTrunk(t *testing.T) {
 	}
 }
 
-// A branch moving from the worktree's file into a stack in the main file
-// keeps its members, and the worktree file loses it.
+// A branch moving from a worktree's file into a stack in the catalog keeps
+// its members, and the rest of the worktree's file joins the catalog.
 func TestUpdateMoveAcrossFilesKeepsBranchRecords(t *testing.T) {
 	b, repo, mainPath, wtPath := updateFixture(t)
 	wt := `{"schemaVersion":1,"stacks":[{"trunk":{"branch":"main"},"branches":[{"branch":"w","head":"hw","pullRequest":{"number":4},"note":"kept"},{"branch":"w2","head":"hw2"}]}]}`
@@ -500,67 +485,76 @@ func TestUpdateMoveAcrossFilesKeepsBranchRecords(t *testing.T) {
 	if moved.Branch != "w" || moved.PullRequest == nil || moved.PullRequest.Number != 4 || !strings.Contains(string(data), `"note": "kept"`) {
 		t.Errorf("w lost its records on the way:\n%s", data)
 	}
-	if wtData, _ := os.ReadFile(wtPath); strings.Contains(string(wtData), `"branch": "w"`) || !strings.Contains(string(wtData), `"w2"`) {
-		t.Errorf("worktree file should only hold w2 now:\n%s", wtData)
+	if g, _ := b.Load(ctx, repo); !g.Tracked("w2") {
+		t.Errorf("w2 should still be tracked:\n%s", data)
+	}
+	if _, err := os.Stat(wtPath); !os.IsNotExist(err) {
+		t.Errorf("worktree file left behind: %v", err)
 	}
 }
 
-func TestAdoptMovesStackRecordToCurrentWorktree(t *testing.T) {
-	b, repo, mainPath, _ := updateFixture(t)
-	ctx := context.Background()
-	gittest.Run(t, repo.TopLevel, "branch", "b")
-	dir := filepath.Join(t.TempDir(), "fresh")
-	gittest.Run(t, repo.TopLevel, "worktree", "add", "-q", dir, "b")
-	wtRepo, err := b.git.Discover(ctx, dir)
+// What git-stack and gh stack 0.3 together left behind: gh stack moved the
+// worktree's file into the catalog and kept a backup, git-stack wrote the
+// worktree's file again, and gh stack then refused for good because the
+// backup differs. Migrate merges it anyway and keeps both copies.
+func TestMigrateSetsAsideAStaleBackup(t *testing.T) {
+	b, repo, mainPath, wtPath := updateFixture(t)
+	stale := `{"schemaVersion":1,"stacks":[]}`
+	if err := os.WriteFile(wtPath+BackupSuffix, []byte(stale), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	moved, err := b.Migrate(context.Background(), repo)
 	if err != nil {
 		t.Fatal(err)
 	}
+	if len(moved) != 1 || moved[0] != wtPath {
+		t.Errorf("moved = %v", moved)
+	}
+	if data, _ := os.ReadFile(mainPath); !strings.Contains(string(data), `"branch": "w"`) {
+		t.Errorf("catalog lacks w:\n%s", data)
+	}
+	if got, _ := os.ReadFile(wtPath + BackupSuffix); string(got) != stale {
+		t.Errorf("the earlier backup was changed: %s", got)
+	}
+	if got, _ := os.ReadFile(wtPath + BackupSuffix + ".1"); string(got) != wtFile {
+		t.Errorf("the worktree file was not kept as the next backup: %s", got)
+	}
+	if LegacyFiles(repo) != nil {
+		t.Errorf("legacy files left: %v", LegacyFiles(repo))
+	}
+	// Nothing left to move: a no-op.
+	if moved, err := b.Migrate(context.Background(), repo); err != nil || moved != nil {
+		t.Errorf("second Migrate = %v %v", moved, err)
+	}
+}
 
-	// b's stack lives in the main checkout's file; from the worktree where b
-	// is checked out it moves over whole.
-	if err := b.adoptCurrent(ctx, wtRepo); err != nil {
-		t.Fatal(err)
-	}
-	data, err := os.ReadFile(filepath.Join(wtRepo.GitDir, FileName))
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, want := range []string{`"id": "S1"`, `"number": 7`, `"extra": "yes"`, `"branch": "b"`} {
-		if !strings.Contains(string(data), want) {
-			t.Errorf("worktree file lacks %s:\n%s", want, data)
-		}
-	}
-	main, _ := os.ReadFile(mainPath)
-	if strings.Contains(string(main), `"S1"`) || !strings.Contains(string(main), `"branch": "done"`) || !strings.Contains(string(main), `"future"`) {
-		t.Errorf("main file should keep everything but S1:\n%s", main)
-	}
-	g, err := b.Load(ctx, wtRepo)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if s, _, ok := g.StackOf("b"); !ok || s.ID != "S1" || s.Bottom() != "a" || s.Worktree != wtRepo.TopLevel {
-		t.Errorf("stack of b = %+v", s)
-	}
-
-	// Already here: nothing is rewritten.
-	before, _ := os.ReadFile(filepath.Join(wtRepo.GitDir, FileName))
-	if err := b.adoptCurrent(ctx, wtRepo); err != nil {
-		t.Fatal(err)
-	}
-	if after, _ := os.ReadFile(filepath.Join(wtRepo.GitDir, FileName)); string(after) != string(before) {
-		t.Errorf("a second adopt changed the file:\n%s", after)
-	}
-
-	// And back to the main checkout once b is checked out there.
-	gittest.Run(t, dir, "switch", "-q", "--detach")
-	gittest.Run(t, repo.TopLevel, "switch", "-q", "b")
-	if err := b.adoptCurrent(ctx, repo); err != nil {
-		t.Fatal(err)
-	}
-	if main, _ := os.ReadFile(mainPath); !strings.Contains(string(main), `"S1"`) {
-		t.Errorf("S1 should be back in the main file:\n%s", main)
-	}
-	if wt, _ := os.ReadFile(filepath.Join(wtRepo.GitDir, FileName)); strings.Contains(string(wt), `"S1"`) {
-		t.Errorf("S1 should have left the worktree file:\n%s", wt)
+// gh stack's own migration part way through, or an interrupted gh stack
+// rebase in the worktree, stops the move with nothing written.
+func TestMigrateRefusesWhatGhStackOwns(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		file func(repo git.Repo, wtPath string) string
+	}{
+		{"journal", func(repo git.Repo, _ string) string { return filepath.Join(repo.CommonDir, migrationJournal) }},
+		{"rebase", func(_ git.Repo, wtPath string) string {
+			return filepath.Join(filepath.Dir(wtPath), "gh-stack-rebase-state")
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			b, repo, mainPath, wtPath := updateFixture(t)
+			if err := os.WriteFile(tc.file(repo, wtPath), []byte("{}"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			_, err := b.Migrate(context.Background(), repo)
+			if se, ok := errors.AsType[*stack.Error](err); !ok || se.Kind != stack.KindStateMigration {
+				t.Fatalf("want KindStateMigration, got %v", err)
+			}
+			if data, _ := os.ReadFile(mainPath); string(data) != mainFile {
+				t.Errorf("catalog changed:\n%s", data)
+			}
+			if _, err := os.Stat(wtPath); err != nil {
+				t.Errorf("worktree file moved: %v", err)
+			}
+		})
 	}
 }

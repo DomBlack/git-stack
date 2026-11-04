@@ -143,7 +143,7 @@ func trunksAndNames(g *stack.Graph) []string {
 
 func TestRestoreReshapePutsAStackBackOnItsTrunk(t *testing.T) {
 	g := stack.NewGraph([]stack.Stack{
-		{Trunk: "main", Worktree: "/w", ID: "S1", Number: 1, Branches: []stack.Branch{{Name: "a", Base: "m"}, {Name: "b", Base: "ta"}}},
+		{Trunk: "main", ID: "S1", Number: 1, Branches: []stack.Branch{{Name: "a", Base: "m"}, {Name: "b", Base: "ta"}}},
 	})
 	snap := snapshotOf(g, []string{"a"})
 	snap.Created = []string{"a"}
@@ -159,7 +159,7 @@ func TestRestoreReshapePutsAStackBackOnItsTrunk(t *testing.T) {
 	if want := []string{"main:a,b"}; !slices.Equal(trunksAndNames(got), want) {
 		t.Fatalf("stacks = %v, want %v", trunksAndNames(got), want)
 	}
-	if s := got.Stacks[0]; s.Worktree != "/w" || s.ID != "S1" || s.Branches[0].Base != "m" || s.Branches[0].Head != "na" {
+	if s := got.Stacks[0]; s.ID != "S1" || s.Branches[0].Base != "m" || s.Branches[0].Head != "na" {
 		t.Errorf("stack = %+v", s)
 	}
 }

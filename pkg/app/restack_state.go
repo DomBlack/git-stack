@@ -140,6 +140,15 @@ func clearRestackState(repo git.Repo) error {
 // rebase recorded for this worktree, which a user who upgraded mid
 // conflict may still have.
 func ghRebaseStateExists(repo git.Repo) bool {
-	_, err := os.Stat(filepath.Join(repo.GitDir, "gh-stack-rebase-state"))
-	return err == nil
+	// gh stack 0.3 keeps it with its catalog in the common dir; older
+	// versions kept it in the worktree's own git dir.
+	for _, dir := range []string{repo.CommonDir, repo.GitDir} {
+		if dir == "" {
+			continue
+		}
+		if _, err := os.Stat(filepath.Join(dir, "gh-stack-rebase-state")); err == nil {
+			return true
+		}
+	}
+	return false
 }
