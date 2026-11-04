@@ -616,8 +616,8 @@ Nothing is rebased or pushed, and a URL for another repository is refused. If th
 checked out (files in the way, or it's checked out in another worktree) the stack is still got
 and you're told why. A branch that has diverged from the remote is left as it is with a
 warning, the same as `sync` does. Pull requests from forks can't be got this way (`gh pr checkout`
-checks one out without tracking it), and neither can one based on a branch that's already in
-another of your stacks.
+checks one out without tracking it), and neither can a closed or merged one, or one based on a
+branch that's already in another of your stacks.
 
 ### `git stack pr [branch]`
 

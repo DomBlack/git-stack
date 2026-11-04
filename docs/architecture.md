@@ -214,7 +214,13 @@ list of recent pull requests sync uses stops at 500), creates those branches fro
 the graph, because a stack git-stack tracked itself has no PR records until gh stack submits it.
 A target that's already tracked here never reaches gh stack, since its composition
 check would refuse a stack reordered locally but not yet submitted. Once branches have moved, a failed
-checkout is a partial result rather than an error, so undo still records it. A URL is checked
+checkout is a partial result rather than an error, so undo still records it. That includes gh stack
+failing after it saved the stack (it creates the branches and saves before it checks out): `get`
+finds the target in the newly saved stack and carries on, and its own checkout reports the failure.
+A pull request looked up through the forge is refused when closed, merged or from a fork before
+gh stack sees it, as gh stack would take a merged one still in a stack with open ones. The lone pull
+request path checks every branch is on the remote before creating any, and deletes the ones it
+created if tracking them fails. A URL is checked
 against the repository the forge works out from the remotes, as its number means a different
 pull request anywhere else. Forks are refused rather than
 guessed at: their branches aren't on our remote, and submit couldn't push them back anyway.
