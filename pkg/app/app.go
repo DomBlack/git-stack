@@ -9,6 +9,7 @@ import (
 	"github.com/DomBlack/git-stack/pkg/ai"
 	"github.com/DomBlack/git-stack/pkg/cache"
 	"github.com/DomBlack/git-stack/pkg/config"
+	"github.com/DomBlack/git-stack/pkg/doctor"
 	"github.com/DomBlack/git-stack/pkg/forge"
 	"github.com/DomBlack/git-stack/pkg/git"
 	"github.com/DomBlack/git-stack/pkg/stack"
@@ -27,6 +28,9 @@ type Deps struct {
 	Config   *config.Config
 	Log      *slog.Logger
 	Prompter Prompter
+	// Doctors contribute checks to Doctor beyond the ones the use cases
+	// make themselves (the backend checks gh and gh-stack).
+	Doctors []doctor.Provider
 	// Progress, when set, wraps slow operations (backend calls, AI calls) so
 	// the CLI can show a headline and spinner. It must run fn and return its
 	// error. The phase says what kind of work it is; the message is the
@@ -56,6 +60,8 @@ const (
 	// PhaseRefresh: fetching pull request state from the forge for a command
 	// that only reads it (log, submit's look at which PRs exist).
 	PhaseRefresh Phase = "refresh"
+	// PhaseDoctor: checking (and fixing) git-stack's setup.
+	PhaseDoctor Phase = "doctor"
 )
 
 // Prompter asks the user a question. It is nil under --no-interactive and in

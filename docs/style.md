@@ -66,6 +66,7 @@ read as section markers rather than confetti because they never show up anywhere
 | merge | 🔀 | Merging 3 pull requests into main… |
 | rename | 🏷️ | Renaming feat-a on origin… |
 | refresh | 📥 | Fetching pull requests… (only when the PR cache is stale) |
+| doctor | 🩺 | Checking git-stack's setup…, then Fixing: gh extension upgrade stack… |
 | install | 🔧 | (install prints a report, no spinner) |
 
 ## Spinners

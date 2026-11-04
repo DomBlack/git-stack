@@ -117,6 +117,7 @@ var phaseEmoji = map[app.Phase]string{
 	app.PhaseMerge:   "🔀",
 	app.PhaseRename:  "🏷️",
 	app.PhaseRefresh: "📥",
+	app.PhaseDoctor:  "🩺",
 }
 
 // Success prints a result line on stdout: "✔ Created feat-a on main".
