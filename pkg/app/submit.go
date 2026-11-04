@@ -11,6 +11,7 @@ import (
 	"github.com/DomBlack/git-stack/pkg/config"
 	"github.com/DomBlack/git-stack/pkg/forge"
 	"github.com/DomBlack/git-stack/pkg/git"
+	"github.com/DomBlack/git-stack/pkg/shell"
 	"github.com/DomBlack/git-stack/pkg/stack"
 )
 
@@ -190,6 +191,10 @@ func (a *App) submit(ctx context.Context, repo git.Repo, o SubmitOptions) (Submi
 		if err := a.checkPushedOver(ctx, repo, names); err != nil {
 			return res, err
 		}
+	}
+
+	if err := a.checkEmpty(ctx, repo, s, live(s.Branches), len(live(scope)), before, o.DryRun, &res); err != nil {
+		return res, err
 	}
 
 	var newBranches []string
@@ -766,4 +771,57 @@ func (a *App) closePending(ctx context.Context, repo git.Repo, prs []forge.PullR
 	if err := savePendingRemote(repo, p); err != nil {
 		res.Notices = append(res.Notices, fmt.Sprintf("could not update the list of pull requests to close: %v", err))
 	}
+}
+
+// checkEmpty looks for branches about to be submitted that have no commits
+// of their own (everything in them is in the branch below) and no open pull
+// request. GitHub won't open a pull request with no commits, so at the top
+// that is a notice; under another branch being submitted it stops the
+// submit, since the pull requests above have nothing to stack on. The way
+// out is to move it to the top, drop it or commit on it. branches are the
+// stack's live branches, the first n of them being submitted. A dry run
+// only says so.
+func (a *App) checkEmpty(ctx context.Context, repo git.Repo, s *stack.Stack, branches []stack.Branch, n int, prs map[string]forge.PullRequest, dryRun bool, res *SubmitResult) error {
+	var empty []string
+	parent := s.Trunk
+	for i, b := range branches[:n] {
+		pr, has := prs[b.Name]
+		open := has && (pr.State == forge.StateOpen || pr.State == forge.StateDraft)
+		count, err := a.d.Git.CountCommits(ctx, repo, parent, b.Name)
+		parent = b.Name
+		if err != nil || count > 0 || open {
+			continue
+		}
+		if i == n-1 {
+			res.Notices = append(res.Notices, fmt.Sprintf("%s has no commits of its own, so GitHub won't open a pull request for it yet", b.Name))
+			continue
+		}
+		empty = append(empty, b.Name)
+	}
+	if len(empty) == 0 {
+		return nil
+	}
+	order := slices.DeleteFunc(s.Names(), func(name string) bool { return slices.Contains(empty, name) })
+	order = append(order, empty...)
+	msg := fmt.Sprintf("%s %s no commits of its own, so GitHub can't open a pull request for %s for the ones above to stack on",
+		joinNames(empty), pluralise(len(empty), "has", "have"), pluralise(len(empty), "it", "them"))
+	if dryRun {
+		res.Notices = append(res.Notices, msg+"; a real submit stops here")
+		return nil
+	}
+	// Branch names can't hold control characters, so quoting never fails.
+	quote := func(name string) string {
+		q, _ := shell.Arg(name)
+		return q
+	}
+	args := make([]string, len(order))
+	for i, name := range order {
+		args[i] = quote(name)
+	}
+	first := empty[0]
+	return stack.New(stack.KindInvalidArgs, msg).WithSteps(
+		fmt.Sprintf("move %s to the top: git stack reorder %s", pluralise(len(empty), "it", "them"), strings.Join(args, " ")),
+		fmt.Sprintf("or drop %s: git stack checkout %s, then git stack pop", first, quote(first)),
+		fmt.Sprintf("or commit on %s: git stack checkout %s, then git stack modify", first, quote(first)),
+	)
 }

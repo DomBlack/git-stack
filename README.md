@@ -545,6 +545,11 @@ so the merged branch goes and the ones above it are restacked onto trunk before 
 otherwise the next PR up would show the merged commits too. A dry run only says which branches that
 would be.
 
+GitHub won't open a PR for a branch with no commits of its own, so submit stops before pushing
+anything when such a branch (without a PR already) sits under another one it is about to submit,
+and tells you the `git stack reorder` that moves it to the top (or to pop it, or commit on it). At
+the top of what's submitted it's only a notice.
+
 Branches are pushed with `--force-with-lease`, so after a restack your branches are force
 pushed. If a branch has commits on the remote that aren't in your local one (someone else pushed
 to it), submit refuses rather than overwrite them. `git sync` pulls them in when the remote is
