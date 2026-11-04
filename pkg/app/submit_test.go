@@ -855,3 +855,38 @@ func kindOf(err error) stack.Kind {
 	}
 	return stack.KindUnknown
 }
+
+// An empty branch under another one being submitted stops the submit
+// before anything is pushed, saying how to move it to the top; at the top
+// it is only a notice.
+func TestSubmitRefusesAnEmptyBranchInTheMiddle(t *testing.T) {
+	deps, sf, _, repo, dir := submitFixture(t)
+	gittest.Run(t, dir, "branch", "empty", "a")
+	graph := stack.NewGraph([]stack.Stack{{Trunk: "main", Branches: []stack.Branch{{Name: "a"}, {Name: "empty"}, {Name: "b"}}}})
+	deps.Meta = memMeta{graph}
+	sf.graph = graph
+
+	res, err := app.New(deps).Submit(context.Background(), repo, app.SubmitOptions{DryRun: true})
+	if err != nil || !slices.ContainsFunc(res.Notices, func(n string) bool { return strings.Contains(n, "empty has no commits of its own") }) {
+		t.Errorf("dry run: %v %q", err, res.Notices)
+	}
+
+	_, err = app.New(deps).Submit(context.Background(), repo, app.SubmitOptions{NoEdit: true})
+	se, ok := errors.AsType[*stack.Error](err)
+	if !ok || se.Kind != stack.KindInvalidArgs || !slices.Contains(se.NextSteps, "move it to the top: git stack reorder a b empty") {
+		t.Fatalf("err = %#v", err)
+	}
+	if len(sf.opts) != 0 {
+		t.Errorf("nothing may be submitted: %+v", sf.opts)
+	}
+
+	// At the top it's only a notice.
+	graph = stack.NewGraph([]stack.Stack{{Trunk: "main", Branches: []stack.Branch{{Name: "a"}, {Name: "b"}, {Name: "empty"}}}})
+	deps.Meta = memMeta{graph}
+	sf.graph = graph
+	gittest.Run(t, dir, "branch", "-f", "empty", "b")
+	res, err = app.New(deps).Submit(context.Background(), repo, app.SubmitOptions{NoEdit: true})
+	if err != nil || !slices.ContainsFunc(res.Notices, func(n string) bool { return strings.Contains(n, "won't open a pull request for it yet") }) {
+		t.Errorf("top: %v %q", err, res.Notices)
+	}
+}
