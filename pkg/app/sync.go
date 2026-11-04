@@ -176,6 +176,22 @@ type syncState struct {
 	// done names branches cleanup would have deleted (merged, closed or in
 	// trunk) but kept; restack leaves them where they are.
 	done map[string]bool
+	// remoteTrunk holds, for a trunk that should have been fast forwarded
+	// but couldn't be (its checkout is in the way), the remote's tip, which
+	// cleanup and restack use in its place; see trunkTip.
+	remoteTrunk map[string]string
+}
+
+// trunkTip is the commit a trunk is synced to: the remote's tip when the
+// local branch is only behind it but couldn't be moved, else the local tip.
+// Using the remote's means a branch whose pull request merged is still
+// cleaned up and the branches above it restacked past it, so a submit
+// straight after never pushes commits that are already in trunk.
+func (st *syncState) trunkTip(name string) string {
+	if tip, ok := st.remoteTrunk[name]; ok {
+		return tip
+	}
+	return st.local[name].Head
 }
 
 // worktreeRepo is repo seen from another worktree.
@@ -303,7 +319,7 @@ func (a *App) gatherSync(ctx context.Context, repo git.Repo) (*syncState, error)
 	if err != nil {
 		return nil, err
 	}
-	st := &syncState{repo: repo, graph: graph, dirty: newDirtyCache()}
+	st := &syncState{repo: repo, graph: graph, dirty: newDirtyCache(), remoteTrunk: map[string]string{}}
 	st.trunks = graph.Trunks
 	if len(st.trunks) == 0 {
 		def, ok, err := a.d.Git.DefaultBranch(ctx, repo)

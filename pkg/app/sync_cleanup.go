@@ -191,7 +191,7 @@ func withWorktree(b git.Branch, path string) git.Branch {
 // no longer exist locally.
 func (a *App) cleanupCandidates(ctx context.Context, st *syncState, res *SyncResult) (cands []candidate, gone []string) {
 	for _, s := range st.graph.Stacks {
-		trunkTip := st.local[s.Trunk].Head
+		trunkTip := st.trunkTip(s.Trunk)
 		for _, b := range s.Branches {
 			lb, exists := st.local[b.Name]
 			if !exists {
@@ -236,7 +236,7 @@ func (a *App) cleanupCandidates(ctx context.Context, st *syncState, res *SyncRes
 		if slices.Contains(st.trunks, pr.Base) {
 			trunk = pr.Base
 		}
-		if pr.MergeCommit != "" && !a.ancestor(ctx, st, pr.MergeCommit, st.local[trunk].Head) {
+		if pr.MergeCommit != "" && !a.ancestor(ctx, st, pr.MergeCommit, st.trunkTip(trunk)) {
 			continue
 		}
 		cands = append(cands, candidate{name, lb.Head, ReasonMerged, trunk})
