@@ -310,7 +310,10 @@ metadata dies with the worktree. So `git stack sync` does the whole job
 itself: one `git fetch --prune` of the first trunk's remote (`branch.<trunk>.remote`, else
 `origin`; a second trunk that tracks another remote is still compared with the first
 remote's copy, and gets a `no-remote` notice when there is none); fast forward every trunk (a diverged trunk is only reset
-with `-f` or a yes at the prompt, a dirty checkout gets a notice); delete branches whose PR
+with `-f` or a yes at the prompt, a dirty checkout gets a notice, and a trunk that was only
+behind but couldn't be moved is stood in for by the remote's tip for the rest of the sync, so
+cleanup and restack still see the merges and `submit`'s sync first never leaves merged commits
+under the branches it pushes); delete branches whose PR
 merged or closed, whose tip is already in trunk (a branch sitting exactly on the trunk tip
 only counts when its recorded base is an older commit it has moved past, i.e. trunk was fast
 forwarded onto it; an empty branch has base and tip the same and stays, and restack leaves

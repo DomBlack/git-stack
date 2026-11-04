@@ -633,7 +633,10 @@ Every worktree shares one set of stacks, and sync covers all of them. A branch
 checked out in another worktree is fast forwarded there too, and like `git pull` any uncommitted
 changes it doesn't touch come along. If a change or an untracked file is in the way, the branch
 is left where it was and sync ends on `⚠ Synced, but main was not updated`, naming the files
-and the checkout, with the `git -C … stash` to run. If another git
+and the checkout, with the `git -C … stash` to run. When that branch is a trunk that was only
+behind, the stacks on it are synced with the remote's trunk instead (`origin/main`), so a branch
+whose pull request merged still goes and the ones above it are restacked past it; a submit
+straight after never pushes commits that are already in trunk. If another git
 process is holding that worktree's index lock (an IDE, a prompt or status bar running
 `git status`), sync waits up to about two seconds for it; if the lock is still there it leaves
 the branch, finishes everything else and exits non-zero saying which lock file was held. A

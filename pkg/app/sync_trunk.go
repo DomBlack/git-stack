@@ -96,6 +96,14 @@ func (a *App) syncTrunks(ctx context.Context, st *syncState, o SyncOptions, res 
 				return err
 			}
 			res.NotUpdated = append(res.NotUpdated, n)
+			if t.Status == TrunkFastForwarded {
+				// Only behind: the remote's tip has everything the local
+				// one has, so the stacks on it can go there instead.
+				st.remoteTrunk[trunk] = remoteTip
+				if st.graph.IsTrunk(trunk) {
+					res.notice("the stacks on %s were synced with %s/%s instead", trunk, st.remote, trunk)
+				}
+			}
 			t.Status = TrunkNotUpdated
 			if !n.Failed() {
 				t.Status = TrunkDirty

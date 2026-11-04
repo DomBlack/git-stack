@@ -117,7 +117,7 @@ func (a *App) syncRestack(ctx context.Context, st *syncState, res *SyncResult) (
 func (a *App) planRestack(ctx context.Context, st *syncState, s *stack.Stack) stackPlan {
 	return stackPlan{stack: s, restackPlan: a.planMoves(ctx, planInput{
 		repo: st.repo, stackName: s.Bottom(), branches: s.Branches,
-		parentName: s.Trunk, parentTip: st.local[s.Trunk].Head,
+		parentName: s.Trunk, parentTip: st.trunkTip(s.Trunk),
 		local: st.local, dirty: st.dirty, done: st.done,
 	})}
 }
