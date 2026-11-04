@@ -46,7 +46,7 @@ func newSyncFixture(t *testing.T) *syncFixture {
 	if err != nil {
 		t.Fatal(err)
 	}
-	graph := stack.NewGraph([]stack.Stack{{Trunk: "main", Branches: []stack.Branch{{Name: "a"}, {Name: "b"}}, Worktree: repo.TopLevel}})
+	graph := stack.NewGraph([]stack.Stack{{Trunk: "main", Branches: []stack.Branch{{Name: "a"}, {Name: "b"}}}})
 	fg := &recordingForge{prs: []forge.PullRequest{{Number: 7, Head: "a", Base: "main", State: forge.StateOpen, URL: "u/a"}}}
 	cfg := config.Defaults()
 	cfg.CacheTTL = 0

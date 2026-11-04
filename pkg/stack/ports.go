@@ -39,9 +39,7 @@ type Metadata interface {
 	// and writes the result back. fn may edit each stack's Branches (remove
 	// entries, change Head and Base, rename one by setting Name and
 	// RenamedFrom) and may also append stacks (each with a
-	// trunk and at least one branch; they are written to the current
-	// worktree's file, else the main checkout's, else a new file in the
-	// common dir) and may set or clear a stack's ID and Number (clearing
+	// trunk and at least one branch) and may set or clear a stack's ID and Number (clearing
 	// removes them from the record). It must not remove or reorder existing
 	// stacks; a stack left with no branches is removed. When fn returns an
 	// error nothing is written and the error is returned.

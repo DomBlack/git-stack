@@ -1,15 +1,16 @@
 package ghstack
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
 	"io"
 	"io/fs"
+	"maps"
 	"os"
 	"path/filepath"
 	"slices"
-	"strings"
 	"time"
 
 	"github.com/DomBlack/git-stack/pkg/exec"
@@ -46,321 +47,365 @@ func New(r exec.Runner, g *git.Client, opts ...Option) *Backend {
 // Compile-time port checks.
 var _ stack.Metadata = (*Backend)(nil)
 
-// LockName is the file gh stack flocks while it edits its metadata.
+// LockName is the file gh stack flocks while it edits its catalog.
 const LockName = "gh-stack.lock"
+
+// OperationLockName is the file gh stack flocks for the whole of a command
+// that changes stacks. We take it only while moving per-worktree files into
+// the shared catalog, which gh stack does under it too.
+const OperationLockName = "gh-stack-operation.lock"
+
+// migrationJournal is the file gh stack writes while it moves per-worktree
+// files into the shared catalog itself, and removes once it is done. While
+// it exists the catalog must be left alone for gh stack to finish.
+const migrationJournal = "gh-stack-migration"
+
+// BackupSuffix names the copy of a per-worktree file kept when it is moved
+// into the shared catalog, the same name gh stack uses.
+const BackupSuffix = ".pre-worktree-migration"
+
+// recoveryFiles are gh stack's records of an interrupted rebase or modify.
+// One left in a worktree's git dir needs that worktree's own file, so its
+// file is not moved while one is there.
+var recoveryFiles = []string{"gh-stack-rebase-state", "gh-stack-modify-state"}
 
 // lockWait is how long Update waits for the metadata lock.
 var lockWait = 5 * time.Second
 
-// source is one metadata file: the git dir holding it and the working tree
-// it belongs to.
-type source struct{ gitDir, worktree string }
-
-// sources lists the current worktree's git dir first, then the main
-// checkout's, then every linked worktree's.
-func sources(repo git.Repo) []source {
-	out := []source{{repo.GitDir, repo.TopLevel}}
-	if repo.CommonDir != repo.GitDir {
-		out = append(out, source{repo.CommonDir, filepath.Dir(repo.CommonDir)})
+// catalogDir is where gh stack keeps its catalog: the common git dir, so
+// every worktree of the repository shares one file.
+func catalogDir(repo git.Repo) string {
+	if repo.CommonDir != "" {
+		return repo.CommonDir
 	}
-	if entries, err := os.ReadDir(filepath.Join(repo.CommonDir, "worktrees")); err == nil {
-		for _, e := range entries {
-			if !e.IsDir() {
-				continue
-			}
-			gitDir := filepath.Join(repo.CommonDir, "worktrees", e.Name())
-			if gitDir == repo.GitDir {
-				continue
-			}
-			out = append(out, source{gitDir, worktreePath(gitDir)})
+	return repo.GitDir
+}
+
+// catalogPath is the shared catalog file.
+func catalogPath(repo git.Repo) string { return filepath.Join(catalogDir(repo), FileName) }
+
+// LegacyFiles lists the per-worktree files gh stack 0.2 and older kept in
+// each linked worktree's git dir (and git-stack wrote there too), the
+// current worktree's first. gh stack 0.3 moved to one shared catalog; these
+// are merged into it by the next Update.
+func LegacyFiles(repo git.Repo) []string {
+	var out []string
+	common := catalogDir(repo)
+	if repo.GitDir != "" && repo.GitDir != common {
+		if _, err := os.Stat(filepath.Join(repo.GitDir, FileName)); err == nil {
+			out = append(out, filepath.Join(repo.GitDir, FileName))
+		}
+	}
+	entries, err := os.ReadDir(filepath.Join(common, "worktrees"))
+	if err != nil {
+		return out
+	}
+	for _, e := range entries {
+		if !e.IsDir() {
+			continue
+		}
+		path := filepath.Join(common, "worktrees", e.Name(), FileName)
+		if slices.Contains(out, path) {
+			continue
+		}
+		if fi, err := os.Stat(path); err == nil && fi.Mode().IsRegular() {
+			out = append(out, path)
 		}
 	}
 	return out
 }
 
-// loaded is one metadata file as read.
-type loaded struct {
-	src  source
-	data []byte
-	f    *file
+// MigrationPending reports whether gh stack itself is part way through
+// moving per-worktree files into the shared catalog.
+func MigrationPending(repo git.Repo) bool {
+	_, err := os.Lstat(filepath.Join(catalogDir(repo), migrationJournal))
+	return err == nil
 }
 
-// recRef locates a stack record: which loaded file and which index in it.
-type recRef struct{ file, rec int }
-
-// reading is every metadata file plus the merged graph and, for each graph
-// stack, where its record lives.
-type reading struct {
-	files []loaded
+// catalog is the shared catalog with any per-worktree files merged in, as
+// one tree whose stack records match graph's stacks one for one.
+type catalog struct {
+	root  *node
 	graph *stack.Graph
-	where []recRef
+	// legacy are the per-worktree files merged in.
+	legacy []string
 }
 
-func (b *Backend) read(repo git.Repo) (*reading, error) {
-	r := &reading{}
-	var stacks []stack.Stack
+// readCatalog reads the shared catalog, then each per-worktree file, and
+// merges them: a stack record joins when none of its branches is in a
+// record already taken, so the shared catalog wins over the per-worktree
+// files and the current worktree's file over the others. A record left
+// out is not lost; the file it was in is kept as a backup when it is moved.
+// The members of the shared catalog's root are kept, with the repository
+// taken from a per-worktree file when the shared one has none.
+func readCatalog(repo git.Repo) (*catalog, error) {
+	c := &catalog{}
+	paths := append([]string{catalogPath(repo)}, LegacyFiles(repo)...)
+	var recs []*node
 	seen := map[string]bool{}
-	for _, src := range sources(repo) {
-		data, err := os.ReadFile(filepath.Join(src.gitDir, FileName))
+	for i, path := range paths {
+		data, err := os.ReadFile(path)
 		if err != nil {
 			if errors.Is(err, fs.ErrNotExist) {
 				continue
 			}
 			return nil, err
 		}
-		f, err := parseFile(data)
-		if err != nil {
-			return nil, fmt.Errorf("%s: %w", filepath.Join(src.gitDir, FileName), err)
+		if _, err := parseFile(data); err != nil {
+			return nil, fmt.Errorf("%s: %w", path, err)
 		}
-		fi := len(r.files)
-		r.files = append(r.files, loaded{src: src, data: data, f: f})
+		root, err := parseTree(data)
+		if err != nil {
+			return nil, fmt.Errorf("%s: %w", path, err)
+		}
+		if i == 0 {
+			c.root = root
+		} else {
+			c.legacy = append(c.legacy, path)
+			if c.root == nil {
+				c.root = emptyRoot()
+			}
+			if c.root.get("repository") == nil && root.get("repository") != nil {
+				c.root.set("repository", root.get("repository"))
+			}
+		}
+		stacksNode := root.get("stacks")
+		if stacksNode == nil || stacksNode.kind != '[' {
+			continue
+		}
 	next:
-		for ri, s := range f.toGraph().Stacks {
-			for _, br := range s.Branches {
-				if seen[br.Name] {
+		for _, rec := range stacksNode.items {
+			var names []string
+			if bn := rec.get("branches"); bn != nil && bn.kind == '[' {
+				for _, item := range bn.items {
+					names = append(names, item.str("branch"))
+				}
+			}
+			for _, n := range names {
+				if seen[n] {
 					continue next
 				}
 			}
-			for _, br := range s.Branches {
-				seen[br.Name] = true
+			for _, n := range names {
+				seen[n] = true
 			}
-			s.Worktree = src.worktree
-			stacks = append(stacks, s)
-			r.where = append(r.where, recRef{fi, ri})
+			recs = append(recs, rec)
 		}
 	}
-	r.graph = stack.NewGraph(stacks)
-	return r, nil
+	if c.root == nil {
+		c.root = emptyRoot()
+	}
+	c.root.set("stacks", arrayNode(recs...))
+	if err := c.regraph(); err != nil {
+		return nil, err
+	}
+	return c, nil
 }
 
-// Load implements stack.Metadata. gh stack keeps its file per worktree
-// (<git-dir>/gh-stack), so this reads the current worktree's file first, then
-// the main checkout's and every linked worktree's, and merges them so one view
-// covers everything checked out on the machine. A missing file means no
-// stacks; it never runs gh. A branch that appears in two files keeps its first
-// stack.
+// regraph rebuilds graph from root.
+func (c *catalog) regraph() error {
+	data, err := c.root.encode()
+	if err != nil {
+		return err
+	}
+	f, err := parseFile(data)
+	if err != nil {
+		return err
+	}
+	c.graph = f.toGraph()
+	return nil
+}
+
+func emptyRoot() *node {
+	return objectNode(member{"schemaVersion", intNode(SchemaVersion)}, member{"stacks", arrayNode()})
+}
+
+// Load implements stack.Metadata. It reads gh stack's shared catalog
+// (<common-dir>/gh-stack) and merges in any per-worktree file left from gh
+// stack 0.2 (see readCatalog), so stacks show up the same before and after
+// they are moved. A missing file means no stacks. It never writes and never
+// runs gh.
 func (b *Backend) Load(_ context.Context, repo git.Repo) (*stack.Graph, error) {
-	r, err := b.read(repo)
+	c, err := readCatalog(repo)
 	if err != nil {
 		return nil, err
 	}
-	return r.graph, nil
+	return c.graph, nil
 }
 
-// Update implements stack.Metadata. It takes gh stack's lock in every git
-// dir that has a metadata file, re-reads them, runs fn on the merged graph
-// and writes each file back, editing the JSON in place so members we don't
-// model, PR records and ordering survive. A file whose stacks fn didn't
-// change is not rewritten. fn may also append stacks (each with a trunk and
-// at least one branch; they are written to the current worktree's file,
-// created if need be, since that is the only one gh stack reads there) and
-// may set or clear a stack's ID and Number (clearing removes them from the
-// record). It must not remove or reorder existing stacks; a stack left with
-// no branches is removed.
+// Update implements stack.Metadata. It takes gh stack's lock, re-reads the
+// catalog, runs fn on the graph and writes the catalog back, editing the
+// JSON in place so members we don't model, PR records and ordering
+// survive. Nothing is written when nothing changed. fn may also append
+// stacks (each with a trunk and at least one branch) and may set or clear
+// a stack's ID and Number (clearing removes them from the record). It must
+// not remove or reorder existing stacks; a stack left with no branches is
+// removed.
+//
+// Any per-worktree file left from gh stack 0.2 is merged into the catalog
+// and then moved aside (see Migrate), under gh stack's operation lock too.
 func (b *Backend) Update(ctx context.Context, repo git.Repo, fn func(*stack.Graph) error) error {
-	unlock, err := lockAll(ctx, repo)
+	unlock, err := lockCatalog(ctx, repo)
 	if err != nil {
 		return err
 	}
 	defer unlock()
-	r, err := b.read(repo)
+	c, err := readCatalog(repo)
 	if err != nil {
 		return err
 	}
-	count := len(r.graph.Stacks)
-	if err := fn(r.graph); err != nil {
+	if err := checkMovable(repo, c.legacy); err != nil {
 		return err
 	}
-	if len(r.graph.Stacks) < count {
+	before, err := c.root.encode()
+	if err != nil {
+		return err
+	}
+	count := len(c.graph.Stacks)
+	if err := fn(c.graph); err != nil {
+		return err
+	}
+	if len(c.graph.Stacks) < count {
 		return fmt.Errorf("%s: Update may not remove stacks", FileName)
 	}
-	added := r.graph.Stacks[count:]
-	target := -1
-	if len(added) > 0 {
-		for _, s := range added {
-			if s.Trunk == "" || len(s.Branches) == 0 {
-				return fmt.Errorf("%s: a new stack needs a trunk and at least one branch", FileName)
-			}
+	added := c.graph.Stacks[count:]
+	for _, s := range added {
+		if s.Trunk == "" || len(s.Branches) == 0 {
+			return fmt.Errorf("%s: a new stack needs a trunk and at least one branch", FileName)
 		}
-		target = r.fileFor(repo)
 	}
-	roots, pool, err := r.parseAll()
+	c.apply(added)
+	after, err := c.root.encode()
 	if err != nil {
 		return err
 	}
-	for fi := range r.files {
-		var extra []stack.Stack
-		if fi == target {
-			extra = added
+	if !bytes.Equal(before, after) || len(c.legacy) > 0 {
+		if _, err := os.Stat(catalogPath(repo)); err == nil || len(c.graph.Stacks) > 0 || len(c.legacy) > 0 {
+			if err := writeBytes(catalogPath(repo), after); err != nil {
+				return err
+			}
 		}
-		if err := b.writeBack(r, fi, roots[fi], pool, extra); err != nil {
+	}
+	return retire(c.legacy)
+}
+
+// Migrate merges any per-worktree file left from gh stack 0.2 into the
+// shared catalog and moves each aside to <file>.pre-worktree-migration
+// (numbered when gh stack already left a backup by that name, so a stale
+// one never blocks it), and reports the files it moved. gh stack 0.3 does
+// the same on its next command but refuses when a backup it made earlier
+// differs from the file, which git-stack's own writes to these files used
+// to cause. It is a no-op when there is nothing to move.
+func (b *Backend) Migrate(ctx context.Context, repo git.Repo) ([]string, error) {
+	legacy := LegacyFiles(repo)
+	if len(legacy) == 0 {
+		return nil, nil
+	}
+	if err := b.Update(ctx, repo, func(*stack.Graph) error { return nil }); err != nil {
+		return nil, err
+	}
+	return legacy, nil
+}
+
+// lockCatalog takes gh stack's catalog lock, and before it the operation
+// lock when per-worktree files are waiting to be moved, the order gh stack
+// takes them in.
+func lockCatalog(ctx context.Context, repo git.Repo) (func(), error) {
+	dir := catalogDir(repo)
+	var unlocks []func()
+	release := func() {
+		for _, u := range slices.Backward(unlocks) {
+			u()
+		}
+	}
+	names := []string{LockName}
+	if len(LegacyFiles(repo)) > 0 {
+		names = []string{OperationLockName, LockName}
+	}
+	for _, name := range names {
+		unlock, err := lock(ctx, filepath.Join(dir, name), lockWait)
+		if err != nil {
+			release()
+			return nil, err
+		}
+		unlocks = append(unlocks, unlock)
+	}
+	return release, nil
+}
+
+// checkMovable refuses to move per-worktree files while gh stack is part
+// way through moving them itself, or while one of their worktrees has an
+// interrupted gh stack rebase or modify that still needs its own file.
+func checkMovable(repo git.Repo, legacy []string) error {
+	if MigrationPending(repo) {
+		return stack.New(stack.KindStateMigration, "gh stack is part way through moving its stacks into one shared file").
+			WithSteps("run `gh stack view` to let it finish, then try again",
+				"or run `git stack doctor` to see what is in the way")
+	}
+	for _, path := range legacy {
+		dir := filepath.Dir(path)
+		for _, name := range recoveryFiles {
+			if _, err := os.Lstat(filepath.Join(dir, name)); err == nil {
+				return stack.Newf(stack.KindStateMigration, "a gh stack rebase or modify was interrupted in the worktree of %s, so its stacks can't be moved into the shared file yet", dir).
+					WithSteps("in that worktree, run `gh stack rebase --continue` (or `--abort`), or `gh stack modify --continue` (or `--abort`)")
+			}
+		}
+	}
+	return nil
+}
+
+// retire moves each per-worktree file aside, once the shared catalog holds
+// its stacks: to <file>.pre-worktree-migration, or the first free
+// <file>.pre-worktree-migration.<n> when that name is taken by a backup that
+// differs.
+func retire(legacy []string) error {
+	for _, path := range legacy {
+		data, err := os.ReadFile(path)
+		if err != nil {
+			if errors.Is(err, fs.ErrNotExist) {
+				continue
+			}
+			return err
+		}
+		backup := path + BackupSuffix
+		for n := 1; ; n++ {
+			old, err := os.ReadFile(backup)
+			if errors.Is(err, fs.ErrNotExist) {
+				break
+			}
+			if err != nil {
+				return err
+			}
+			if bytes.Equal(old, data) {
+				break
+			}
+			backup = fmt.Sprintf("%s%s.%d", path, BackupSuffix, n)
+		}
+		if err := os.Rename(path, backup); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-// lockAll takes gh stack's lock in every git dir that has a metadata file,
-// and in the current one even without a file yet, since a new stack may
-// create its file there and two writers must not race it. Dirs are locked
-// in sorted order so two of us never deadlock.
-func lockAll(ctx context.Context, repo git.Repo) (func(), error) {
-	var dirs []string
-	for _, src := range sources(repo) {
-		if _, err := os.Stat(filepath.Join(src.gitDir, FileName)); err == nil {
-			dirs = append(dirs, src.gitDir)
-		}
-	}
-	if !slices.Contains(dirs, repo.GitDir) {
-		dirs = append(dirs, repo.GitDir)
-	}
-	slices.Sort(dirs)
-	var unlocks []func()
-	unlockAll := func() {
-		for _, u := range slices.Backward(unlocks) {
-			u()
-		}
-	}
-	for _, dir := range dirs {
-		unlock, err := lock(ctx, filepath.Join(dir, LockName), lockWait)
-		if err != nil {
-			unlockAll()
-			return nil, err
-		}
-		unlocks = append(unlocks, unlock)
-	}
-	return unlockAll, nil
-}
-
-// adopt moves the record of the stack holding branch into the current
-// worktree's file when it is kept in another worktree's (it was started
-// there, or put in the main checkout's file by an older git-stack). gh
-// stack only reads the file in the git dir it runs in, so without this it
-// says the branch is not in a stack. The record moves as it is, pull
-// request records and members we don't model included. A branch in no
-// stack is left alone for gh stack to report.
-func (b *Backend) adopt(ctx context.Context, repo git.Repo, branch string) error {
-	if branch == "" {
-		return nil
-	}
-	unlock, err := lockAll(ctx, repo)
-	if err != nil {
-		return err
-	}
-	defer unlock()
-	r, err := b.read(repo)
-	if err != nil {
-		return err
-	}
-	gi := slices.IndexFunc(r.graph.Stacks, func(s stack.Stack) bool { return s.Index(branch) >= 0 })
-	if gi < 0 {
-		return nil
-	}
-	from := r.where[gi]
-	if r.files[from.file].src.gitDir == repo.GitDir {
-		return nil
-	}
-	to := r.fileFor(repo)
-	src, err := parseTree(r.files[from.file].data)
-	if err != nil {
-		return err
-	}
-	dst, err := parseTree(r.files[to].data)
-	if err != nil {
-		return err
-	}
-	srcStacks := src.get("stacks")
-	rec := srcStacks.items[from.rec]
-	srcStacks.items = slices.Delete(srcStacks.items, from.rec, from.rec+1)
-	dstStacks := dst.get("stacks")
-	if dstStacks == nil || dstStacks.kind != '[' {
-		dstStacks = arrayNode()
-		dst.set("stacks", dstStacks)
-	}
-	dstStacks.items = append(dstStacks.items, rec)
-	// The new home first: should the second write fail, the stack is in
-	// both files and the current worktree's copy is the one read first.
-	if err := writeFile(r.files[to].src.gitDir, dst); err != nil {
-		return err
-	}
-	return writeFile(r.files[from.file].src.gitDir, src)
-}
-
-// parseAll parses every loaded file and collects the node of every branch
-// in a record the graph came from, by name. Branch names are unique across
-// stacks, so a branch fn moved to another record, or to another file, takes
-// its node with it and keeps its pull request record and the members we
-// don't model.
-func (r *reading) parseAll() ([]*node, map[string]*node, error) {
-	roots := make([]*node, len(r.files))
+// apply writes the graph's edits into root: each record takes its stack's
+// id, number, trunk and branches (each branch from its node wherever it was
+// before, so its pull request record and members we don't model travel with
+// it), a stack left with no branches goes, and added stacks are appended.
+func (c *catalog) apply(added []stack.Stack) {
+	stacksNode := c.root.get("stacks")
 	pool := map[string]*node{}
-	for fi, f := range r.files {
-		root, err := parseTree(f.data)
-		if err != nil {
-			return nil, nil, err
-		}
-		roots[fi] = root
-		stacksNode := root.get("stacks")
-		if stacksNode == nil || stacksNode.kind != '[' {
-			continue
-		}
-		for ri, rec := range stacksNode.items {
-			if !slices.Contains(r.where, recRef{fi, ri}) {
-				continue // a duplicate Load skipped
-			}
-			branchesNode := rec.get("branches")
-			if branchesNode == nil || branchesNode.kind != '[' {
-				continue
-			}
-			for _, item := range branchesNode.items {
+	for _, rec := range stacksNode.items {
+		if bn := rec.get("branches"); bn != nil && bn.kind == '[' {
+			for _, item := range bn.items {
 				pool[item.str("branch")] = item
 			}
 		}
 	}
-	return roots, pool, nil
-}
-
-// fileFor picks the file new stacks are written to: the current worktree's,
-// created when it has none yet. gh stack only reads the file in the git dir
-// it runs in, so a stack written anywhere else would be invisible to it from
-// here (in the main checkout that is the common dir).
-func (r *reading) fileFor(repo git.Repo) int {
-	for i, f := range r.files {
-		if f.src.gitDir == repo.GitDir {
-			return i
-		}
-	}
-	r.files = append(r.files, loaded{
-		src:  source{repo.GitDir, repo.TopLevel},
-		data: []byte("{\n  \"schemaVersion\": 1,\n  \"stacks\": []\n}\n"),
-		f:    &file{SchemaVersion: SchemaVersion},
-	})
-	return len(r.files) - 1
-}
-
-// writeBack applies the graph's edits to the fi'th file, parsed as root,
-// and rewrites it when anything changed. Each branch is written from its
-// node in pool when it has one, wherever it came from.
-func (b *Backend) writeBack(r *reading, fi int, root *node, pool map[string]*node, added []stack.Stack) error {
-	stacksNode := root.get("stacks")
-	if stacksNode == nil && len(added) > 0 {
-		stacksNode = arrayNode()
-		root.set("stacks", stacksNode)
-	}
-	if stacksNode == nil || stacksNode.kind != '[' {
-		return nil
-	}
-	changed := false
 	var keep []*node
 	for ri, rec := range stacksNode.items {
-		gi := slices.Index(r.where, recRef{fi, ri})
-		if gi < 0 {
-			keep = append(keep, rec) // a duplicate Load skipped; leave it be
-			continue
-		}
-		gs := r.graph.Stacks[gi]
+		gs := c.graph.Stacks[ri]
 		if len(gs.Branches) == 0 {
-			changed = true
 			continue
 		}
 		// A zero id or number is removed rather than written as "" or 0,
@@ -368,59 +413,29 @@ func (b *Backend) writeBack(r *reading, fi int, root *node, pool map[string]*nod
 		switch {
 		case gs.ID == "" && rec.get("id") != nil:
 			rec.del("id")
-			changed = true
 		case gs.ID != "" && rec.str("id") != gs.ID:
 			rec.set("id", stringNode(gs.ID))
-			changed = true
 		}
 		switch {
 		case gs.Number == 0 && rec.get("number") != nil:
 			rec.del("number")
-			changed = true
 		case gs.Number != 0 && rec.num("number") != gs.Number:
 			rec.set("number", intNode(gs.Number))
-			changed = true
 		}
 		if gs.Trunk != "" {
 			if tn := rec.get("trunk"); tn == nil || tn.kind != '{' {
 				rec.set("trunk", objectNode(member{"branch", stringNode(gs.Trunk)}))
-				changed = true
 			} else if tn.str("branch") != gs.Trunk {
 				tn.set("branch", stringNode(gs.Trunk)) // keeps the recorded head
-				changed = true
 			}
 		}
-		branchesNode := rec.get("branches")
-		if branchesNode == nil || branchesNode.kind != '[' {
-			branchesNode = arrayNode()
-			rec.set("branches", branchesNode)
-		}
-		kept, edited := branchNodes(gs.Branches, pool)
-		if edited || !slices.Equal(kept, branchesNode.items) {
-			changed = true
-		}
-		branchesNode.items = kept
+		rec.set("branches", arrayNode(branchNodes(gs.Branches, pool)...))
 		keep = append(keep, rec)
 	}
 	for _, s := range added {
 		keep = append(keep, stackNode(s, pool))
-		changed = true
-	}
-	if !changed {
-		return nil
 	}
 	stacksNode.items = keep
-	return writeFile(r.files[fi].src.gitDir, root)
-}
-
-// writeFile replaces the metadata file in gitDir with root, atomically and
-// keeping the old file's permissions.
-func writeFile(gitDir string, root *node) error {
-	out, err := root.encode()
-	if err != nil {
-		return err
-	}
-	return writeBytes(filepath.Join(gitDir, FileName), out)
 }
 
 // writeBytes replaces path with out atomically, keeping the mode of the
@@ -455,34 +470,28 @@ func writeBytes(path string, out []byte) error {
 
 // branchNodes renders a stack's branches, reusing each branch's node from
 // pool so its pull request record and unmodelled members travel with it
-// (under its old name for a renamed branch), and reports whether any name,
-// head or base it wrote differs from the node.
-func branchNodes(branches []stack.Branch, pool map[string]*node) ([]*node, bool) {
-	edited := false
+// (under its old name for a renamed branch).
+func branchNodes(branches []stack.Branch, pool map[string]*node) []*node {
 	out := make([]*node, 0, len(branches))
 	for _, gb := range branches {
 		n := pool[gb.Name]
 		if n == nil && gb.RenamedFrom != "" {
 			if n = pool[gb.RenamedFrom]; n != nil {
 				n.set("branch", stringNode(gb.Name))
-				edited = true
 			}
 		}
 		if n == nil {
 			n = objectNode(member{"branch", stringNode(gb.Name)})
-			edited = true
 		}
 		if gb.Head != "" && n.str("head") != gb.Head {
 			n.set("head", stringNode(gb.Head))
-			edited = true
 		}
 		if gb.Base != "" && n.str("base") != gb.Base {
 			n.set("base", stringNode(gb.Base))
-			edited = true
 		}
 		out = append(out, n)
 	}
-	return out, edited
+	return out
 }
 
 // stackNode is a new stack record: its id and number when it has them (a
@@ -498,19 +507,8 @@ func stackNode(s stack.Stack, pool map[string]*node) *node {
 		rec.set("number", intNode(s.Number))
 	}
 	rec.set("trunk", objectNode(member{"branch", stringNode(s.Trunk)}))
-	branches, _ := branchNodes(s.Branches, pool)
-	rec.set("branches", arrayNode(branches...))
+	rec.set("branches", arrayNode(branchNodes(s.Branches, pool)...))
 	return rec
-}
-
-// worktreePath resolves a linked worktree's working tree from its git dir:
-// <common>/worktrees/<name>/gitdir holds the path of the worktree's .git file.
-func worktreePath(gitDir string) string {
-	data, err := os.ReadFile(filepath.Join(gitDir, "gitdir"))
-	if err != nil {
-		return ""
-	}
-	return filepath.Dir(strings.TrimSpace(string(data)))
 }
 
 // ghEnv keeps gh-stack non-interactive and its output plain when captured.
@@ -524,8 +522,6 @@ var ghEnv = []string{
 // ghUnset removes variables that would re-enable prompts or TUIs.
 var ghUnset = []string{"GH_FORCE_TTY", "CLICOLOR_FORCE"}
 
-// gh runs `gh stack <args>` captured, mapping failures to *stack.Error.
-// The result carries gh-stack's output for commands that relay it.
 // gh runs `gh stack <args>` captured and maps failures to stack.Error.
 func (b *Backend) gh(ctx context.Context, repo git.Repo, args ...string) error {
 	_, err := b.ghRun(ctx, repo, nil, args...)
@@ -534,7 +530,17 @@ func (b *Backend) gh(ctx context.Context, repo git.Repo, args ...string) error {
 
 // ghRun is gh with the captured stderr also relayed live to stream when it
 // is non-nil (the long submit and sync commands pass the WithOutput writer).
+//
+// gh stack 0.3 moves per-worktree files into its shared catalog itself, but
+// stops for good when a backup it made earlier differs from the file. So
+// git-stack moves them first (see Migrate), unless gh stack is part way
+// through doing it, which it is left to finish.
 func (b *Backend) ghRun(ctx context.Context, repo git.Repo, stream io.Writer, args ...string) (exec.Result, error) {
+	if !MigrationPending(repo) {
+		if _, err := b.Migrate(ctx, repo); err != nil {
+			return exec.Result{}, err
+		}
+	}
 	res, err := b.run.Run(ctx, exec.Cmd{
 		Name:   "gh",
 		Args:   append([]string{"stack"}, args...),
@@ -549,75 +555,45 @@ func (b *Backend) ghRun(ctx context.Context, repo git.Repo, stream io.Writer, ar
 	return res, nil
 }
 
-// lockDirs takes gh stack's lock in each of dirs, in sorted order so two of
-// us never deadlock. The returned function releases them all.
-func lockDirs(ctx context.Context, dirs []string) (func(), error) {
-	dirs = slices.Clone(dirs)
-	slices.Sort(dirs)
-	dirs = slices.Compact(dirs)
-	var unlocks []func()
-	release := func() {
-		for _, u := range slices.Backward(unlocks) {
-			u()
-		}
-	}
-	for _, dir := range dirs {
-		unlock, err := lock(ctx, filepath.Join(dir, LockName), lockWait)
-		if err != nil {
-			release()
-			return nil, err
-		}
-		unlocks = append(unlocks, unlock)
-	}
-	return release, nil
-}
-
-// Snapshot implements stack.Metadata. It reads every metadata file Load
-// would (the current worktree's, the main checkout's and every linked
-// worktree's) under the lock, recording the ones that don't exist as empty
-// so Restore can remove them again.
+// Snapshot implements stack.Metadata. It moves any per-worktree file into
+// the shared catalog first (see Migrate), so a snapshot is always the one
+// file, then reads it under the lock, recording a missing file as empty so
+// Restore can remove it again.
 func (b *Backend) Snapshot(ctx context.Context, repo git.Repo) (stack.Snapshot, error) {
-	var dirs []string
-	for _, src := range sources(repo) {
-		dirs = append(dirs, src.gitDir)
+	if !MigrationPending(repo) {
+		if _, err := b.Migrate(ctx, repo); err != nil {
+			return stack.Snapshot{}, err
+		}
 	}
-	unlock, err := lockDirs(ctx, append(slices.Clone(dirs), repo.GitDir))
+	unlock, err := lock(ctx, filepath.Join(catalogDir(repo), LockName), lockWait)
 	if err != nil {
 		return stack.Snapshot{}, err
 	}
 	defer unlock()
-	snap := stack.Snapshot{Files: map[string][]byte{}}
-	for _, dir := range dirs {
-		path := filepath.Join(dir, FileName)
-		data, err := os.ReadFile(path)
-		if err != nil && !errors.Is(err, fs.ErrNotExist) {
-			return stack.Snapshot{}, err
-		}
-		snap.Files[path] = data
+	path := catalogPath(repo)
+	data, err := os.ReadFile(path)
+	if err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return stack.Snapshot{}, err
 	}
-	return snap, nil
+	return stack.Snapshot{Files: map[string][]byte{path: data}}, nil
 }
 
 // Restore implements stack.Metadata. It writes each file in the snapshot
-// back exactly, under the lock, and removes the ones that were empty (did not
-// exist) when it was taken. A file whose git dir has gone since (a removed
-// worktree) is skipped, and files the snapshot doesn't know about are left
-// alone.
+// back exactly, under the lock, and removes the ones that were empty (did
+// not exist) when it was taken. A snapshot taken by an older git-stack may
+// name per-worktree files too; they are put back as they were and moved
+// into the shared catalog again by the next command. A file whose git dir
+// has gone since (a removed worktree) is skipped.
 func (b *Backend) Restore(ctx context.Context, repo git.Repo, s stack.Snapshot) error {
-	var dirs []string
-	for path := range s.Files {
-		dir := filepath.Dir(path)
-		if _, err := os.Stat(dir); err == nil {
-			dirs = append(dirs, dir)
-		}
-	}
-	unlock, err := lockDirs(ctx, append(slices.Clone(dirs), repo.GitDir))
+	unlock, err := lock(ctx, filepath.Join(catalogDir(repo), LockName), lockWait)
 	if err != nil {
 		return err
 	}
 	defer unlock()
-	for _, dir := range dirs {
-		path := filepath.Join(dir, FileName)
+	for _, path := range slices.Sorted(maps.Keys(s.Files)) {
+		if _, err := os.Stat(filepath.Dir(path)); err != nil {
+			continue
+		}
 		data := s.Files[path]
 		if len(data) == 0 {
 			if err := os.Remove(path); err != nil && !errors.Is(err, fs.ErrNotExist) {
@@ -625,7 +601,7 @@ func (b *Backend) Restore(ctx context.Context, repo git.Repo, s stack.Snapshot) 
 			}
 			continue
 		}
-		if cur, err := os.ReadFile(path); err == nil && string(cur) == string(data) {
+		if cur, err := os.ReadFile(path); err == nil && bytes.Equal(cur, data) {
 			continue
 		}
 		if err := writeBytes(path, data); err != nil {

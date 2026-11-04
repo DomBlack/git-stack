@@ -17,7 +17,7 @@ import (
 func TestSubmitStreamOutput(t *testing.T) {
 	newFake := func() *exectest.Fake {
 		f := exectest.New()
-		f.On("gh", "extension", "list").Reply("gh stack\tgithub/gh-stack\tv0.1.1\n")
+		f.On("gh", "extension", "list").Reply("gh stack\tgithub/gh-stack\tv0.3.0\n")
 		f.On("gh", "stack", "submit").Do(func(c exec.Cmd) (exec.Result, error) {
 			if c.Stream == nil {
 				t.Error("submit should pass the output writer as Stream")
@@ -43,7 +43,7 @@ func TestSubmitStreamOutput(t *testing.T) {
 
 	// No writer (the MCP server): nothing streamed, output returned.
 	f := exectest.New()
-	f.On("gh", "extension", "list").Reply("gh stack\tgithub/gh-stack\tv0.1.1\n")
+	f.On("gh", "extension", "list").Reply("gh stack\tgithub/gh-stack\tv0.3.0\n")
 	f.On("gh", "stack", "submit").Do(func(c exec.Cmd) (exec.Result, error) {
 		if c.Stream != nil {
 			t.Error("no WithOutput means no Stream")

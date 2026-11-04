@@ -54,6 +54,9 @@ const (
 	// KindSigningFailed: git could not sign a commit (a locked SSH key, a
 	// gpg agent that can't prompt); nothing was committed.
 	KindSigningFailed
+	// KindStateMigration: the backend's stack metadata is in an older or
+	// half converted layout that has to be sorted out first.
+	KindStateMigration
 )
 
 var kindCodes = map[Kind]string{
@@ -77,6 +80,7 @@ var kindCodes = map[Kind]string{
 	KindChecksFailing:       "checks_failing",
 	KindChecksPending:       "checks_pending",
 	KindSigningFailed:       "signing_failed",
+	KindStateMigration:      "state_migration",
 }
 
 // Code is the stable machine-readable name of the kind.

@@ -68,7 +68,9 @@ Tool errors (`isError: true`) carry a JSON object in the text content:
 Codes: `not_repo`, `not_in_stack`, `not_at_top`, `conflict`, `partial`, `rebase_active`, `locked`,
 `stacks_unavailable`, `auth_required`, `not_installed`, `unsupported`, `invalid_args`,
 `interaction_required`, `api_failure`, `disambiguate`, `modify_recovery`, `checks_failing`,
-`checks_pending`, `signing_failed`, `unknown`.
+`checks_pending`, `signing_failed`, `state_migration`, `unknown`.
+`state_migration` means gh stack's stack file is in the layout gh-stack 0.2 used (one file per
+worktree) and can't be moved into the shared file yet; `next_steps` says what is in the way.
 `signing_failed` comes from `stack_create` and `stack_modify` when git could not sign the commit,
 and from `stack_restack`, `stack_modify` and `stack_continue` when the git rebase a conflict
 needs could not sign a replayed commit; most often an SSH signing key whose passphrase nobody

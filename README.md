@@ -120,7 +120,8 @@ You'll need:
 
 - git 2.40+
 - `gh` (the [GitHub CLI](https://cli.github.com/)) logged in via `gh auth login`, plus the stack
-  extension; `gh extension install github/gh-stack`
+  extension, v0.3.0 or later; `gh extension install github/gh-stack` (or `gh extension upgrade
+  stack`)
 
 Then grab the archive for your system from the
 [releases page](https://github.com/DomBlack/git-stack/releases). Builds are for Linux and macOS
@@ -628,7 +629,7 @@ come back. If a branch was deleted by mistake, the output says which commit it w
 Nothing gets pushed; that's what `git ss` is for. If your local trunk has diverged from the remote,
 it's only reset with `-f` or a yes at the prompt.
 
-Stacks are per worktree (that's how gh stack stores them), but sync covers all of them. A branch
+Every worktree shares one set of stacks, and sync covers all of them. A branch
 checked out in another worktree is fast forwarded there too, and like `git pull` any uncommitted
 changes it doesn't touch come along. If a change or an untracked file is in the way, the branch
 is left where it was and sync ends on `⚠ Synced, but main was not updated`, naming the files

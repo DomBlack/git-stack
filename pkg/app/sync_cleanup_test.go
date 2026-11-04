@@ -226,8 +226,8 @@ func TestSyncKeepsEmptyBranchAtTrunkTip(t *testing.T) {
 	f := newSyncFixture(t)
 	gittest.Run(t, f.dir, "branch", "empty", "main")
 	f.deps.Meta = memMeta{stack.NewGraph([]stack.Stack{
-		{Trunk: "main", Branches: []stack.Branch{{Name: "a"}, {Name: "b"}}, Worktree: f.repo.TopLevel},
-		{Trunk: "main", Branches: []stack.Branch{{Name: "empty"}}, Worktree: f.repo.TopLevel},
+		{Trunk: "main", Branches: []stack.Branch{{Name: "a"}, {Name: "b"}}},
+		{Trunk: "main", Branches: []stack.Branch{{Name: "empty"}}},
 	})}
 	res, err := f.sync(t, app.SyncOptions{NoRestack: true})
 	if err != nil || len(res.Deleted) != 0 || !branchExists(t, f.dir, "empty") {
@@ -243,7 +243,7 @@ func TestSyncDeletesBranchFastForwardedIntoTrunk(t *testing.T) {
 	gittest.Run(t, f.dir, "push", "-q", "origin", "main")
 	gittest.Run(t, f.dir, "switch", "-q", "b")
 	f.deps.Meta = memMeta{stack.NewGraph([]stack.Stack{
-		{Trunk: "main", Branches: []stack.Branch{{Name: "a", Base: base}, {Name: "b", Base: f.rev(t, "a")}}, Worktree: f.repo.TopLevel},
+		{Trunk: "main", Branches: []stack.Branch{{Name: "a", Base: base}, {Name: "b", Base: f.rev(t, "a")}}},
 	})}
 	res, err := f.sync(t, app.SyncOptions{NoRestack: true})
 	if err != nil {
@@ -262,8 +262,8 @@ func TestSyncKeepsEmptyBranchWhoseBaseIsItsTip(t *testing.T) {
 	tip := f.rev(t, "main")
 	gittest.Run(t, f.dir, "branch", "empty", "main")
 	f.deps.Meta = memMeta{stack.NewGraph([]stack.Stack{
-		{Trunk: "main", Branches: []stack.Branch{{Name: "a"}, {Name: "b"}}, Worktree: f.repo.TopLevel},
-		{Trunk: "main", Branches: []stack.Branch{{Name: "empty", Base: tip}}, Worktree: f.repo.TopLevel},
+		{Trunk: "main", Branches: []stack.Branch{{Name: "a"}, {Name: "b"}}},
+		{Trunk: "main", Branches: []stack.Branch{{Name: "empty", Base: tip}}},
 	})}
 	res, err := f.sync(t, app.SyncOptions{NoRestack: true})
 	if err != nil || len(res.Deleted) != 0 || !branchExists(t, f.dir, "empty") {
@@ -280,7 +280,7 @@ func TestSyncRestackKeepsOlderBaseOfBranchOnItsParent(t *testing.T) {
 	gittest.Run(t, f.dir, "switch", "-q", "b")
 	f.deps.Config.SyncPrune = config.SyncPruneNever // cleanup declines, so restack sees the branch
 	f.deps.Meta = memMeta{stack.NewGraph([]stack.Stack{
-		{Trunk: "main", Branches: []stack.Branch{{Name: "a", Base: base}, {Name: "b", Base: f.rev(t, "a")}}, Worktree: f.repo.TopLevel},
+		{Trunk: "main", Branches: []stack.Branch{{Name: "a", Base: base}, {Name: "b", Base: f.rev(t, "a")}}},
 	})}
 	if _, err := f.sync(t, app.SyncOptions{}); err != nil {
 		t.Fatal(err)
@@ -506,8 +506,8 @@ func TestSyncDropsGoneBranchesFromMetadata(t *testing.T) {
 	f := newSyncFixture(t)
 	f.deps.Config.SyncPrune = config.SyncPruneNever
 	f.deps.Meta = memMeta{stack.NewGraph([]stack.Stack{
-		{Trunk: "main", Branches: []stack.Branch{{Name: "a"}, {Name: "b"}}, Worktree: f.repo.TopLevel},
-		{Trunk: "main", Branches: []stack.Branch{{Name: "gone", PR: &stack.PRRef{Number: 3, Merged: true}}}, Worktree: f.repo.TopLevel},
+		{Trunk: "main", Branches: []stack.Branch{{Name: "a"}, {Name: "b"}}},
+		{Trunk: "main", Branches: []stack.Branch{{Name: "gone", PR: &stack.PRRef{Number: 3, Merged: true}}}},
 	})}
 	if _, err := f.sync(t, app.SyncOptions{NoRestack: true}); err != nil {
 		t.Fatal(err)
