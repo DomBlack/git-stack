@@ -255,6 +255,8 @@ func TestGetRefusals(t *testing.T) {
 		forge.PullRequest{Number: 9, Head: "x", Base: "main", State: forge.StateOpen, Fork: true},
 		forge.PullRequest{Number: 10, Head: "y", Base: "main", State: forge.StateMerged},
 		forge.PullRequest{Number: 11, Head: "gone", Base: "main", State: forge.StateOpen},
+		// Based on #7, whose branch a is on origin, but c isn't.
+		forge.PullRequest{Number: 14, Head: "c", Base: "a", State: forge.StateOpen},
 	)
 	for target, kind := range map[string]stack.Kind{
 		"":      stack.KindInvalidArgs,
@@ -263,6 +265,7 @@ func TestGetRefusals(t *testing.T) {
 		"10":    stack.KindInvalidArgs,
 		"12":    stack.KindInvalidArgs,
 		"11":    stack.KindInvalidArgs,
+		"14":    stack.KindInvalidArgs,
 		"nope":  stack.KindInvalidArgs,
 		"#9999": stack.KindInvalidArgs,
 	} {
@@ -273,6 +276,45 @@ func TestGetRefusals(t *testing.T) {
 	}
 	if len(f.be.Graph().Stacks) != 0 || f.current(t) != "main" {
 		t.Errorf("a refusal changed something: %+v on %s", f.be.Graph().Stacks, f.current(t))
+	}
+	if got := gittest.Run(t, f.dir, "branch", "--format=%(refname:short)"); got != "main" {
+		t.Errorf("a refusal left branches behind: %q", got)
+	}
+	// gh stack never saw the fork or the merged pull request.
+	if slices.Contains(f.be.Imports, "9") || slices.Contains(f.be.Imports, "10") {
+		t.Errorf("imports = %q", f.be.Imports)
+	}
+}
+
+func TestGetFailedImportCheckoutIsPartial(t *testing.T) {
+	f := newGetFixture(t)
+	// gh stack creates the branches and saves the stack, then fails to
+	// check a out because an untracked a.txt is in the way.
+	gittest.WriteFile(t, f.dir, "a.txt", "mine")
+	f.be.ImportFn = func(target string) error {
+		ctx := context.Background()
+		g := git.New(exec.New())
+		for _, name := range []string{"a", "b"} {
+			if err := g.CreateTrackingBranch(ctx, f.repo, name, "origin"); err != nil {
+				return err
+			}
+		}
+		f.be.SetGraph(stack.NewGraph([]stack.Stack{{Trunk: "main", Number: 3, Branches: []stack.Branch{
+			{Name: "a", PR: &stack.PRRef{Number: 7}}, {Name: "b", PR: &stack.PRRef{Number: 8}},
+		}}}))
+		return stack.New(stack.KindUnknown, "gh stack checkout failed")
+	}
+	res, err := f.get(t, "7")
+	se, ok := errors.AsType[*stack.Error](err)
+	if !ok || se.Kind != stack.KindPartial {
+		t.Fatalf("err = %v", err)
+	}
+	if res.Source != app.GetStack || res.CheckedOut || res.Branch != "a" ||
+		!slices.Equal(res.Created, []string{"a", "b"}) || f.current(t) != "main" {
+		t.Errorf("result = %+v on %s", res, f.current(t))
+	}
+	if h := app.UndoHistory(f.repo); len(h) == 0 || h[0] != "git stack get (keep)" {
+		t.Errorf("undo history = %q", h)
 	}
 }
 

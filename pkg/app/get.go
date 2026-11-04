@@ -160,7 +160,15 @@ func (a *App) get(ctx context.Context, repo git.Repo, o GetOptions) (GetResult, 
 	if target != "" {
 		res.Source = GetLocal
 	} else {
-		if target, err = a.importTarget(ctx, repo, t); err != nil {
+		// Refuse what can't be got before gh stack sees it: it would take a
+		// merged pull request whose branch is still there, in a stack with
+		// open ones.
+		if pr != nil {
+			if err := gettable(*pr); err != nil {
+				return res, err
+			}
+		}
+		if target, err = a.importTarget(ctx, repo, st.graph, t, pr); err != nil {
 			return res, err
 		}
 		if target != "" {
@@ -306,8 +314,13 @@ func (a *App) trackedTarget(ctx context.Context, repo git.Repo, graph *stack.Gra
 
 // importTarget pulls the target's stack down from GitHub and returns the
 // branch it checked out, or "" when the target is in no stack there (or
-// the repository doesn't have stacks), for getPRs to handle.
-func (a *App) importTarget(ctx context.Context, repo git.Repo, t getTarget) (string, error) {
+// the repository doesn't have stacks), for getPRs to handle. gh stack
+// creates the branches and saves the stack before it checks the branch
+// out, so when it fails after that the target is taken from the stack it
+// saved: get carries on, and its own checkout reports the failure as a
+// partial result that undo can take back. before is the graph from before
+// the import; pr is the pull request when trackedTarget looked it up.
+func (a *App) importTarget(ctx context.Context, repo git.Repo, before *stack.Graph, t getTarget, pr *forge.PullRequest) (string, error) {
 	if a.d.Tracker == nil {
 		return "", nil
 	}
@@ -323,9 +336,45 @@ func (a *App) importTarget(ctx context.Context, repo git.Repo, t getTarget) (str
 		return "", nil
 	}
 	if err != nil {
+		if target := a.importedTarget(ctx, repo, before, t, pr); target != "" {
+			a.d.Log.Debug("gh stack failed after importing the stack", "target", target, "err", err)
+			return target, nil
+		}
 		return "", err
 	}
 	return a.d.Git.CurrentBranch(ctx, repo)
+}
+
+// importedTarget is the branch a failed import was getting when it saved a
+// new stack holding it (one none of whose branches was tracked before),
+// else "". A stack number names the stack's top open branch, the one gh
+// stack checks out.
+func (a *App) importedTarget(ctx context.Context, repo git.Repo, before *stack.Graph, t getTarget, pr *forge.PullRequest) string {
+	after, err := a.d.Meta.Load(ctx, repo)
+	if err != nil {
+		return ""
+	}
+	for _, s := range after.Stacks {
+		if slices.ContainsFunc(s.Branches, func(b stack.Branch) bool {
+			_, _, ok := before.StackOf(b.Name)
+			return ok
+		}) {
+			continue
+		}
+		switch {
+		case pr != nil && s.Index(pr.Head) >= 0:
+			return pr.Head
+		case t.number == 0 && s.Index(t.branch) >= 0:
+			return t.branch
+		case pr == nil && t.number > 0 && s.Number == t.number:
+			for _, b := range slices.Backward(s.Branches) {
+				if !b.Merged() {
+					return b.Name
+				}
+			}
+		}
+	}
+	return ""
 }
 
 // getPRs tracks a pull request that is in no stack on GitHub, together
@@ -361,12 +410,8 @@ func (a *App) getPRs(ctx context.Context, st *syncState, t getTarget, top *forge
 		}
 		top = &pr
 	}
-	if top.Fork {
-		return "", stack.Newf(stack.KindUnsupported, "#%d comes from a fork; git stack get only pulls branches from this repository", top.Number).
-			WithSteps(fmt.Sprintf("gh pr checkout %d checks it out without tracking it", top.Number))
-	}
-	if !prOpen(*top) {
-		return "", stack.Newf(stack.KindInvalidArgs, "#%d is %s, so there's nothing to get", top.Number, top.State)
+	if err := gettable(*top); err != nil {
+		return "", err
 	}
 
 	// Walk down through the open pull requests it is based on.
@@ -401,34 +446,62 @@ func (a *App) getPRs(ctx context.Context, st *syncState, t getTarget, top *forge
 	for i, pr := range chain {
 		names[i] = pr.Head
 	}
-	for _, name := range append([]string{trunk}, names...) {
-		if err := a.ensureLocal(ctx, st, name); err != nil {
+	// Check every branch is on the remote before creating any, so a missing
+	// one leaves nothing behind.
+	all := append([]string{trunk}, names...)
+	var missing []string
+	for _, name := range all {
+		if _, ok := st.local[name]; ok {
+			continue
+		}
+		_, ok, err := a.d.Git.Tip(ctx, repo, "refs/remotes/"+st.remote+"/"+name)
+		if err != nil {
 			return "", err
 		}
+		if !ok {
+			return "", stack.Newf(stack.KindInvalidArgs, "%s isn't on %s", name, st.remote).
+				WithSteps("it may have been deleted; check the pull request on GitHub")
+		}
+		missing = append(missing, name)
 	}
-	if _, err := a.initStack(ctx, repo, InitOptions{Branches: names, Base: trunk}); err != nil {
+	var created []string
+	err := func() error {
+		for _, name := range missing {
+			if err := a.d.Git.CreateTrackingBranch(ctx, repo, name, st.remote); err != nil {
+				return err
+			}
+			created = append(created, name)
+		}
+		if err := a.loadCheckouts(ctx, st); err != nil {
+			return err
+		}
+		_, err := a.initStack(ctx, repo, InitOptions{Branches: names, Base: trunk})
+		return err
+	}()
+	if err != nil {
+		// Nothing is tracked yet, so this run's branches can simply go. The
+		// context may be what failed, so don't let it stop the cleanup.
+		for _, name := range created {
+			if derr := a.d.Git.DeleteBranch(context.WithoutCancel(ctx), repo, name); derr != nil {
+				a.d.Log.Warn("could not delete a branch git stack get created", "branch", name, "err", derr)
+			}
+		}
 		return "", err
 	}
 	return top.Head, nil
 }
 
-// ensureLocal creates name from the remote's copy when there's no local
-// branch of that name; one that exists is left for syncRemote to bring up
-// to date.
-func (a *App) ensureLocal(ctx context.Context, st *syncState, name string) error {
-	if _, ok := st.local[name]; ok {
-		return nil
+// gettable refuses a pull request get can't pull down: one from a fork, or
+// one that is closed or merged.
+func gettable(pr forge.PullRequest) error {
+	if pr.Fork {
+		return stack.Newf(stack.KindUnsupported, "#%d comes from a fork; git stack get only pulls branches from this repository", pr.Number).
+			WithSteps(fmt.Sprintf("gh pr checkout %d checks it out without tracking it", pr.Number))
 	}
-	if _, ok, err := a.d.Git.Tip(ctx, st.repo, "refs/remotes/"+st.remote+"/"+name); err != nil {
-		return err
-	} else if !ok {
-		return stack.Newf(stack.KindInvalidArgs, "%s isn't on %s", name, st.remote).
-			WithSteps("it may have been deleted; check the pull request on GitHub")
+	if !prOpen(pr) {
+		return stack.Newf(stack.KindInvalidArgs, "#%d is %s, so there's nothing to get", pr.Number, pr.State)
 	}
-	if err := a.d.Git.CreateTrackingBranch(ctx, st.repo, name, st.remote); err != nil {
-		return err
-	}
-	return a.loadCheckouts(ctx, st)
+	return nil
 }
 
 // prOpen reports whether a pull request can still be stacked on.
